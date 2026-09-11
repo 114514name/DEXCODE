@@ -1,0 +1,6 @@
+// 代码条测试片段:引擎运行到该节点时会自动展开执行
+print "代码条执行";
+gal_speaker("旁白");
+gal_text("这是代码条插入的台词。");
+wait_click();
+gal_text_clear();

@@ -1,0 +1,5 @@
+# 读取主菜单输入框昵称并显示欢迎语
+gal_var_set("player_name", gal_menu_get_text("input_name"));
+gal_text("你好, " + gal_var_get("player_name") + " ！欢迎来到星之回响。");
+wait_click();
+gal_text_clear();

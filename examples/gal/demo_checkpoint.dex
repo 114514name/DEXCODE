@@ -1,0 +1,179 @@
+include "gal_static";
+
+func wait_click() {
+  while gal_running() {
+    gal_poll();
+    if gal_text_done() && gal_clicked() { return; }
+    gal_wait(16);
+  }
+}
+func wait_pick() {
+  while gal_running() {
+    gal_poll();
+    if gal_picked() >= 0 { return; }
+    gal_wait(16);
+  }
+}
+
+gal_init(960, 540);
+gal_set_title("存档点演示 · 跨镜头跳转");
+gal_box(1);
+gal_theme_apply("中世纪");
+
+// ===== 镜头 1: 主线 · 岔路口 =====
+func scene_0() {
+  gal_bg("res/bg.png");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+  let _enter = gal_var_get("_ckpt");
+  if _enter == "A" {
+        gal_text_pos(0);
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("【A之后】主线第 1 段 —— 每次跳回存档点,都会从这里继续。");
+        wait_click();
+        gal_text_clear();
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("接下来怎么走?");
+        gal_set_choice(0, "去读档页");
+        gal_set_choice(1, "继续主线");
+        gal_show_choices();
+        wait_pick();
+        let _p1 = gal_picked();
+        gal_hide_choices();
+        gal_text_clear();
+        if _p1 == 0 {
+            gal_fade_out(300);
+            scene_1();
+            return;
+        }
+        else if _p1 == 1 {
+            gal_text_pos(0);
+            gal_text_mode(0);
+            gal_text_speed(60);
+            gal_text("【A之后】主线第 2 段:你选择继续在主线前进。");
+            wait_click();
+            gal_text_clear();
+            gal_text_mode(0);
+            gal_text_speed(60);
+            gal_text("要做什么?");
+            gal_set_choice(0, "再走一段");
+            gal_set_choice(1, "结束演示");
+            gal_show_choices();
+            wait_pick();
+            let _p2 = gal_picked();
+            gal_hide_choices();
+            gal_text_clear();
+            if _p2 == 0 {
+                gal_text_pos(0);
+                gal_text_mode(0);
+                gal_text_speed(60);
+                gal_text("【A之后】主线第 3 段:再走一段后,演示结束。");
+                wait_click();
+                gal_text_clear();
+                gal_close();
+                return;
+            }
+            else if _p2 == 1 {
+                gal_close();
+                return;
+            }
+        }
+  }
+  else {
+        gal_text_pos(0);
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("【主线】这是存档点演示。剧情经过存档点 A 时,会记录当前位置,并写入存档文件。");
+        wait_click();
+        gal_text_clear();
+        gal_text_pos(0);
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("现在经过了存档点 A:位置已记录,变量已存盘。");
+        wait_click();
+        gal_text_clear();
+        gal_var_set("_ckpt", "A");
+        gal_var_set("_ckpt_scene", gal_itoa(0));
+        gal_save_vars("save/check1.dat");
+        gal_text_pos(0);
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("【A之后】主线第 1 段 —— 每次跳回存档点,都会从这里继续。");
+        wait_click();
+        gal_text_clear();
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("接下来怎么走?");
+        gal_set_choice(0, "去读档页");
+        gal_set_choice(1, "继续主线");
+        gal_show_choices();
+        wait_pick();
+        let _p3 = gal_picked();
+        gal_hide_choices();
+        gal_text_clear();
+        if _p3 == 0 {
+            gal_fade_out(300);
+            scene_1();
+            return;
+        }
+        else if _p3 == 1 {
+            gal_text_pos(0);
+            gal_text_mode(0);
+            gal_text_speed(60);
+            gal_text("【A之后】主线第 2 段:你选择继续在主线前进。");
+            wait_click();
+            gal_text_clear();
+            gal_text_mode(0);
+            gal_text_speed(60);
+            gal_text("要做什么?");
+            gal_set_choice(0, "再走一段");
+            gal_set_choice(1, "结束演示");
+            gal_show_choices();
+            wait_pick();
+            let _p4 = gal_picked();
+            gal_hide_choices();
+            gal_text_clear();
+            if _p4 == 0 {
+                gal_text_pos(0);
+                gal_text_mode(0);
+                gal_text_speed(60);
+                gal_text("【A之后】主线第 3 段:再走一段后,演示结束。");
+                wait_click();
+                gal_text_clear();
+                gal_close();
+                return;
+            }
+            else if _p4 == 1 {
+                gal_close();
+                return;
+            }
+        }
+  }
+}
+
+// ===== 镜头 2: 读档页 =====
+func scene_1() {
+  gal_bg("res/bg_room.png");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("【读档页】读取 check1.dat,跳转到存档点 A —— 位置与变量都会恢复。");
+    wait_click();
+    gal_text_clear();
+    gal_load_vars("save/check1.dat");
+    let _s = gal_var_num("_ckpt_scene");
+    if _s == 0 {
+        scene_0();
+    }
+    else if _s == 1 {
+        scene_1();
+    }
+    return;
+}
+
+scene_0();
+print "end";

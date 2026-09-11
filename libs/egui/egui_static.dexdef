@@ -1,0 +1,30 @@
+# egui_static.dexdef — EGUI 静态链接定义(运行时无需外部 DLL)
+# 与 egui.dexdef 相同接口,但把 libegui.dll 字节内嵌进字节码。
+refer static "libegui.dll";
+
+extern func eg_window(title: string, w: int, h: int) -> int;
+extern func eg_add(kind: string, parent: int, id: int) -> int;
+extern func eg_set_pos(id: int, x: int, y: int) -> int;
+extern func eg_set_size(id: int, w: int, h: int) -> int;
+extern func eg_set_text(id: int, text: string) -> int;
+extern func eg_get_text(id: int) -> string;
+extern func eg_set_value(id: int, v: int) -> int;
+extern func eg_get_value(id: int) -> int;
+extern func eg_add_item(id: int, text: string) -> int;
+extern func eg_clear_items(id: int) -> int;
+extern func eg_set_enabled(id: int, on: int) -> int;
+extern func eg_set_visible(id: int, on: int) -> int;
+extern func eg_connect(id: int, signal: string, cb: string) -> int;
+extern func eg_poll() -> int;
+extern func eg_running() -> int;
+extern func eg_quit() -> int;
+extern func eg_next() -> int;
+extern func eg_event_id() -> int;
+extern func eg_event_signal() -> string;
+extern func eg_event_cb() -> string;
+extern func eg_event_value() -> int;
+extern func eg_event_str() -> string;
+extern func eg_close(id: int) -> int;
+extern func eg_set_title(id: int, title: string) -> int;
+extern func eg_win_hwnd(id: int) -> int;
+extern func eg_ctrl_hwnd(id: int) -> int;

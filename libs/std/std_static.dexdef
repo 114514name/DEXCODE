@@ -1,0 +1,48 @@
+// DEXCODE 标准库接口(静态链接版):DLL 字节内嵌进 .dexbc,
+// 运行时无需外部 libdexstd.dll —— 只需 vm.exe + 一个 .dexbc 文件。
+refer static "libdexstd.dll";
+
+// ---- math ----
+extern func dex_abs(x: int) -> int;
+extern func dex_fabs(x: float) -> float;
+extern func dex_pow(x: float, y: float) -> float;
+extern func dex_fmin(a: float, b: float) -> float;
+extern func dex_fmax(a: float, b: float) -> float;
+extern func dex_imin(a: int, b: int) -> int;
+extern func dex_imax(a: int, b: int) -> int;
+extern func dex_floor(x: float) -> float;
+extern func dex_ceil(x: float) -> float;
+extern func dex_round(x: float) -> float;
+
+// ---- string ----
+extern func dex_strlen(s: string) -> int;
+extern func dex_str_upper(s: string) -> string;
+extern func dex_str_lower(s: string) -> string;
+extern func dex_str_trim(s: string) -> string;
+extern func dex_str_concat(a: string, b: string) -> string;
+extern func dex_str_repeat(s: string, n: int) -> string;
+extern func dex_str_sub(s: string, start: int, len: int) -> string;
+extern func dex_str_contains(s: string, sub: string) -> int;
+extern func dex_itoa(n: int) -> string;
+extern func dex_ftoa(x: float) -> string;
+
+// ---- io / file ----
+extern func dex_read_file(path: string) -> string;
+extern func dex_write_file(path: string, content: string) -> int;
+extern func dex_append_file(path: string, content: string) -> int;
+extern func dex_file_exists(path: string) -> int;
+extern func dex_remove_file(path: string) -> int;
+extern func dex_input() -> string;
+extern func dex_print(s: string) -> int;
+extern func dex_out(s: string) -> int;
+
+// ---- time ----
+extern func dex_now_ms() -> int;
+extern func dex_sleep_ms(ms: int) -> int;
+
+// ---- random ----
+extern func dex_rand() -> int;
+extern func dex_srand(seed: int) -> int;
+
+// ---- system ----
+extern func dex_system(cmd: string) -> int;

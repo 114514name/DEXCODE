@@ -1,0 +1,9 @@
+// 静态链接示例:程序自带 DLL,运行时无需外部 libdexmath.dll
+include "math_static";
+
+print dex_add(2, 3);
+print dex_fact(5);
+print dex_sqrt(9.0);
+print dex_len("hello");
+print dex_hello();
+print dex_sum3(1, 2, 3);

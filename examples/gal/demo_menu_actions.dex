@@ -1,0 +1,92 @@
+include "gal_static";
+
+func wait_click() {
+  while gal_running() {
+    gal_poll();
+    if gal_text_done() && gal_clicked() { return; }
+    gal_wait(16);
+  }
+}
+func wait_pick() {
+  while gal_running() {
+    gal_poll();
+    if gal_picked() >= 0 { return; }
+    gal_wait(16);
+  }
+}
+
+gal_init(960, 540);
+gal_set_title("菜单扩块演示 · 设置名字");
+gal_box(1);
+gal_theme_apply("中世纪");
+
+// ===== 镜头 1: 开场 =====
+func scene_0() {
+  gal_bg("res/bg.png");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("【演示】打开「设置」菜单,输入名字后点确定,镜头会向你问好。");
+    wait_click();
+    gal_text_clear();
+    let r = menu_0_设置();
+    if r == "确定" {
+        gal_text_pos(0);
+        gal_text_speed(60);
+        gal_text(("你好, " + gal_var_get("player_name")));
+        wait_click();
+        gal_text_clear();
+        gal_close();
+        return;
+    }
+}
+
+// ===== 菜单 1: 设置 (独占) =====
+func menu_0_设置() -> string {
+    gal_menu_begin();
+    gal_menu_bg("res/menu_bg.png");
+    gal_menu_new("panel", 3);
+    gal_menu_set("panel", "x", "250");
+    gal_menu_set("panel", "y", "110");
+    gal_menu_set("panel", "w", "460");
+    gal_menu_set("panel", "h", "280");
+    gal_menu_set("panel", "show", "1");
+    gal_menu_set("panel", "bg", "1844528");
+    gal_menu_new("title", 1);
+    gal_menu_set("title", "x", "320");
+    gal_menu_set("title", "y", "140");
+    gal_menu_set("title", "w", "320");
+    gal_menu_set("title", "h", "40");
+    gal_menu_set("title", "show", "1");
+    gal_menu_set("title", "text", "请输入你的名字:");
+    gal_menu_new("name_input", 4);
+    gal_menu_set("name_input", "x", "320");
+    gal_menu_set("name_input", "y", "200");
+    gal_menu_set("name_input", "w", "320");
+    gal_menu_set("name_input", "h", "50");
+    gal_menu_set("name_input", "show", "1");
+    gal_menu_new("ok", 0);
+    gal_menu_set("ok", "x", "400");
+    gal_menu_set("ok", "y", "280");
+    gal_menu_set("ok", "w", "160");
+    gal_menu_set("ok", "h", "60");
+    gal_menu_set("ok", "show", "1");
+    gal_menu_set("ok", "text", "确定");
+    while gal_menu_active() {
+        gal_poll();
+        let e = gal_menu_event();
+        if e == "ok" {
+            gal_var_set("player_name", gal_menu_get_text("name_input"));
+            gal_toast("名字已保存!", 3, 1500);
+            gal_menu_exit("确定");
+            return gal_menu_result();
+        }
+        gal_wait(16);
+    }
+    return gal_menu_result();
+}
+
+scene_0();
+print "end";

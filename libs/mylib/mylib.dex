@@ -1,0 +1,34 @@
+# mylib.dex — 语言模块库示例(fast 模式雏形)
+#
+# 语言模块 = 用 DexLang 自身编写的库:
+#   - 可 include/refer 其它库(含原生 DLL 库)
+#   - 可定义自定义类型(type)与函数(func)
+#   - 顶层只允许声明,不允许可执行语句
+#
+# 使用:主程序 include "mylib"; 即可调用其函数与类型。
+
+include "math";
+
+# 自定义类型
+type Wrapper { v: int; label: string; }
+
+# 普通函数
+func double(x: int) -> int {
+    return x * 2;
+}
+
+# 调用原生库函数(内部引用 DLL)
+func fact5() -> int {
+    return dex_fact(5);
+}
+
+# 返回自定义类型的函数
+func make_w(v: int) -> Wrapper {
+    return Wrapper{v: v, label: "w"};
+}
+
+# 对 Wrapper 的字段操作
+func bump(w: Wrapper, by: int) -> Wrapper {
+    w.v = w.v + by;
+    return w;
+}

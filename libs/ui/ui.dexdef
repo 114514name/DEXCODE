@@ -1,0 +1,15 @@
+// DEXCODE UI 库接口:WinAPI 驱动的简单界面(纯 C 实现 libdexui.dll)
+// 用法:include "ui";
+// 构建 DLL:见 libdexui.c 顶部注释
+refer "libdexui.dll";
+
+extern func dex_ui_create(title: string, w: int, h: int) -> int;
+extern func dex_ui_label(win: int, y: int) -> int;
+extern func dex_ui_button(win: int, y: int) -> int;
+extern func dex_ui_edit(win: int, y: int) -> int;
+extern func dex_ui_set_text(control: int, text: string) -> int;
+extern func dex_ui_get_text(control: int) -> string;
+extern func dex_ui_running(win: int) -> int;
+extern func dex_ui_poll(win: int) -> int;
+extern func dex_ui_run(win: int) -> int;
+extern func dex_ui_destroy(win: int) -> int;

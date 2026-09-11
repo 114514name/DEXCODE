@@ -1,0 +1,28 @@
+// guide_demo.dex — 标准库综合示例(对应 docs/stdlib_guide.html 第 08 节)
+include "std";
+
+print "== math ==";
+print dex_abs(-7);             // 7
+print dex_pow(2.0, 10.0);      // 1024
+print dex_imax(3, 9);          // 9
+
+print "== string ==";
+print dex_str_upper("abc");    // ABC
+print dex_str_repeat("ab", 3); // ababab
+print dex_str_sub("hello", 1, 3); // ell
+print "n=" + 42;               // n=42(+ 自动转字符串)
+
+print "== io ==";
+dex_write_file("_guide.txt", "line1\nline2\n");
+print dex_file_exists("_guide.txt");     // 1
+print dex_read_file("_guide.txt");       // 两行内容
+dex_append_file("_guide.txt", "line3\n");
+dex_remove_file("_guide.txt");           // 清理
+print dex_file_exists("_guide.txt");     // 0
+
+print "== time / random ==";
+dex_srand(123);
+print dex_rand() % 100;        // 0..99
+print dex_now_ms() > 0;        // 1
+dex_sleep_ms(50);
+print "done";

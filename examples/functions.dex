@@ -1,0 +1,35 @@
+// functions.dex — 多函数、短路逻辑、if/else、浮点
+func square(x) {
+    return x * x;
+}
+
+func is_even(n) {
+    return n % 2 == 0;
+}
+
+func classify(n) {
+    if n < 0 {
+        return "negative";
+    } else if n == 0 {
+        return "zero";
+    } else {
+        return "positive";
+    }
+}
+
+print square(7);
+print square(2.5);
+
+let n = 0;
+while n < 10 {
+    if is_even(n) && n != 0 {
+        print n;
+    }
+    n = n + 1;
+}
+
+print classify(-3);
+print classify(0);
+print classify(42);
+print !false && true;
+print false || (3 > 5);

@@ -1,0 +1,44 @@
+# egui_fast.dex — EGUI fast 模式(语言模块,内部引用 DLL)
+#
+# fast 模式 = 用 DexLang 自身编写的封装库:这里 include 底层定义文件,
+# 并提供更"一键"的高层函数(如 eg_app_run 事件循环),主程序无需手写循环。
+#
+# 用法(fast 模式):
+#   include "egui_fast";
+#   func on_click(id) { eg_set_text(2, "点击!"); }
+#   func on_close(id) { eg_quit(); }
+#   let win = eg_window("我的程序", 400, 300);
+#   eg_add("button", win, 1);  eg_set_pos(1, 20, 20);  eg_set_size(1, 120, 32);
+#   eg_set_text(1, "点我");
+#   eg_add("label",  win, 2);  eg_set_pos(2, 20, 60);  eg_set_size(2, 200, 24);
+#   eg_connect(1, "clicked", "on_click");
+#   eg_connect(win, "closed", "on_close");
+#   eg_app_run();          # 进入事件循环(信号自动分发到回调)
+#
+# 静态编译(无需外部 DLL):include "egui_static"; 加 eg_app_run 由 egui_fast 提供,
+#   或主程序直接 include "egui_fast" 并自写循环。见 examples/egui。
+
+include "egui";
+
+# 一键事件循环:泵消息并把每个信号分发给已连接的回调(回调统一签名 func cb(id))
+func eg_app_run() {
+    while eg_running() {
+        eg_poll();
+        while eg_next() != 0 {
+            let cb = eg_event_cb();
+            if cb != "" {
+                call(cb, eg_event_id());
+            }
+        }
+    }
+}
+
+# 便捷:创建窗口时一并进入事件循环
+func eg_app(title: string, w: int, h: int) -> int {
+    return eg_window(title, w, h);
+}
+
+# 便捷:给窗口设置统一客户区大小
+func eg_window_size(win: int, w: int, h: int) {
+    # 窗口尺寸含标题栏,这里保持原尺寸(由 eg_window 决定)
+}

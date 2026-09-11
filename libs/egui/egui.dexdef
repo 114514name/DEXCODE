@@ -1,0 +1,59 @@
+# egui.dexdef — EGUI(easyGUI)库接口(base 模式:直接引用 DLL 定义)
+#
+# 信号式设计:
+#   1) 控件用统一编号(int id)操纵
+#   2) eg_connect(id, "信号", "回调函数名") 注册信号回调
+#   3) 语言侧主循环驱动事件(eg_poll / eg_next / eg_event_*)
+#
+# 信号:clicked(按钮)、changed(复选框/单选/编辑/滑块)、
+#      selected(组合框/列表框)、closed(窗口关闭)
+#
+# 用法(base 模式):
+#   include "egui";
+#   func on_click(id) { ... }
+#   let win = eg_window("标题", 400, 300);
+#   eg_add("button", win, 1);
+#   eg_set_pos(1, 20, 20);  eg_set_size(1, 120, 32);
+#   eg_set_text(1, "点我");
+#   eg_connect(1, "clicked", "on_click");
+#   while eg_running() {
+#       eg_poll();
+#       while eg_next() != 0 {
+#           let cb = eg_event_cb();
+#           if cb != "" { call(cb, eg_event_id()); }
+#       }
+#   }
+#
+# 控件类型(kind):label / button / checkbox / radio / edit / edit_multi
+#                 / combo / list / slider / progress / group
+
+refer "libegui.dll";
+
+extern func eg_window(title: string, w: int, h: int) -> int;
+extern func eg_add(kind: string, parent: int, id: int) -> int;
+extern func eg_set_pos(id: int, x: int, y: int) -> int;
+extern func eg_set_size(id: int, w: int, h: int) -> int;
+extern func eg_set_text(id: int, text: string) -> int;
+extern func eg_get_text(id: int) -> string;
+extern func eg_set_value(id: int, v: int) -> int;
+extern func eg_get_value(id: int) -> int;
+extern func eg_add_item(id: int, text: string) -> int;
+extern func eg_clear_items(id: int) -> int;
+extern func eg_set_enabled(id: int, on: int) -> int;
+extern func eg_set_visible(id: int, on: int) -> int;
+extern func eg_connect(id: int, signal: string, cb: string) -> int;
+extern func eg_poll() -> int;
+extern func eg_running() -> int;
+extern func eg_quit() -> int;
+extern func eg_next() -> int;
+extern func eg_event_id() -> int;
+extern func eg_event_signal() -> string;
+extern func eg_event_cb() -> string;
+extern func eg_event_value() -> int;
+extern func eg_event_str() -> string;
+extern func eg_close(id: int) -> int;
+extern func eg_set_title(id: int, title: string) -> int;
+
+# 测试辅助(取原生窗口句柄,供自动化测试使用)
+extern func eg_win_hwnd(id: int) -> int;
+extern func eg_ctrl_hwnd(id: int) -> int;

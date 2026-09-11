@@ -1,0 +1,94 @@
+// demo_egui.dex — EGUI(easyGUI)控件演示(fast 模式)
+//
+// 运行: python main.py run examples/egui/demo_egui.dex
+// 或  python main.py compile examples/egui/demo_egui.dex 后运行 .dexbc
+//
+// 展示:窗口、标签、编辑框、按钮、复选框、单选、组合框、列表框、
+//       滑块、进度条、分组框;以及信号式回调(on_click/on_check/...)。
+//
+// 控件用统一编号(id)操纵;信号经 eg_connect 连接到语言函数。
+
+include "egui_fast_static";
+include "std";
+
+// ---- 信号回调(统一签名:func cb(id);额外值用 eg_event_value()/eg_event_str()) ----
+func on_click(id) {
+    eg_set_text(2, "你好, " + eg_get_text(3) + "!");
+    eg_set_value(12, eg_get_value(12) + 10);
+}
+
+func on_check(id) {
+    if eg_get_value(4) == 1 {
+        eg_set_text(2, "复选框:已勾选");
+    } else {
+        eg_set_text(2, "复选框:未勾选");
+    }
+}
+
+func on_radio(id) {
+    eg_set_text(2, "选择: " + eg_get_text(6) + " / " + eg_get_text(7));
+}
+
+func on_slider(id) {
+    eg_set_value(12, eg_event_value());
+    eg_set_text(13, "进度 " + eg_event_value() + "%");
+}
+
+func on_combo(id) {
+    eg_set_text(2, "组合框: " + eg_event_str());
+}
+
+func on_list(id) {
+    eg_set_text(2, "列表框: 第 " + eg_event_value() + " 项");
+}
+
+func on_close(id) {
+    eg_quit();
+}
+
+// ---- 界面 ----
+let win = eg_window("EGUI 控件演示", 540, 400);
+eg_connect(win, "closed", "on_close");
+
+// 状态栏
+eg_add("label", win, 1);  eg_set_pos(1, 20, 16);  eg_set_size(1, 60, 24);  eg_set_text(1, "状态:");
+eg_add("label", win, 2);  eg_set_pos(2, 80, 16);  eg_set_size(2, 320, 24); eg_set_text(2, "就绪");
+
+// 输入区
+eg_add("label", win, 14); eg_set_pos(14, 20, 48); eg_set_size(14, 80, 24); eg_set_text(14, "名字:");
+eg_add("edit", win, 3);   eg_set_pos(3, 100, 48); eg_set_size(3, 200, 26); eg_set_text(3, "世界");
+eg_add("button", win, 11); eg_set_pos(11, 320, 46); eg_set_size(11, 90, 30); eg_set_text(11, "问候");
+eg_connect(11, "clicked", "on_click");
+
+// 分组:选项
+eg_add("group", win, 20); eg_set_pos(20, 20, 90);  eg_set_size(20, 240, 120); eg_set_text(20, "选项");
+eg_add("checkbox", win, 4); eg_set_pos(4, 36, 118); eg_set_size(4, 200, 26); eg_set_text(4, "启用");
+eg_connect(4, "changed", "on_check");
+eg_add("radio", win, 6);  eg_set_pos(6, 36, 150);  eg_set_size(6, 90, 26);  eg_set_text(6, "方案 A");
+eg_add("radio", win, 7);  eg_set_pos(7, 140, 150); eg_set_size(7, 90, 26);  eg_set_text(7, "方案 B");
+eg_connect(6, "changed", "on_radio");
+eg_connect(7, "changed", "on_radio");
+
+// 分组:选择
+eg_add("group", win, 21); eg_set_pos(21, 280, 90); eg_set_size(21, 240, 120); eg_set_text(21, "选择");
+eg_add("combo", win, 5);  eg_set_pos(5, 296, 118); eg_set_size(5, 200, 26);
+eg_add_item(5, "苹果");
+eg_add_item(5, "香蕉");
+eg_add_item(5, "橙子");
+eg_connect(5, "selected", "on_combo");
+eg_add("list", win, 8);   eg_set_pos(8, 296, 152); eg_set_size(8, 200, 52);
+eg_add_item(8, "第一项");
+eg_add_item(8, "第二项");
+eg_add_item(8, "第三项");
+eg_connect(8, "selected", "on_list");
+
+// 分组:进度
+eg_add("group", win, 22); eg_set_pos(22, 20, 230); eg_set_size(22, 500, 130); eg_set_text(22, "进度");
+eg_add("slider", win, 9);  eg_set_pos(9, 36, 258);  eg_set_size(9, 320, 26);  eg_set_value(9, 30);
+eg_connect(9, "changed", "on_slider");
+eg_add("progress", win, 12); eg_set_pos(12, 36, 300); eg_set_size(12, 320, 26); eg_set_value(12, 30);
+eg_add("label", win, 13); eg_set_pos(13, 380, 302); eg_set_size(13, 120, 24); eg_set_text(13, "进度 30%");
+
+// ---- 事件循环(fast 模式自动分发信号) ----
+eg_app_run();
+print "退出";

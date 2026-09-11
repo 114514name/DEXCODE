@@ -1,0 +1,22 @@
+// 标准库静态链接演示:标准库 DLL 内嵌进字节码。
+// 运行只需 vm.exe + demo_std_static.dexbc(无需 Python、无需外部 DLL)。
+include "std_static";
+
+func clamp(v, lo, hi) {
+    return dex_imax(lo, dex_imin(v, hi));
+}
+
+print dex_abs(-42);                    // 42
+print dex_pow(3.0, 4.0);               // 81
+print clamp(10, 0, 7);                 // 7
+print dex_str_upper("static");         // STATIC
+print dex_str_repeat("go", 3);         // gogogo
+print dex_str_sub("abcdef", 2, 3);     // cde
+print dex_str_contains("hello", "ell");// 1
+print dex_write_file("_static_demo.txt", "static lib\n"); // 0
+print dex_read_file("_static_demo.txt");                  // static lib
+print dex_remove_file("_static_demo.txt");                // 0
+print dex_now_ms() > 0;                // 1
+dex_srand(7);
+print dex_rand() % 1000;               // 伪随机
+print "done";

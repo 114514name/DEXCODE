@@ -1,0 +1,43 @@
+include "stdlib/std_static";
+
+if dex_file_exists("password.txt"){
+	let content = dex_read_file("password.txt");
+	let check = 0;
+	let userpassword = "";
+	while check != 1 {
+		dex_out("请输入密码:");
+		userpassword = dex_input();
+		if userpassword == content{
+					check = 1;
+					print "密码正确";
+      }else{print "密码错误,重新输入";}
+     }
+
+     let exit = 0;
+		let index = "";
+		let user = "";
+     while exit!=1{
+						print "请输入要执行的命令:";
+						print "1.更改密码 2.退出程序 3.关于";
+						dex_out(">");
+						index = dex_input();
+      			if index == "1" {
+									dex_out("新密码:");
+									user = dex_input();
+									dex_write_file("password.txt",user);
+
+         				print "更改完成!";
+         }else if index == "2" {print "再见";exit = 1;}
+
+         else if index == "3"{print "V0.0.1 代码测试终端 by Minmus";}
+
+         else{print "未知的命令: " + index ; } 
+      			
+         }
+}else{
+	print "初次使用,请设定密码!";
+	dex_out(">");let user_password = dex_input();
+	dex_write_file("password.txt",user_password);
+	print("设置完成,请重启程序!");
+ 
+}

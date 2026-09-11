@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DexLang 快速入门指南</title>
+<style>
+  :root {
+    --bg: #1e1e2e;          /* base */
+    --bg2: #181825;         /* mantle */
+    --bg3: #313244;         /* surface0 */
+    --bg4: #45475a;         /* surface1 */
+    --text: #cdd6f4;
+    --sub: #a6adc8;
+    --dim: #6c7086;
+    --accent: #89b4fa;      /* blue */
+    --accent2: #f5c2e7;     /* pink */
+    --kw: #cba6f7;          /* mauve */
+    --str: #a6e3a1;         /* green */
+    --num: #fab387;         /* peach */
+    --com: #6c7086;
+    --nat: #89dceb;         /* sky */
+    --warn: #f9e2af;        /* yellow */
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    line-height: 1.7;
+  }
+  header {
+    background: linear-gradient(135deg, #11111b 0%, #1e1e2e 60%, #313244 100%);
+    border-bottom: 2px solid var(--bg4);
+    padding: 3rem 1.5rem 2.5rem;
+    text-align: center;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 2.4rem;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  header p { color: var(--sub); margin: .6rem auto 0; max-width: 720px; }
+  .badges { margin-top: 1rem; }
+  .badge {
+    display: inline-block;
+    background: var(--bg3);
+    color: var(--sub);
+    border: 1px solid var(--bg4);
+    border-radius: 999px;
+    padding: .2rem .9rem;
+    margin: .2rem;
+    font-size: .85rem;
+  }
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(24,24,37,.92);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--bg4);
+    padding: .55rem 1rem;
+    text-align: center;
+    overflow-x: auto; white-space: nowrap;
+  }
+  nav a {
+    color: var(--sub);
+    text-decoration: none;
+    margin: 0 .65rem;
+    font-size: .92rem;
+    transition: color .15s;
+  }
+  nav a:hover { color: var(--accent); }
+  main { max-width: 880px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  section { margin: 2.6rem 0; }
+  h2 {
+    font-size: 1.55rem;
+    color: var(--accent);
+    border-bottom: 2px solid var(--bg4);
+    padding-bottom: .35rem;
+    margin-top: 0;
+  }
+  h2 .n { color: var(--dim); margin-right: .5rem; font-weight: 400; }
+  h3 { font-size: 1.12rem; color: var(--accent2); margin: 1.4rem 0 .5rem; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  p code, li code, td code {
+    background: var(--bg3);
+    color: var(--nat);
+    border-radius: 4px;
+    padding: .1em .4em;
+    font-size: .9em;
+  }
+  pre {
+    background: var(--bg2);
+    border: 1px solid var(--bg4);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    line-height: 1.55;
+    font-size: .92rem;
+    margin: .7rem 0 1.2rem;
+  }
+  pre code { background: none; color: var(--text); padding: 0; }
+  .c-com { color: var(--com); font-style: italic; }
+  .c-str { color: var(--str); }
+  .c-num { color: var(--num); }
+  .c-kw  { color: var(--kw); font-weight: 600; }
+  .c-nat { color: var(--nat); }
+  .c-id  { color: var(--text); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: .8rem 0 1.2rem;
+    font-size: .93rem;
+  }
+  th, td {
+    border: 1px solid var(--bg4);
+    padding: .5rem .8rem;
+    text-align: left;
+  }
+  th { background: var(--bg3); color: var(--accent); }
+  tr:nth-child(even) td { background: rgba(49,50,68,.35); }
+  .tip, .warn {
+    border-radius: 10px;
+    padding: .8rem 1rem;
+    margin: 1rem 0;
+    font-size: .93rem;
+    border-left: 4px solid;
+  }
+  .tip { background: rgba(137,180,250,.1); border-color: var(--accent); }
+  .warn { background: rgba(249,226,175,.1); border-color: var(--warn); }
+  .tip strong { color: var(--accent); }
+  .warn strong { color: var(--warn); }
+  .flow {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+    justify-content: center; margin: 1.2rem 0;
+  }
+  .flow .step {
+    background: var(--bg3);
+    border: 1px solid var(--bg4);
+    border-radius: 8px;
+    padding: .45rem 1rem;
+    font-size: .9rem;
+  }
+  .flow .arrow { color: var(--accent); font-weight: 700; }
+  footer {
+    text-align: center;
+    color: var(--dim);
+    padding: 2rem;
+    border-top: 1px solid var(--bg4);
+    font-size: .85rem;
+  }
+  @media (max-width: 640px) { header h1 { font-size: 1.8rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>DexLang 快速入门指南</h1>
+  <p>从零开始,15 分钟学会用 DexLang 写程序、编译、运行,并调用原生库。面向完全没接触过本项目的初学者。</p>
+  <div class="badges">
+    <span class="badge">📖 教学语言</span>
+    <span class="badge">⚙️ 源码 → 汇编 → 字节码 → C 解释器</span>
+    <span class="badge">📦 自带标准库</span>
+    <span class="badge">🧩 可调用 DLL 原生库</span>
+    <span class="badge">🛠 内置 IDE(DEXIDE)</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#intro">简介</a>
+  <a href="#setup">安装</a>
+  <a href="#hello">第一个程序</a>
+  <a href="#syntax">语法速览</a>
+  <a href="#examples">完整示例</a>
+  <a href="#stdlib">标准库</a>
+  <a href="#faq">常见问题</a>
+  <a href="#next">下一步</a>
+</nav>
+
+<main>
+
+<!-- ===================== 简介 ===================== -->
+<section id="intro">
+  <h2><span class="n">01</span>DexLang 是什么?</h2>
+  <p>DexLang 是 <strong>DEXCODE</strong> 项目里的一门小巧的编程语言。它不是"玩具",而是一条完整、真实的编译链路:</p>
+  <div class="flow">
+    <span class="step">📄 源码 .dex</span><span class="arrow">→</span>
+    <span class="step">🔧 编译(Python 工具链)</span><span class="arrow">→</span>
+    <span class="step">📋 汇编 .dxasm</span><span class="arrow">→</span>
+    <span class="step">🧮 字节码 .dexbc</span><span class="arrow">→</span>
+    <span class="step">⚡ C 解释器执行(vm.exe)</span>
+  </div>
+  <p>有意思的是:<strong>编译出来的字节码运行起来不需要 Python</strong>,只需要一个纯 C 写的解释器
+  <code>vm.exe</code> 和字节码文件本身(还可以把 DLL 标准库<em>静态内嵌</em>进字节码,做到真正的单文件分发)。</p>
+  <ul>
+    <li>语法简单:只有 <code>let / if / while / func / print / include</code> 几个关键字</li>
+    <li>自带 <strong>IDE(DEXIDE)</strong>:语法高亮、自动补全、悬停提示、断点调试、一键运行</li>
+    <li>可以调用 <strong>C 编写的 DLL</strong>,还有一套 <strong>标准库</strong>(数学/字符串/文件/时间/随机)</li>
+    <li>项目内含 <code>docs/TUTORIAL.md</code>(12 章详细教程)与 <code>docs/SPEC.md</code>(语言规范)</li>
+  </ul>
+</section>
+
+<!-- ===================== 安装 ===================== -->
+<section id="setup">
+  <h2><span class="n">02</span>安装与准备</h2>
+  <h3>环境要求</h3>
+  <table>
+    <tr><th>软件</th><th>用途</th><th>必须?</th></tr>
+    <tr><td>Python 3.10+</td><td>编译工具链、DEXIDE</td><td>编译阶段需要</td></tr>
+    <tr><td>zig / gcc / clang</td><td>构建 C 虚拟机与示例 DLL</td><td>可选(构建时用)</td></tr>
+  </table>
+  <p>编译出的 <code>.dexbc</code> 运行时<strong>不需要 Python</strong>(见「常见问题」)。</p>
+
+  <h3>构建虚拟机(一次即可)</h3>
+  <pre><code class="lang-dex">python main.py build-vm</code></pre>
+  <p>该命令会自动寻找 <code>gcc / clang / cc</code> 或 <code>pip install ziglang</code> 提供的 zig,把
+  <code>vm/vm.c</code> 编译成 <code>vm/vm.exe</code>。想亲自动手也可以:</p>
+  <pre><code class="lang-dex">zig cc -target x86_64-windows-gnu -O2 -o vm/vm.exe vm/vm.c</code></pre>
+
+  <h3>快速自检</h3>
+  <pre><code class="lang-dex">python main.py compile examples/hello.dex
+python main.py run examples/hello.dexbc</code></pre>
+  <p>能看到下面这样的输出就说明环境没问题:</p>
+  <pre><code class="lang-dex">Hello, World!
+5
+3.5
+1
+-4
+10</code></pre>
+</section>
+
+<!-- ===================== 第一个程序 ===================== -->
+<section id="hello">
+  <h2><span class="n">03</span>第一个程序</h2>
+  <p>新建一个 <code>hello.dex</code>,写入:</p>
+  <pre><code class="lang-dex">// 这是我的第一个 DexLang 程序(注释以 // 开头)
+print "Hello, World!";
+print 1 + 2;          // 整数运算
+print 7 / 2;          // 除法恒为浮点 → 3.5
+print 2.5 * 4;        // 浮点运算 → 10
+print 10 % 3;         // 取模仅限整数 → 1</code></pre>
+  <p>然后编译、运行:</p>
+  <pre><code class="lang-dex">python main.py compile hello.dex
+python main.py run hello.dexbc</code></pre>
+  <div class="tip"><strong>提示:</strong>每条 <code>print</code> 输出一行。<code>/</code> 的结果<strong>总是浮点</strong>
+  (整数相除也一样),<code>%</code> 取模只允许整数。</div>
+  <p>也可以在 DEXIDE 里打开它,点工具栏「▶ 运行」一键执行:</p>
+  <pre><code class="lang-dex">python ide_main.py hello.dex</code></pre>
+</section>
+
+<!-- ===================== 语法速览 ===================== -->
+<section id="syntax">
+  <h2><span class="n">04</span>语法速览</h2>
+
+  <h3>注释</h3>
+  <pre><code class="lang-dex">// 单行注释,注释内容会被编译器忽略</code></pre>
+
+  <h3>变量</h3>
+  <p>用 <code>let</code> 声明变量,之后直接赋值。变量是<strong>函数作用域</strong>的,无需类型注解,类型自动推断。</p>
+  <pre><code class="lang-dex">let age = 18;        // 整数
+let pi = 3.14;       // 浮点
+let name = "DEX";    // 字符串
+let ok = true;       // 布尔
+age = age + 1;       // 重新赋值(不需要 let)</code></pre>
+
+  <h3>基本类型</h3>
+  <table>
+    <tr><th>类型</th><th>例子</th><th>说明</th></tr>
+    <tr><td>int</td><td><code>42</code> <code>-7</code></td><td>64 位整数</td></tr>
+    <tr><td>float</td><td><code>3.14</code> <code>2.5</code></td><td>64 位浮点</td></tr>
+    <tr><td>string</td><td><code>"hi"</code></td><td>UTF-8 文本,支持中文</td></tr>
+    <tr><td>bool</td><td><code>true</code> <code>false</code></td><td>布尔,由比较/逻辑运算产生</td></tr>
+  </table>
+
+  <h3>运算符</h3>
+  <table>
+    <tr><th>类别</th><th>运算符</th><th>说明</th></tr>
+    <tr><td>算术</td><td><code>+ - * / %</code></td><td><code>/</code> 恒为浮点;<code>%</code> 仅整数;<code>+</code> 遇字符串即拼接</td></tr>
+    <tr><td>比较</td><td><code>== != &lt; &lt;= &gt; &gt;=</code></td><td>结果为布尔;字符串可比较相等</td></tr>
+    <tr><td>逻辑</td><td><code>&amp;&amp; || !</code></td><td>短路求值;<code>!</code> 取反</td></tr>
+    <tr><td>一元</td><td><code>-</code></td><td>取负</td></tr>
+  </table>
+  <pre><code class="lang-dex">print 5 + 3 * 2;           // 11(先乘除后加减)
+print (5 + 3) * 2;          // 16(括号优先)
+print 3 &lt; 5;               // true
+print 3 &gt; 5 &amp;&amp; 1 == 1;    // false(&& 短路)
+print !false || true;       // true</code></pre>
+
+  <h3>字符串拼接 +</h3>
+  <p>当 <code>+</code> 的两边有一边是字符串,它就自动变成<strong>拼接</strong>——数字会
+  <strong>自动转成字符串</strong>,不用再写长长的调用:</p>
+  <pre><code class="lang-dex">print "Dex" + "Lang";       // DexLang
+let n = 42;
+print "n = " + n;           // n = 42
+print "pi ≈ " + 3.14159;    // pi ≈ 3.14159
+print 1 + 2;                // 3(两边都是数字,仍是加法)</code></pre>
+  <p>标准库也提供 <code>dex_str_concat(a, b)</code>(效果相同),当你明确想用标准库、
+  或需要可读性时可以用它(见第 06 节)。</p>
+
+  <h3>条件分支 if / else if / else</h3>
+  <pre><code class="lang-dex">let score = 75;
+if score &gt;= 90 {
+    print "A";
+} else if score &gt;= 60 {
+    print "B";
+} else {
+    print "C";
+}</code></pre>
+
+  <h3>循环 while</h3>
+  <p>只有 <code>while</code>,没有 for(但用 while 很容易写)。用 <code>i = i + 1</code> 让循环前进:</p>
+  <pre><code class="lang-dex">// 打印 1 到 5
+let i = 1;
+while i &lt;= 5 {
+    print i;
+    i = i + 1;
+}</code></pre>
+
+  <h3>函数 func / return</h3>
+  <pre><code class="lang-dex">func add(a, b) {
+    return a + b;
+}
+func greet(name) {
+    print "hi, " + name;    // + 遇字符串即拼接
+}
+print add(3, 4);          // 7</code></pre>
+
+  <h3>递归</h3>
+  <p>函数可以调用自己,这是处理"重复"的经典方式:</p>
+  <pre><code class="lang-dex">func fact(n) {
+    if n &lt;= 1 {
+        return 1;
+    }
+    return n * fact(n - 1);
+}
+print fact(10);           // 3628800</code></pre>
+</section>
+
+<!-- ===================== 完整示例 ===================== -->
+<section id="examples">
+  <h2><span class="n">05</span>完整示例</h2>
+
+  <h3>示例 A:斐波那契数列</h3>
+  <pre><code class="lang-dex">// fib.dex — 递归斐波那契
+func fib(n) {
+    if n &lt; 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let i = 0;
+while i &lt;= 10 {
+    print fib(i);
+    i = i + 1;
+}</code></pre>
+  <p>输出 <code>0 1 1 2 3 5 8 13 21 34 55</code>。</p>
+
+  <h3>示例 B:综合小工具(标准库)</h3>
+  <pre><code class="lang-dex">// stats.dex — 用标准库统计一列数(即 examples/std/stats_demo.dex)
+include "std";            // 引入标准库 libdexstd.dll
+
+func clamp(v, lo, hi) {   // 用本语言封装标准库
+    return dex_imax(lo, dex_imin(v, hi));
+}
+
+let sum = 0;
+let max = 0;
+let i = 0;
+while i &lt; 5 {
+    let v = dex_rand() % 100;   // 随机数 0..99
+    print "v = " + v;           // + 自动把数字转成字符串
+    sum = sum + v;
+    max = dex_imax(max, v);
+    i = i + 1;
+}
+print "sum = " + sum;
+print "max = " + max;
+print "pi = " + 3.14159;
+print "abs(-5) = " + dex_abs(-5);
+print "clamp(100, 0, 50) = " + clamp(100, 0, 50);</code></pre>
+  <div class="tip"><strong>说明:</strong><code>print</code> 每个值输出一行,所以用
+  <code>+</code> 拼接让"标签 + 值"出现在同一行;数字会自动转成字符串。
+  等价标准库写法:<code>dex_str_concat("sum = ", dex_itoa(sum))</code>(第 06 节有专门示例)。</div>
+
+  <h3>示例 C:调用 DLL 原生库</h3>
+  <pre><code class="lang-dex">// use_math.dex — include 一个定义文件,调用 DLL 里的函数
+include "native/math";    // 引入 native/math.dexdef(描述 libdexmath.dll 接口)
+
+print dex_add(2, 3);      // 5
+print dex_fact(5);        // 120
+print dex_sqrt(9.0);      // 3
+print dex_hello();        // hello from dll</code></pre>
+  <p><code>include</code> 从源码同目录(或 <code>-L</code> 目录)找 <code>xxx.dexdef</code>。
+  编译器会按定义文件里的声明<strong>检查参数个数与类型</strong>,写错会在编译期报错:</p>
+  <pre><code class="lang-dex">print dex_add(1, 2, 3);   // error: expects 2 argument(s), got 3
+print dex_fact("abc");    // error: expects an int, got a string literal</code></pre>
+</section>
+
+<!-- ===================== 标准库 ===================== -->
+<section id="stdlib">
+  <h2><span class="n">06</span>标准库</h2>
+  <p><code>libs/std/</code> 提供一套<strong>纯 C 实现</strong>的标准库 <code>libdexstd.dll</code>,
+  用 <code>include "std";</code> 引入,共 33 个函数:</p>
+  <table>
+    <tr><th>分组</th><th>函数</th></tr>
+    <tr><td>math 数学</td><td><code>dex_abs fabs pow fmin fmax imin imax floor ceil round</code></td></tr>
+    <tr><td>string 字符串</td><td><code>dex_strlen upper lower trim concat repeat sub contains itoa ftoa</code></td></tr>
+    <tr><td>io 文件/输入</td><td><code>dex_read_file write_file append_file file_exists remove_file input print out</code></td></tr>
+    <tr><td>time 时间</td><td><code>dex_now_ms sleep_ms</code></td></tr>
+    <tr><td>random 随机</td><td><code>dex_rand srand</code></td></tr>
+    <tr><td>system 系统</td><td><code>dex_system</code></td></tr>
+  </table>
+  <pre><code class="lang-dex">include "std";
+
+print dex_str_upper("hello");        // HELLO
+print dex_str_concat("foo", "bar");  // foobar
+dex_out("no newline ");               // 输出不自动换行
+dex_out("ok\n");                      // 字符串里的 \n 手动换行
+print dex_write_file("a.txt", "hi"); // 0(成功)
+print dex_read_file("a.txt");        // hi
+print dex_now_ms() &gt; 0;              // true(时间戳为正)</code></pre>
+  <p><code>dex_out</code> 与 <code>print</code> 的区别:不自动添加换行;需要换行时在字符串
+  里写 <code>\n</code>。适合精确控制输出格式(如进度条、格式化文本)。</p>
+  <p>演示程序见 <code>examples/std/demo_std.dex</code>;静态内嵌版(把 DLL 打包进字节码、
+  运行无需外部文件)见 <code>demo_std_static.dex</code>。</p>
+</section>
+
+<!-- ===================== FAQ ===================== -->
+<section id="faq">
+  <h2><span class="n">07</span>常见问题</h2>
+
+  <h3>Q1:为什么 <code>7 / 2</code> 等于 <code>3.5</code> 而不是 <code>3</code>?</h3>
+  <p>这是刻意设计:除法<strong>总是</strong>返回浮点,避免"整数除法的坑"。想要整数结果请用 <code>dex_floor(7.0 / 2.0)</code>
+  或取整函数。</p>
+
+  <h3>Q2:编译出的程序真的不需要 Python 吗?</h3>
+  <p>真的。运行时只需要两样东西:</p>
+  <pre><code class="lang-dex">vm.exe(纯 C 字节码解释器) + 你的 .dexbc(可内含静态链接的标准库)</code></pre>
+  <pre><code class="lang-dex"># 编译(此步需要 Python 工具链)
+python main.py compile examples/std/demo_std_static.dex
+# 之后完全脱离 Python 直接运行
+./vm/vm.exe examples/std/demo_std_static.dexbc</code></pre>
+  <p>原理:用 <code>refer static "xxx.dll";</code>(定义文件里)把 DLL 字节<strong>内嵌进字节码</strong>,
+  解释器运行时解包到临时文件加载并自动清理。</p>
+
+  <h3>Q3:中文会不会乱码?</h3>
+  <p>不会。全链路(源码 → 字节码 → 输出)都是 UTF-8。源码请保存为 UTF-8(可带 BOM);
+  在 PowerShell 里写含中文的测试脚本时注意编码,建议直接用编辑器/IDE 保存。</p>
+
+  <h3>Q4:<code>include</code> 找不到定义文件?</h3>
+  <p><code>include "native/math";</code> 会在<strong>源码所在目录</strong>以及 <code>-L</code> 参数指定的目录里找
+  <code>native/math.dexdef</code>。也可以直接用 <code>refer "相对路径/xxx.dexdef";</code> 精确指定。</p>
+
+  <h3>Q5:想在终端里看彩色输出 / 交互输入?</h3>
+  <p>在 DEXIDE 里用「<strong>终端</strong>」按钮:它会在系统默认终端(新窗口)里运行程序,支持 ANSI 彩色
+  (图片渲染)和 <code>dex_input()</code> 标准输入交互。</p>
+</section>
+
+<!-- ===================== 下一步 ===================== -->
+<section id="next">
+  <h2><span class="n">08</span>下一步</h2>
+  <ul>
+    <li><strong><code>docs/TUTORIAL.md</code></strong> — 12 章详细教程:从词法、语法、编译、汇编、字节码格式,
+      到 VM 实现、原生库、静态链接、DEXIDE,带你亲手搭出整条工具链</li>
+    <li><strong><code>docs/SPEC.md</code></strong> — 语言规范与字节码格式的权威参考</li>
+    <li><strong><code>examples/</code></strong> — 现成示例:<code>hello / loop / functions / fib / use_math /
+      use_img / std / ui</code></li>
+    <li><strong><code>libs/</code></strong> — 四个纯 C 库:math / std(标准库)/ img(图片渲染)/ ui(WinAPI 界面)</li>
+    <li><strong><code>tests/</code></strong> — 190+ 项自动化测试,既是保障也是"活的用法文档"</li>
+    <li><strong><code>docs/ui_guide.html</code></strong> — WinAPI 与 UI 库教学</li>
+    <li>试试动手:给 <code>libs/math/libdexmath.c</code> 加一个 <code>dex_pow</code>,同步到 <code>math.dexdef</code>,
+      再在 DexLang 里调用它</li>
+  </ul>
+  <div class="tip"><strong>祝你玩得开心!</strong> 建议按顺序读 <code>examples/hello.dex → loop.dex →
+  functions.dex → fib.dex → math/use_math.dex → std/demo_std.dex → ui/demo_ui.dex</code>,一路把语法串起来。</div>
+</section>
+
+</main>
+
+<footer>
+  DexLang 快速入门 · DEXCODE 项目 · 源码 → 汇编 → 字节码 → C 解释器 · 学习用教学语言
+</footer>
+
+<script>
+  // 极简 DexLang 语法高亮(零依赖)
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  const KW = new Set(["let","if","else","while","func","return","print",
+                      "true","false","include","refer","extern"]);
+  function hl(code) {
+    const re = /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|(.)/g;
+    let out = "", m;
+    while ((m = re.exec(code))) {
+      if (m[1] !== undefined)      out += '<span class="c-com">' + esc(m[1]) + '</span>';
+      else if (m[2] !== undefined) out += '<span class="c-str">' + esc(m[2]) + '</span>';
+      else if (m[3] !== undefined) out += '<span class="c-num">' + esc(m[3]) + '</span>';
+      else if (m[4] !== undefined) {
+        if (KW.has(m[4]))          out += '<span class="c-kw">' + m[4] + '</span>';
+        else if (m[4].indexOf("dex_") === 0) out += '<span class="c-nat">' + m[4] + '</span>';
+        else                       out += '<span class="c-id">' + m[4] + '</span>';
+      }
+      else if (m[5] !== undefined) out += esc(m[5]);
+      else                         out += esc(m[6]);
+    }
+    return out;
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("code.lang-dex").forEach(function (el) {
+      el.innerHTML = hl(el.textContent);
+    });
+  });
+</script>
+</body>
+</html>

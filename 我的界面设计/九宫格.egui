@@ -1,0 +1,162 @@
+{
+  "title": "九宫格",
+  "width": 640,
+  "height": 640,
+  "widgets": [
+    {
+      "kind": "button",
+      "id": 1,
+      "text": "#",
+      "x": 60,
+      "y": 80,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "1_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 3,
+      "text": "#",
+      "x": 380,
+      "y": 80,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "3_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 5,
+      "text": "#",
+      "x": 220,
+      "y": 240,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "5_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 4,
+      "text": "#",
+      "x": 60,
+      "y": 240,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "4_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 2,
+      "text": "#",
+      "x": 220,
+      "y": 80,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "2_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 9,
+      "text": "#",
+      "x": 380,
+      "y": 400,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "9_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 8,
+      "text": "#",
+      "x": 220,
+      "y": 400,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "8_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 7,
+      "text": "#",
+      "x": 60,
+      "y": 400,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "7_c"
+        ]
+      ]
+    },
+    {
+      "kind": "button",
+      "id": 6,
+      "text": "#",
+      "x": 380,
+      "y": 240,
+      "w": 140,
+      "h": 140,
+      "signals": [
+        [
+          "clicked",
+          "6_c"
+        ]
+      ]
+    },
+    {
+      "kind": "label",
+      "id": 0,
+      "text": "当前出手:",
+      "x": 60,
+      "y": 560,
+      "w": 100,
+      "h": 24,
+      "signals": []
+    },
+    {
+      "kind": "label",
+      "id": 16,
+      "text": "消息:",
+      "x": 60,
+      "y": 606,
+      "w": 100,
+      "h": 24,
+      "signals": []
+    }
+  ]
+}

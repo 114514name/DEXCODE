@@ -1,0 +1,77 @@
+# ============================================================
+# DEXCODE .gitignore
+#
+# 策略:黑名单 —— 明确列出「构建/打包/临时/生成产物」,其余源文件正常纳入。
+# 早先尝试过"先忽略一切再按扩展名放行"的写法,但 `*` + `!*/` + `!*.dex`
+# 会让 git 重新遍历被排除的打包目录(见 git 对 `dir/` 与 `!dir/file` 的规则),
+# 导致 build312/ 与 DEXCODE-发布/ 被误纳入。故改用本写法。
+#
+# 注意:本文件与所有源文件均为 UTF-8(无 BOM)。
+#       不要用 PowerShell 的 Set-Content 重写文本文件 —— 它会把 UTF-8
+#       内容按 GBK 解读后重新写出,造成中文注释乱码。
+# ============================================================
+
+# ---------- 打包 / 发行产物(内含 vm.c 等源码快照,非工作源)----------
+build/
+build312/
+DEXCODE-发布/
+
+# ---------- Python 环境与缓存 ----------
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---------- 测试 / 构建沙箱与临时目录 ----------
+/_t/
+/_zt/
+/_zigtmp/
+/_zigtmp2/
+/_zigcache/
+/_zigcache2/
+/_exp_ok/
+/_whale_balance_tmp/
+/.pytest_cache/
+/.zig-cache/
+/zig-cache/
+
+# ---------- 编译器 / 汇编器 / 导出器的生成产物 ----------
+# 均可由 .dex 源码完整重建,不入库
+*.dxasm
+*.dexbc
+*.do
+scene_out.dex
+snow_out.dex
+scene_test.dex
+*_out.dxasm
+
+# ---------- 根目录一次性调试脚本与导出(以 _ 开头)----------
+/_*
+
+# ---------- 报告 / 日志 / 调试符号 / 中间目标 ----------
+nuitka-crash-report.xml
+*.log
+*.pdb
+*.o
+*.obj
+_trace.txt
+_t.dex
+_t.dexbc
+_native_test*
+
+# ---------- 二进制规则 ----------
+# *.exe / *.dll 默认排除,但下列是运行示例与测试所必需,
+# 而仓库当前缺少库的构建脚本(仅 vm 有 python main.py build-vm)。
+# 故显式放行;待补齐 libs/* BUILD 脚本后应改为排除。
+*.exe
+*.dll
+!vm/vm.exe
+!vm/vmnc.exe
+!vm/galrun.exe
+!libs/math/libdexmath.dll
+!libs/std/libdexstd.dll
+!libs/img/libdeximg.dll
+!libs/ui/libdexui.dll
+!libs/egui/libegui.dll
+!libs/gal/libdexxgal.dll

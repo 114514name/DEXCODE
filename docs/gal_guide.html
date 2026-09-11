@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GAL 引擎与蓝图编辑器教学</title>
+<style>
+  :root {
+    --bg: #1e1e2e; --bg2: #181825; --bg3: #313244; --bg4: #45475a;
+    --text: #cdd6f4; --sub: #a6adc8; --dim: #6c7086;
+    --accent: #89b4fa; --accent2: #f5c2e7;
+    --kw: #cba6f7; --str: #a6e3a1; --num: #fab387;
+    --com: #6c7086; --nat: #89dceb; --warn: #f9e2af;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.7; }
+  header { background: linear-gradient(135deg,#11111b,#1e1e2e 60%,#313244);
+    border-bottom: 2px solid var(--bg4); padding: 3rem 1.5rem 2.5rem; text-align: center; }
+  header h1 { margin: 0; font-size: 2.4rem;
+    background: linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { color: var(--sub); margin: .6rem auto 0; max-width: 780px; }
+  .badges { margin-top: 1rem; }
+  .badge { display: inline-block; background: var(--bg3); color: var(--sub);
+    border: 1px solid var(--bg4); border-radius: 999px; padding: .2rem .9rem;
+    margin: .2rem; font-size: .85rem; }
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(24,24,37,.92);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--bg4);
+    padding: .55rem 1rem; text-align: center; overflow-x: auto; white-space: nowrap; }
+  nav a { color: var(--sub); text-decoration: none; margin: 0 .6rem; font-size: .92rem; }
+  nav a:hover { color: var(--accent); }
+  main { max-width: 920px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  section { margin: 2.6rem 0; }
+  h2 { font-size: 1.55rem; color: var(--accent); border-bottom: 2px solid var(--bg4);
+    padding-bottom: .35rem; margin-top: 0; }
+  h2 .n { color: var(--dim); margin-right: .5rem; font-weight: 400; }
+  h3 { font-size: 1.15rem; color: var(--accent2); margin: 1.6rem 0 .5rem; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  p code, li code, td code { background: var(--bg3); color: var(--nat);
+    border-radius: 4px; padding: .1em .4em; font-size: .9em; }
+  pre { background: var(--bg2); border: 1px solid var(--bg4); border-radius: 10px;
+    padding: 1rem 1.2rem; overflow-x: auto; line-height: 1.55; font-size: .92rem;
+    margin: .7rem 0 1.2rem; }
+  pre code { background: none; color: var(--text); padding: 0; }
+  .c-com { color: var(--com); font-style: italic; }
+  .c-str { color: var(--str); }
+  .c-num { color: var(--num); }
+  .c-kw  { color: var(--kw); font-weight: 600; }
+  .c-nat { color: var(--nat); }
+  table { width: 100%; border-collapse: collapse; margin: .8rem 0 1.2rem; font-size: .92rem; }
+  th, td { border: 1px solid var(--bg4); padding: .5rem .8rem; text-align: left; }
+  th { background: var(--bg3); color: var(--accent); }
+  tr:nth-child(even) td { background: rgba(49,50,68,.35); }
+  .tip, .warn { border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0;
+    font-size: .93rem; border-left: 4px solid; }
+  .tip { background: rgba(137,180,250,.1); border-color: var(--accent); }
+  .warn { background: rgba(249,226,175,.1); border-color: var(--warn); }
+  .tip strong { color: var(--accent); }
+  .warn strong { color: var(--warn); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+    justify-content: center; margin: 1.2rem 0; }
+  .flow .step { background: var(--bg3); border: 1px solid var(--bg4);
+    border-radius: 8px; padding: .45rem 1rem; font-size: .9rem; }
+  .flow .arrow { color: var(--accent); font-weight: 700; }
+  footer { text-align: center; color: var(--dim); padding: 2rem;
+    border-top: 1px solid var(--bg4); font-size: .85rem; }
+  @media (max-width: 640px) { header h1 { font-size: 1.8rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>GAL 引擎与蓝图编辑器</h1>
+  <p>用 DEXCODE 制作视觉小说 / GALgame:引擎是纯 C 的 <code>libdexxgal.dll</code>(渲染与交互),
+    场景用 UE 风格的<strong>蓝图节点编辑器</strong>(Python + tkinter)可视化设计,
+    一键导出 DexLang 代码、编译并运行。成品运行时无需 Python、无需任何第三方库。</p>
+  <div class="badges">
+    <span class="badge">纯 C 引擎 DLL</span>
+    <span class="badge">UE 风格蓝图编辑器</span>
+    <span class="badge">打字机/选项/音频</span>
+    <span class="badge">菜单/存档点/跳转</span>
+    <span class="badge">主题/樱花/拖尾</span>
+    <span class="badge">编译内置 · 一键运行</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#intro">简介</a>
+  <a href="#quickstart">快速上手</a>
+  <a href="#ui">编辑器界面</a>
+  <a href="#blocks">指令块</a>
+  <a href="#menu">菜单编辑</a>
+  <a href="#run">运行与导出</a>
+  <a href="#api">引擎 API</a>
+  <a href="#theme">主题与外观</a>
+  <a href="#checkpoint">存档点/跳转</a>
+  <a href="#scene">场景文件</a>
+  <a href="#vms">VM 与打包</a>
+  <a href="#faq">常见问题</a>
+</nav>
+
+<main>
+
+<!-- ================= 简介 ================= -->
+<section id="intro">
+  <h2><span class="n">01</span>GAL 引擎是什么?</h2>
+  <p>GAL 引擎是 DEXCODE 的视觉小说引擎,由两部分组成:</p>
+  <ul>
+    <li><strong>引擎</strong>:<code>libs/gal/libdexxgal.dll</code> 用纯 C + Win32 GDI 实现
+      (图片解码用单文件 <code>stb_image.h</code>,支持 PNG/JPEG/BMP 含透明通道;音频用系统
+      <code>mci</code> 播放 WAV/MP3),零第三方运行时依赖。</li>
+    <li><strong>编辑器</strong>:<code>gal_main.py</code>(Python + tkinter)启动的
+      <strong>蓝图节点编辑器</strong>——UE / Scratch 风格,拖块、连线、所见即所得预览,
+      导出 DexLang 代码后由 <code>vm/galrun.exe</code> 运行。</li>
+  </ul>
+  <p><strong>能力</strong>:背景图/纯色、角色立绘(4 图层,带透明)、打字机文本、点击推进、
+    选项分支、BGM 循环/音效、截图;<strong>文字位置</strong>(中间/左/右/偏左/偏右)、
+    <strong>对话框风格</strong>(有头像/人名/自适应)、<strong>立绘动画</strong>
+    (呼吸/淡入/上浮/抖动/脉冲/消失)、<strong>场景特效</strong>(滤镜)、<strong>菜单系统</strong>
+    (按钮/文字/图片/面板/输入框)、<strong>存档点/跳转</strong>、<strong>外观主题</strong>(含樱花)、
+    <strong>鼠标拖尾</strong>。</p>
+  <div class="flow">
+    <span class="step">蓝图编辑器设计镜头/菜单</span><span class="arrow">→</span>
+    <span class="step">导出 DexLang 代码</span><span class="arrow">→</span>
+    <span class="step">内置编译 .dexbc</span><span class="arrow">→</span>
+    <span class="step">galrun.exe 运行/发布</span>
+  </div>
+</section>
+
+<!-- ================= 快速上手 ================= -->
+<section id="quickstart">
+  <h2><span class="n">02</span>快速上手</h2>
+  <p>开发时启动编辑器(需 Python 3.10+,纯标准库,无第三方依赖):</p>
+  <pre><code>python gal_main.py                 <span class="c-com"># 新建项目</span>
+python gal_main.py 作品.galscene   <span class="c-com"># 打开现有场景(发布版:gal_main.exe 双击即可)</span></code></pre>
+  <p>打开后界面左侧是<strong>镜头 / 块 / 菜单 / 人物 / 项目 / 全局设置</strong> 六个页签,
+    中间是大画布(UE 蓝图式节点),右侧是属性面板。快速体验:</p>
+  <ol>
+    <li>在左侧「块」页签点击 <strong>说话</strong> 添加到画布,右侧填入说话人与文本。</li>
+    <li>再点「镜头」页签设置背景图/纯色。</li>
+    <li>点工具栏 <strong>▶ 运行</strong>:自动导出 → 内置编译 → 弹出 <code>galrun.exe</code>
+      游戏窗口。关闭窗口即结束,可继续编辑。</li>
+  </ol>
+  <p class="tip"><strong>运行条件</strong>:需要 <code>vm/galrun.exe</code> 与
+    <code>libs/gal/libdexxgal.dll</code> 在编辑器目录下(发布版已随包附带;开发版就在项目根目录)。
+    <strong>编译已内置</strong>,无需配置 Python 解释器、无需命令行。</p>
+  <p>也可以跳过编辑器,直接用 DexLang 手写场景(见 <code>examples/gal/demo_gal.dex</code>):</p>
+  <pre><code><span class="c-kw">include</span> <span class="c-str">"gal"</span>;
+<span class="c-kw">func</span> wait_click() {
+    <span class="c-kw">while</span> gal_running() {
+        gal_poll();
+        <span class="c-kw">if</span> gal_text_done() && gal_clicked() { <span class="c-kw">return</span>; }
+        gal_wait(16);
+    }
+}
+gal_init(960, 540);
+gal_set_title(<span class="c-str">"星之语"</span>);
+gal_bg_color(0x101018);
+gal_speaker(<span class="c-str">"小雨"</span>);
+gal_text(<span class="c-str">"早上好!今天也来得好早呢。"</span>);
+wait_click();
+gal_text_clear();
+gal_close();</code></pre>
+  <p>命令行编译运行(开发工具链):</p>
+  <pre><code>python main.py compile examples/gal/demo_gal.dex
+vm/vm.exe examples/gal/demo_gal.dexbc</code></pre>
+  <p class="tip"><strong>资源路径</strong>:蓝图里填的图片/音频路径<strong>相对项目根目录</strong>;
+    示例资源在 <code>examples/gal/res/</code>。运行时代码里的路径相对 VM 进程的工作目录(即项目根)。</p>
+</section>
+
+<!-- ================= 编辑器界面 ================= -->
+<section id="ui">
+  <h2><span class="n">03</span>编辑器界面</h2>
+  <p>编辑器是 UE 风格的<strong>节点蓝图</strong>(参考 Scratch / UE Blueprint):</p>
+  <ul>
+    <li><strong>顶部菜单/工具栏</strong>:新建 / 打开 / 保存 / 导出代码 / 完整资源导出 /
+      <strong>🧹 自动整理</strong>(一键重排当前画布节点)/ <strong>▶ 运行</strong> / ■ 停止。</li>
+    <li><strong>左侧六页签</strong>:
+      <ul>
+        <li><strong>镜头</strong>:项目镜头列表(一个镜头 = 一个舞台场景),＋/改名/－删。</li>
+        <li><strong>块</strong>:可滚动指令块面板,<strong>点击即添加</strong>到当前镜头,
+          或<strong>按住拖到画布</strong>指定位置。</li>
+        <li><strong>菜单</strong>:MENU 菜单场景管理(新建/编辑/删除/导入/导出),双击菜单名打开菜单编辑器。</li>
+        <li><strong>人物</strong>:人物集管理——每个人物含多张<strong>状态图</strong>(表情/姿态),立绘块直接引用"人物+状态"。</li>
+        <li><strong>项目</strong>:游戏标题、窗口尺寸、背景目录、项目根目录等。</li>
+        <li><strong>全局设置</strong>:新建块的默认属性(外观风格/文本/立绘/背景),单个块仍可单独覆盖。</li>
+      </ul>
+    </li>
+    <li><strong>中央画布</strong>:节点从上到下沿<strong>白色 exec 连线</strong>顺序执行;
+      <strong>青色 value 连线</strong>传递数据(变量/运算/字面量)。滚轮缩放、拖节点移动、
+      拖引脚连线、右键菜单、Ctrl+Z 撤销 / Ctrl+Y 重做。</li>
+    <li><strong>右侧属性面板</strong>:选中块后编辑参数(文本、人物状态、动画、数值等)。</li>
+  </ul>
+  <p class="tip"><strong>自动整理</strong>:节点多了乱成一团时点工具栏「🧹 自动整理」,
+    会把当前镜头所有节点按流程重排成整洁的列。</p>
+</section>
+
+<!-- ================= 指令块 ================= -->
+<section id="blocks">
+  <h2><span class="n">04</span>指令块</h2>
+  <p>每个节点 = 一条指令;除纯数据节点(字面量/变量/运算)外都挂在 exec 主线上顺序执行。</p>
+  <table>
+    <tr><th>块</th><th>说明</th></tr>
+    <tr><td><strong>说话</strong></td><td>一句话 + 说话人,点击推进。参数:文字位置、显示人名、
+      使用人物集(头像)、对话框自适应、逐字速度。</td></tr>
+    <tr><td><strong>长对话</strong></td><td>连续多句自动播放(不打断立绘),适合长台词。</td></tr>
+    <tr><td><strong>显示立绘</strong></td><td>人物+状态(或直接图片),图层 0–3、预设位置、缩放、
+      透明度、动画(呼吸/淡入/上浮/抖动/脉冲/消失)、适配。</td></tr>
+    <tr><td><strong>显示背景</strong></td><td>背景图或纯色,适配模式(拉伸/原尺寸/完整/填满)。</td></tr>
+    <tr><td><strong>选项框</strong></td><td>问题文本 + 2–4 个选项分支,按选择进入对应支线。</td></tr>
+    <tr><td><strong>代码框</strong></td><td>直接写一段 DexLang 代码内嵌执行(高级)。</td></tr>
+    <tr><td><strong>定义变量 / 改变变量 / 变量取值</strong></td><td>变量的声明 / 赋值 / 读取
+      (数字/文本/布尔)。</td></tr>
+    <tr><td><strong>如果</strong></td><td>条件分支:条件满足走"真"输出。</td></tr>
+    <tr><td><strong>逻辑运算 / 运算</strong></td><td>== != &gt; &lt; 等比较,与 + - * / % ^ 等算术。</td></tr>
+    <tr><td><strong>镜头控制</strong></td><td>跳转到其它镜头 / 结束游戏。</td></tr>
+    <tr><td><strong>添加/取消场景特效</strong></td><td>滤镜类特效(强度可调)。</td></tr>
+    <tr><td><strong>菜单</strong></td><td>运行一个 MENU 菜单(独占/叠加),可传参数、取退出结果。</td></tr>
+    <tr><td><strong>文本拼接 / 动态文本</strong></td><td>A+B+C 拼接;显示变量值/字面文本。</td></tr>
+    <tr><td><strong>读取输入框</strong></td><td>读取菜单输入框的当前文字(与菜单配合)。</td></tr>
+    <tr><td><strong>随机数 / 等待</strong></td><td>0..N 随机;等待毫秒。</td></tr>
+    <tr><td><strong>数据输出点 / 场景数据</strong></td><td>把数据送出场景;引用其它场景的数据输出点。</td></tr>
+    <tr><td><strong>BGM/SE/停止声音/切换声音</strong></td><td>音频控制。</td></tr>
+    <tr><td><strong>柔和换背景/柔和切镜头</strong></td><td>交叉淡化转场。</td></tr>
+    <tr><td><strong>消息提示</strong></td><td>角落 Toast 提示(0–3 角)。</td></tr>
+    <tr><td><strong>存档/读档/写文件/读文件</strong></td><td>变量存文件/读文件;文本文件读写。</td></tr>
+    <tr><td><strong>存档点/跳转到存档点</strong></td><td>记录当前位置;跳转后从该点继续(见 §09)。</td></tr>
+  </table>
+  <p><strong>数据流</strong>:变量取值/字面量/运算等节点输出青色 value 引脚,连到
+    "说话""改变变量""如果"等块的输入即可动态传值;生成代码时会以内联表达式展开。</p>
+</section>
+
+<!-- ================= 菜单编辑 ================= -->
+<section id="menu">
+  <h2><span class="n">05</span>菜单编辑(MENU 场景)</h2>
+  <p>在左侧「菜单」页签 <strong>＋菜单</strong> 新建一个菜单,双击名字打开菜单编辑器。
+    菜单 = 一套可交互界面(主菜单/设置/存档页/输入框对话等),控件浮在游戏画面上。</p>
+  <table>
+    <tr><th>节点</th><th>说明</th></tr>
+    <tr><td><strong>控件</strong></td><td>按钮 / 文字 / 图片 / 面板 / 输入框;设置位置、尺寸、
+      文字、图片与适配。</td></tr>
+    <tr><td><strong>点击起点</strong></td><td>"当某控件被点击时…",连出后续逻辑。</td></tr>
+    <tr><td><strong>信号起点</strong></td><td>"收到某信号时…"(与 <code>gal_signal_emit</code> 联动)。</td></tr>
+    <tr><td><strong>退出</strong></td><td>结束菜单并返回结果(结果名可被镜头里的菜单块读取)。</td></tr>
+    <tr><td><strong>数据入口</strong></td><td>镜头调用菜单时传入的参数(菜单块 → 菜单的输入)。</td></tr>
+    <tr><td><strong>跳转镜头</strong></td><td>结束菜单并直接跳转到指定镜头。</td></tr>
+  </table>
+  <p>菜单编辑器里也能用变量/运算/逻辑/字面量/文件/消息/等待/读输入框等数据块做逻辑。</p>
+  <p class="tip"><strong>输入框数据</strong>:菜单里的<strong>输入框</strong>控件会自动生成一个青色
+    数据输出口(名字=控件名),连出去即可把玩家输入传给变量;镜头侧用「读取输入框」块也能取。</p>
+  <p>菜单在镜头里通过 <strong>菜单</strong> 块运行(选菜单、模式:独占 modal / 叠加 overlay);
+    叠加菜单的退出节点自动生成输出口,可接后续流程。</p>
+</section>
+
+<!-- ================= 运行与导出 ================= -->
+<section id="run">
+  <h2><span class="n">06</span>运行与导出</h2>
+  <h3>▶ 运行(开发预览)</h3>
+  <p>工具栏「▶ 运行」:把整个项目导出为 <code>scene_out.dex</code> → <strong>进程内编译</strong>
+    成 <code>.dexbc</code> → 用 <code>vm/galrun.exe</code> 打开独立游戏窗口。
+    关闭窗口即结束,可继续编辑;点「■ 停止」可强杀残留进程。</p>
+  <h3>导出代码</h3>
+  <p>「文件 → 导出代码」把当前项目导出一个 <code>.dex</code> 文件(单文件 DexLang),可手工查看/分发。</p>
+  <h3>完整资源导出</h3>
+  <p>「文件 → 完整资源导出」选一个输出目录,生成:</p>
+  <pre><code>输出目录/
+  scene_out.dex      <span class="c-com"># 代码</span>
+  res/               <span class="c-com"># 按项目目录结构复制的引用图片/音频</span>
+  scene_out.dexbc    <span class="c-com"># 可选:同时输出字节码(设置里开启)</span>
+  libdexxgal.dll     <span class="c-com"># portable 模式:引擎 DLL(文件夹自包含)</span></code></pre>
+  <p class="tip"><strong>库链接模式</strong>(项目设置):
+    <code>static</code>=引擎内嵌进字节码(单文件,换机免 DLL,默认);
+    <code>portable</code>=文件夹自包含(带 DLL,相对路径引用)。</p>
+</section>
+
+<!-- ================= 引擎 API ================= -->
+<section id="api">
+  <h2><span class="n">07</span>引擎 API</h2>
+  <p>引擎能力以 <code>gal_*</code> 函数暴露给 DexLang(蓝图导出的代码最终就是调用它们)。</p>
+  <h3>窗口 / 基础</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_init(w, h)</code></td><td>创建引擎窗口(客户区 w×h),返回 1 成功</td></tr>
+    <tr><td><code>gal_set_title(s)</code></td><td>设置窗口标题</td></tr>
+    <tr><td><code>gal_running()</code></td><td>窗口是否仍打开</td></tr>
+    <tr><td><code>gal_poll()</code></td><td>泵消息 + 推进打字机 + 渲染一帧</td></tr>
+    <tr><td><code>gal_wait(ms)</code></td><td>等待毫秒</td></tr>
+    <tr><td><code>gal_rand(max)</code></td><td>随机整数 0..max-1</td></tr>
+    <tr><td><code>gal_close()</code></td><td>关闭引擎</td></tr>
+  </table>
+  <h3>背景</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_bg(path)</code></td><td>加载并显示背景图</td></tr>
+    <tr><td><code>gal_bg_color(0xRRGGBB)</code></td><td>纯色背景</td></tr>
+    <tr><td><code>gal_bg_fit(mode)</code></td><td>适配:0拉伸 1原尺寸 2保持比例完整 3保持比例填满</td></tr>
+    <tr><td><code>gal_bg_trans(path, ms)</code></td><td>柔和换背景:新旧交叉淡化</td></tr>
+  </table>
+  <h3>立绘(4 图层,id 0–3)</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_sprite(id, path)</code></td><td>加载立绘图像(支持 PNG 透明)</td></tr>
+    <tr><td><code>gal_sprite_pos(id, x)</code></td><td>水平位置(底部对齐)</td></tr>
+    <tr><td><code>gal_sprite_scale(id, pct)</code></td><td>缩放百分比(5–500)</td></tr>
+    <tr><td><code>gal_sprite_show(id, on)</code></td><td>显示/隐藏</td></tr>
+    <tr><td><code>gal_sprite_pos_mode(id, pos)</code></td><td>0中 1左 2右 3偏左 4偏右</td></tr>
+    <tr><td><code>gal_sprite_fit(id, mode)</code></td><td>适配:0拉伸 1原尺寸 2保持比例完整 3保持比例填满</td></tr>
+    <tr><td><code>gal_sprite_anim(id, anim)</code></td><td>0无 1呼吸 2淡入 3上浮 4抖动 5脉冲 6消失</td></tr>
+    <tr><td><code>gal_sprite_xy(id, x, y)</code></td><td>精确坐标(手动模式)</td></tr>
+    <tr><td><code>gal_sprite_alpha(id, a)</code></td><td>透明度 0–255(高亮/变暗)</td></tr>
+  </table>
+  <h3>文本(打字机)</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_text(s)</code></td><td>设置待显示文本,打字机逐字出现</td></tr>
+    <tr><td><code>gal_text_done()</code></td><td>打字机是否已完整显示</td></tr>
+    <tr><td><code>gal_text_clear()</code></td><td>清空文本与说话人</td></tr>
+    <tr><td><code>gal_speaker(s)</code></td><td>设置说话人名称</td></tr>
+    <tr><td><code>gal_text_color(0xRRGGBB)</code></td><td>文本颜色</td></tr>
+    <tr><td><code>gal_text_size(px)</code></td><td>文本字号(8–72)</td></tr>
+    <tr><td><code>gal_text_pos(pos)</code></td><td>0中间 1左 2右 3偏左 4偏右</td></tr>
+    <tr><td><code>gal_text_mode(mode)</code></td><td>0逐字 1直接全部 2先空框点击后显示</td></tr>
+    <tr><td><code>gal_text_speed(ms)</code></td><td>逐字间隔毫秒/字(0=默认40)</td></tr>
+    <tr><td><code>gal_box(on)</code></td><td>显示/隐藏对话框</td></tr>
+    <tr><td><code>gal_box_style(avatar, name)</code></td><td>对话框风格:有头像 / 显示人名</td></tr>
+    <tr><td><code>gal_box_autofit(on)</code></td><td>对话框宽度自适应</td></tr>
+    <tr><td><code>gal_clicked()</code></td><td>玩家是否点击过(打字中=显示全部,完成后=翻页)</td></tr>
+    <tr><td><code>gal_skip(on)</code></td><td>跳过打字(立即显示完整)</td></tr>
+  </table>
+  <h3>选项</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_set_choice(i, s)</code></td><td>设置第 i 个选项文本(0–3)</td></tr>
+    <tr><td><code>gal_show_choices()</code></td><td>显示选项按钮</td></tr>
+    <tr><td><code>gal_picked()</code></td><td>玩家选中的索引(未选为 -1)</td></tr>
+    <tr><td><code>gal_hide_choices()</code></td><td>隐藏选项</td></tr>
+  </table>
+  <h3>变量 / 数据</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_var_set(name, value)</code></td><td>设置字符串变量(第二参数为 string)</td></tr>
+    <tr><td><code>gal_var_get(name)</code></td><td>取字符串变量</td></tr>
+    <tr><td><code>gal_var_num(name)</code></td><td>取数值变量</td></tr>
+    <tr><td><code>gal_itoa(v)</code></td><td>整数 → 字符串</td></tr>
+    <tr><td><code>gal_atof(s)</code></td><td>字符串 → 浮点</td></tr>
+    <tr><td><code>gal_ftoa(f)</code></td><td>浮点 → 字符串</td></tr>
+  </table>
+  <h3>文件 / 存档</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_file_write(path, content)</code></td><td>写文本文件(覆盖)</td></tr>
+    <tr><td><code>gal_file_read(path)</code></td><td>读文本文件</td></tr>
+    <tr><td><code>gal_save_vars(path)</code></td><td>把所有变量存入文件(存档)</td></tr>
+    <tr><td><code>gal_load_vars(path)</code></td><td>从文件恢复变量(读档)</td></tr>
+  </table>
+  <h3>主题 / 特效 / 转场 / 消息</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_theme_apply(name)</code></td><td>应用内置风格:默认/中世纪/史诗/简约/科幻/樱花/风雅/压抑/奇特</td></tr>
+    <tr><td><code>gal_trail_enable(on)</code></td><td>鼠标拖尾开关:0关 1开</td></tr>
+    <tr><td><code>gal_trail_get()</code></td><td>当前拖尾开关(0/1)</td></tr>
+    <tr><td><code>gal_fx_add(fx)</code></td><td>添加场景特效</td></tr>
+    <tr><td><code>gal_fx_remove(fx)</code></td><td>取消指定特效</td></tr>
+    <tr><td><code>gal_fx_clear()</code></td><td>取消全部特效</td></tr>
+    <tr><td><code>gal_fx_strength(v)</code></td><td>特效强度 0–100</td></tr>
+    <tr><td><code>gal_fade_out(ms)</code></td><td>淡出到全黑</td></tr>
+    <tr><td><code>gal_fade_in(ms)</code></td><td>从全黑淡入</td></tr>
+    <tr><td><code>gal_toast(text, corner, ms)</code></td><td>角落提示:0左上 1右上 2左下 3右下</td></tr>
+  </table>
+  <h3>音频</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_play_bgm(path)</code></td><td>循环播放 BGM(WAV/MP3)</td></tr>
+    <tr><td><code>gal_stop_bgm()</code></td><td>停止并释放 BGM</td></tr>
+    <tr><td><code>gal_play_se(path)</code></td><td>播放一次音效</td></tr>
+    <tr><td><code>gal_stop_se()</code></td><td>停止音效</td></tr>
+    <tr><td><code>gal_stop_sound()</code></td><td>停止全部声音(BGM+SE)</td></tr>
+    <tr><td><code>gal_volume(v)</code></td><td>音量 0–100</td></tr>
+  </table>
+  <h3>菜单(引擎级)</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_menu_begin()</code></td><td>进入独占菜单</td></tr>
+    <tr><td><code>gal_menu_new(name, typ)</code></td><td>创建控件(name,类型)</td></tr>
+    <tr><td><code>gal_menu_set(name, prop, value)</code></td><td>设置控件属性</td></tr>
+    <tr><td><code>gal_menu_bg(path)</code></td><td>菜单背景图</td></tr>
+    <tr><td><code>gal_menu_exit(result)</code></td><td>退出并设结果</td></tr>
+    <tr><td><code>gal_menu_overlay_show/hide()</code></td><td>显示/隐藏叠加菜单</td></tr>
+    <tr><td><code>gal_signal_emit(name, data)</code></td><td>发送信号</td></tr>
+    <tr><td><code>gal_signal_name()/gal_signal_data()</code></td><td>读取当前信号</td></tr>
+    <tr><td><code>gal_menu_active()/gal_menu_event()/gal_menu_result()</code></td><td>菜单状态查询</td></tr>
+    <tr><td><code>gal_menu_get_text(name)</code></td><td>读取控件文字(输入框内容)</td></tr>
+  </table>
+  <h3>工具</h3>
+  <table>
+    <tr><th>函数</th><th>说明</th></tr>
+    <tr><td><code>gal_screenshot(path)</code></td><td>保存当前帧为 BMP</td></tr>
+  </table>
+</section>
+
+<!-- ================= 主题与外观 ================= -->
+<section id="theme">
+  <h2><span class="n">08</span>主题与外观</h2>
+  <p>编辑器「全局设置 → 外观风格」可一键切换整体观感(作用于最终运行画面):</p>
+  <table>
+    <tr><th>风格</th><th>特点</th></tr>
+    <tr><td><strong>默认</strong></td><td>经典样式</td></tr>
+    <tr><td><strong>中世纪</strong></td><td>羊皮纸暖棕 + 暗金,木质按钮,金粉拖尾,藤叶装饰</td></tr>
+    <tr><td><strong>史诗</strong></td><td>宏大厚重配色</td></tr>
+    <tr><td><strong>简约</strong></td><td>清爽简洁</td></tr>
+    <tr><td><strong>科幻</strong></td><td>冷色霓虹感</td></tr>
+    <tr><td><strong>樱花</strong></td><td>粉白柔和,对话框带樱花花瓣 + 流光</td></tr>
+    <tr><td><strong>风雅 / 压抑 / 奇特</strong></td><td>更多氛围选择</td></tr>
+  </table>
+  <ul>
+    <li><strong>鼠标拖尾</strong>:多数主题自带拖尾特效(金粉/流光等),可在全局设置里关闭。</li>
+    <li><strong>对话框装饰</strong>:樱花/星芒/藤叶/光点/三角等装饰图案随主题出现。</li>
+  </ul>
+  <p class="tip">脚本侧直接调 <code>gal_theme_apply("樱花")</code> 也可运行时切换风格。</p>
+</section>
+
+<!-- ================= 存档点/跳转 ================= -->
+<section id="checkpoint">
+  <h2><span class="n">09</span>存档点 / 跳转</h2>
+  <p>用于做"读档页"式的自由跳转:流程经过<strong>存档点</strong>时自动记录当前位置;
+    之后<strong>跳转到存档点</strong>会读取该存档文件、恢复全部变量,并<strong>从存档点之后继续</strong>运行。</p>
+  <ul>
+    <li><strong>存档点</strong>:放在剧情关键处(如每章开头),给一个唯一名字。
+      流程经过时记录位置(存档数据包) + 可选把变量写入文件。</li>
+    <li><strong>跳转到存档点</strong>:放在读档页/菜单按钮上,指定存档文件名;
+      执行时载入位置与数据,从存档点之后继续。</li>
+  </ul>
+  <p class="tip"><strong>常见用法</strong>:主菜单 → 点击某存档 → 跳转到对应存档点,继续游戏。
+    存档点名在<strong>本镜头内唯一</strong>。</p>
+</section>
+
+<!-- ================= 场景文件 ================= -->
+<section id="scene">
+  <h2><span class="n">10</span>场景文件格式(.bluescene)</h2>
+  <p>编辑器保存的是 <strong>JSON</strong>(UTF-8,可手工编辑),扩展名 <code>.bluescene</code>;
+    结构为项目 → 人物集 → 镜头列表 → 节点图(节点 + 连线)。核心字段:</p>
+  <pre><code>{
+  "format": "bluescene",
+  "title": "星之语 · 蓝图示例",      <span class="c-com">// 游戏标题</span>
+  "win_w": 960, "win_h": 540,       <span class="c-com">// 窗口尺寸</span>
+  "chars": [                        <span class="c-com">// 人物集</span>
+    { "name": "小羽",
+      "states": ["res/xy_smile.png", "res/xy_angry.png", ...],
+      "stateNames": ["微笑", "生气", ...] }
+  ],
+  "scenes": [                       <span class="c-com">// 镜头列表</span>
+    { "title": "清晨的海",           <span class="c-com">// 镜头标题</span>
+      "bg": "res/bg_day.png",       <span class="c-com">// 背景图(相对项目根)</span>
+      "bgColor": 1052696, "useBgImg": 1,
+      "nodes": [ ... ],             <span class="c-com">// 节点图(入口/说话/立绘/选项…)</span>
+      "links": [ ... ]              <span class="c-com">// exec/value 连线</span>
+    }
+  ],
+  "menus": [ ... ]                  <span class="c-com">// MENU 菜单场景</span>
+}</code></pre>
+  <p class="tip">一般无需手写 JSON——直接在编辑器里可视化编辑即可;了解结构方便备份/排查/版本管理。
+    <code>.menubluescene</code> 是单个菜单的独立文件,用于菜单的导入/导出。</p>
+</section>
+
+<!-- ================= VM 与打包 ================= -->
+<section id="vms">
+  <h2><span class="n">11</span>VM 版本与发布打包</h2>
+  <table>
+    <tr><th>文件</th><th>用途</th><th>行为</th></tr>
+    <tr><td><code>vm/vm.exe</code></td><td>开发/调试</td><td>带控制台,<code>vm &lt;file.dexbc&gt;</code></td></tr>
+    <tr><td><code>vm/vmnc.exe</code></td><td>无控制台运行</td><td>隐藏控制台窗口(<code>FreeConsole</code>)</td></tr>
+    <tr><td><code>vm/galrun.exe</code></td><td>发布版 VM</td><td>无控制台 + 无参数时自动读取<strong>同目录 <code>core.do</code></strong></td></tr>
+  </table>
+  <p>三者共享同一份 <code>vm/vm.c</code>;发布版/无控制台版通过 <code>-DPUBLISH_BUILD</code> 宏启用
+    <code>FreeConsole()</code>,并支持"无参数读 core.do"。</p>
+  <h3>一键发布成品</h3>
+  <pre><code>python main.py release examples/gal/demo_gal.dex \
+    -o release --res examples/gal/res --title "星之语"</code></pre>
+  <p>生成的结构:</p>
+  <pre><code>release/
+  galrun.exe        <span class="c-com"># 发布版 VM(无控制台,自动读 core.do)</span>
+  core.do           <span class="c-com"># 游戏字节码</span>
+  res/              <span class="c-com"># 图片/音频资源</span>
+  启动游戏.bat      <span class="c-com"># 双击开玩</span>
+  游戏说明.txt</code></pre>
+  <p class="tip"><strong>分发</strong>:整个 <code>release/</code> 目录拷给玩家即可。运行时只需
+    <code>galrun.exe</code> + <code>core.do</code> + <code>res/</code>,<strong>无需 Python、无需任何 DLL</strong>。
+    (若用 portable 链接模式,还需 <code>libdexxgal.dll</code>。)</p>
+</section>
+
+<!-- ================= 常见问题 ================= -->
+<section id="faq">
+  <h2><span class="n">12</span>常见问题</h2>
+  <h3>编辑器/游戏乱码?</h3>
+  <p>引擎与 VM 都以 UTF-8 输出;请确保 <code>.bluescene</code> 与 <code>.dex</code> 用 UTF-8 保存。
+    控制台窗口出现中文乱码时,Windows 终端需开启 UTF-8 或使用 <code>galrun.exe</code>(无控制台)。</p>
+  <h3>点「▶ 运行」提示找不到 VM?</h3>
+  <p>需 <code>vm/galrun.exe</code> 在项目根/编辑器旁;在「项目设置」里把 VM 位置指到
+    <code>vm/galrun.exe</code> 或 <code>vm/vm.exe</code>。</p>
+  <h3>图片没显示 / 路径不对?</h3>
+  <p>蓝图里的资源路径<strong>相对项目根目录</strong>(如 <code>res/bg.png</code>);请确认文件确实
+    在该相对位置,且项目根目录正确。</p>
+  <h3>需要装 Python / 第三方库吗?</h3>
+  <p>开发版需要 Python 3.10+(纯标准库 tkinter,无第三方依赖);<strong>发布版已用 nuitka 打包成独立
+    exe</strong>,双击即用,无需 Python。成品(玩家侧)只需要 <code>galrun.exe</code> + 字节码 + 资源。</p>
+</section>
+
+</main>
+
+<footer>DEXCODE · GAL 引擎与蓝图编辑器教程</footer>
+
+</body>
+</html>

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DexLang 标准库详解</title>
+<style>
+  :root {
+    --bg: #1e1e2e; --bg2: #181825; --bg3: #313244; --bg4: #45475a;
+    --text: #cdd6f4; --sub: #a6adc8; --dim: #6c7086;
+    --accent: #89b4fa; --accent2: #f5c2e7;
+    --kw: #cba6f7; --str: #a6e3a1; --num: #fab387;
+    --com: #6c7086; --nat: #89dceb; --warn: #f9e2af;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.7; }
+  header { background: linear-gradient(135deg,#11111b,#1e1e2e 60%,#313244);
+    border-bottom: 2px solid var(--bg4); padding: 3rem 1.5rem 2.5rem; text-align: center; }
+  header h1 { margin: 0; font-size: 2.4rem;
+    background: linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { color: var(--sub); margin: .6rem auto 0; max-width: 720px; }
+  .badges { margin-top: 1rem; }
+  .badge { display: inline-block; background: var(--bg3); color: var(--sub);
+    border: 1px solid var(--bg4); border-radius: 999px; padding: .2rem .9rem;
+    margin: .2rem; font-size: .85rem; }
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(24,24,37,.92);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--bg4);
+    padding: .55rem 1rem; text-align: center; overflow-x: auto; white-space: nowrap; }
+  nav a { color: var(--sub); text-decoration: none; margin: 0 .6rem; font-size: .92rem; }
+  nav a:hover { color: var(--accent); }
+  main { max-width: 900px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  section { margin: 2.6rem 0; }
+  h2 { font-size: 1.55rem; color: var(--accent); border-bottom: 2px solid var(--bg4);
+    padding-bottom: .35rem; margin-top: 0; }
+  h2 .n { color: var(--dim); margin-right: .5rem; font-weight: 400; }
+  h3 { font-size: 1.15rem; color: var(--accent2); margin: 1.6rem 0 .5rem; }
+  h3 .fn { color: var(--nat); }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  p code, li code, td code { background: var(--bg3); color: var(--nat);
+    border-radius: 4px; padding: .1em .4em; font-size: .9em; }
+  pre { background: var(--bg2); border: 1px solid var(--bg4); border-radius: 10px;
+    padding: 1rem 1.2rem; overflow-x: auto; line-height: 1.55; font-size: .92rem;
+    margin: .7rem 0 1.2rem; }
+  pre code { background: none; color: var(--text); padding: 0; }
+  .c-com { color: var(--com); font-style: italic; }
+  .c-str { color: var(--str); }
+  .c-num { color: var(--num); }
+  .c-kw  { color: var(--kw); font-weight: 600; }
+  .c-nat { color: var(--nat); }
+  .c-id  { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: .8rem 0 1.2rem; font-size: .93rem; }
+  th, td { border: 1px solid var(--bg4); padding: .5rem .8rem; text-align: left; }
+  th { background: var(--bg3); color: var(--accent); }
+  tr:nth-child(even) td { background: rgba(49,50,68,.35); }
+  .fn-card { background: var(--bg2); border: 1px solid var(--bg4); border-radius: 10px;
+    padding: .8rem 1rem 0; margin: .9rem 0; }
+  .fn-sig { font-family: "Cascadia Code", Consolas, monospace; color: var(--accent);
+    font-size: .95rem; }
+  .fn-sig .ret { color: var(--str); }
+  .fn-desc { color: var(--sub); font-size: .93rem; margin: .25rem 0 .4rem; }
+  .tip, .warn { border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0;
+    font-size: .93rem; border-left: 4px solid; }
+  .tip { background: rgba(137,180,250,.1); border-color: var(--accent); }
+  .warn { background: rgba(249,226,175,.1); border-color: var(--warn); }
+  .tip strong { color: var(--accent); }
+  .warn strong { color: var(--warn); }
+  footer { text-align: center; color: var(--dim); padding: 2rem;
+    border-top: 1px solid var(--bg4); font-size: .85rem; }
+  @media (max-width: 640px) { header h1 { font-size: 1.8rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>DexLang 标准库详解</h1>
+  <p>纯 C 实现的 <code>libdexstd.dll</code>,共 33 个函数。本文用代码逐个讲解每个函数的用法,所有示例均可直接运行。</p>
+  <div class="badges">
+    <span class="badge">📦 引入:<code>include "std";</code></span>
+    <span class="badge">🧩 6 大分组</span>
+    <span class="badge">🔢 33 个函数</span>
+    <span class="badge">🚫 零 Python 依赖</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#intro">简介</a>
+  <a href="#math">数学</a>
+  <a href="#string">字符串</a>
+  <a href="#io">文件/输入</a>
+  <a href="#time">时间</a>
+  <a href="#random">随机</a>
+  <a href="#system">系统</a>
+  <a href="#full">综合示例</a>
+  <a href="#static">静态链接</a>
+</nav>
+
+<main>
+
+<!-- ===================== 简介 ===================== -->
+<section id="intro">
+  <h2><span class="n">01</span>简介</h2>
+  <p>标准库位于 <code>libs/std/</code>,由 <strong>纯 C 语言</strong>编写、编译成
+  <code>libdexstd.dll</code>。用一句话引入后,所有函数即可像普通函数一样调用:</p>
+  <pre><code class="lang-dex">include "std";      // 引入标准库(自动从源码同目录找 std.dexdef)
+
+print dex_abs(-5);  // 像普通函数一样调用
+print "hi " + "there";   // 字符串 + 拼接(语言原生,非标准库)</code></pre>
+  <div class="tip"><strong>阅读提示:</strong>下文各函数示例为简洁均<strong>省略</strong>了
+  <code>include "std";</code>——实际使用时记得在程序开头引入(每个"实战"示例都写全了)。</div>
+  <table>
+    <tr><th>分组</th><th>函数</th><th>数量</th></tr>
+    <tr><td><a href="#math">math 数学</a></td><td>dex_abs fabs pow fmin fmax imin imax floor ceil round</td><td>10</td></tr>
+    <tr><td><a href="#string">string 字符串</a></td><td>dex_strlen upper lower trim concat repeat sub contains itoa ftoa</td><td>10</td></tr>
+    <tr><td><a href="#io">io 文件/输入</a></td><td>dex_read_file write_file append_file file_exists remove_file input print out</td><td>8</td></tr>
+    <tr><td><a href="#time">time 时间</a></td><td>dex_now_ms sleep_ms</td><td>2</td></tr>
+    <tr><td><a href="#random">random 随机</a></td><td>dex_rand srand</td><td>2</td></tr>
+    <tr><td><a href="#system">system 系统</a></td><td>dex_system</td><td>1</td></tr>
+  </table>
+  <div class="tip"><strong>提示:</strong>编译器会按 <code>std.dexdef</code> 里的声明检查每个函数
+  的<strong>参数个数与类型</strong>——写错会在编译期就报错。</div>
+</section>
+
+<!-- ===================== math ===================== -->
+<section id="math">
+  <h2><span class="n">02</span>数学函数(math)</h2>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_abs(x: <span class="ret">int</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">整数绝对值。</div>
+    <pre><code class="lang-dex">print dex_abs(-7);    // 7
+print dex_abs(3);     // 3</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_fabs(x: <span class="ret">float</span>) -&gt; <span class="ret">float</span></div>
+    <div class="fn-desc">浮点绝对值。</div>
+    <pre><code class="lang-dex">print dex_fabs(-3.5); // 3.5</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_pow(x: <span class="ret">float</span>, y: <span class="ret">float</span>) -&gt; <span class="ret">float</span></div>
+    <div class="fn-desc">幂运算 x 的 y 次方。</div>
+    <pre><code class="lang-dex">print dex_pow(2.0, 10.0);  // 1024
+print dex_pow(3.0, 3.0);   // 27</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_fmin / dex_fmax(a: <span class="ret">float</span>, b: <span class="ret">float</span>) -&gt; <span class="ret">float</span></div>
+    <div class="fn-desc">浮点较小值 / 较大值。</div>
+    <pre><code class="lang-dex">print dex_fmin(2.5, 1.5);  // 1.5
+print dex_fmax(2.5, 1.5);  // 2.5</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_imin / dex_imax(a: <span class="ret">int</span>, b: <span class="ret">int</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">整数较小值 / 较大值。</div>
+    <pre><code class="lang-dex">print dex_imin(3, 9);   // 3
+print dex_imax(3, 9);   // 9</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_floor / dex_ceil / dex_round(x: <span class="ret">float</span>) -&gt; <span class="ret">float</span></div>
+    <div class="fn-desc">向下取整 / 向上取整 / 四舍五入。</div>
+    <pre><code class="lang-dex">print dex_floor(3.7);  // 3
+print dex_ceil(3.2);   // 4
+print dex_round(3.5);  // 4</code></pre>
+  </div>
+
+  <h3>实战:用数学函数写一个"成绩等级"</h3>
+  <pre><code class="lang-dex">include "std";
+
+func grade(score) {
+    let s = dex_round(score);            // 四舍五入
+    if s &gt;= 90 { return "A"; }
+    if s &gt;= 60 { return "B"; }
+    return "C";
+}
+print grade(87.4);  // B
+print dex_imax(dex_imin(95, 100), 0);    // 95(夹在 0..100 之间)</code></pre>
+</section>
+
+<!-- ===================== string ===================== -->
+<section id="string">
+  <h2><span class="n">03</span>字符串函数(string)</h2>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_strlen(s: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">字符串长度(UTF-8 字节数;中文一个字占 3 字节)。</div>
+    <pre><code class="lang-dex">print dex_strlen("hello");  // 5
+print dex_strlen("你好");    // 6</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_str_upper / dex_str_lower(s: <span class="ret">string</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">转大写 / 转小写。</div>
+    <pre><code class="lang-dex">print dex_str_upper("hello");  // HELLO
+print dex_str_lower("AbC");    // abc</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_str_trim(s: <span class="ret">string</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">去掉首尾空白(空格、制表符、换行)。</div>
+    <pre><code class="lang-dex">print dex_str_trim("  hi  ");   // hi(两端空格被去掉)</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_str_concat(a: <span class="ret">string</span>, b: <span class="ret">string</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">拼接两个字符串(与语言原生的 <code>+</code> 效果相同)。</div>
+    <pre><code class="lang-dex">print dex_str_concat("foo", "bar");  // foobar
+print "foo" + "bar";                 // foobar(更简洁的写法)</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_str_repeat(s: <span class="ret">string</span>, n: <span class="ret">int</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">把字符串重复 n 次。</div>
+    <pre><code class="lang-dex">print dex_str_repeat("ab", 3);  // ababab
+print dex_str_repeat("-=", 4);  // -=-=-=-=</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_str_sub(s: <span class="ret">string</span>, start: <span class="ret">int</span>, len: <span class="ret">int</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">取子串:从 <code>start</code> 起 <code>len</code> 个字符(越界自动裁剪)。</div>
+    <pre><code class="lang-dex">print dex_str_sub("hello", 1, 3);  // ell
+print dex_str_sub("hello", 0, 5);  // hello</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_str_contains(s: <span class="ret">string</span>, sub: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">是否包含子串(1=是,0=否)。</div>
+    <pre><code class="lang-dex">print dex_str_contains("hello world", "world");  // 1
+print dex_str_contains("hello", "xyz");          // 0</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_itoa(n: <span class="ret">int</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">整数转字符串。通常配合 <code>+</code> 拼接(数字也会自动转字符串)。</div>
+    <pre><code class="lang-dex">print dex_itoa(42);          // 42(字符串)
+print "n = " + 42;           // n = 42(+ 自动转,更简洁)</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_ftoa(x: <span class="ret">float</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">浮点转字符串。</div>
+    <pre><code class="lang-dex">print dex_ftoa(3.14159);     // 3.14159
+print "pi ≈ " + 3.14159;     // pi ≈ 3.14159</code></pre>
+  </div>
+
+  <h3>实战:处理用户输入</h3>
+  <pre><code class="lang-dex">include "std";
+
+// 去掉首尾空白并转大写
+let raw = "  hello  ";
+let clean = dex_str_upper(dex_str_trim(raw));
+print clean;                        // HELLO
+
+// 用子串 + 包含做简单的"域名判断"
+let url = "https://example.com/a";
+if dex_str_contains(url, "example.com") {
+    print "this is example.com";
+}</code></pre>
+</section>
+
+<!-- ===================== io ===================== -->
+<section id="io">
+  <h2><span class="n">04</span>文件与输入输出(io)</h2>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_read_file(path: <span class="ret">string</span>) -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">读取整个文件内容;失败返回空串(配合 <code>dex_file_exists</code> 判断)。</div>
+    <pre><code class="lang-dex">print dex_read_file("examples/hello.dex");  // 打印文件内容</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_write_file(path: <span class="ret">string</span>, content: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">把内容写入文件(覆盖);成功返回 0,失败返回 -1。</div>
+    <pre><code class="lang-dex">dex_write_file("a.txt", "hello\nworld\n");  // 写文件
+print dex_read_file("a.txt");               // 读回来</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_append_file(path: <span class="ret">string</span>, content: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">追加到文件末尾;成功 0,失败 -1。</div>
+    <pre><code class="lang-dex">dex_append_file("log.txt", "line1\n");
+dex_append_file("log.txt", "line2\n");   // 日志追加</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_file_exists(path: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">文件是否存在(1/0)。</div>
+    <pre><code class="lang-dex">if dex_file_exists("a.txt") { print "exists"; }</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_remove_file(path: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">删除文件;成功 0,失败 -1。</div>
+    <pre><code class="lang-dex">dex_remove_file("a.txt");
+print dex_file_exists("a.txt");  // 0</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_input() -&gt; <span class="ret">string</span></div>
+    <div class="fn-desc">从标准输入读一行(去掉换行)。交互式程序使用。</div>
+    <pre><code class="lang-dex">print "请输入姓名:";
+let name = dex_input();
+print "你好, " + name + "!";</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_print(s: <span class="ret">string</span>) -&gt; <span class="ret">int</span> / dex_out(s: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">输出到标准输出,<strong>不自动换行</strong>;需要换行时在字符串里写 <code>\n</code>。
+    两者功能相同,<code>dex_out</code> 是推荐的规范名。适合精确控制格式。</div>
+    <pre><code class="lang-dex">dex_out("进度: ");
+dex_out("10%");
+print " (完了)";     // 同一行输出:进度: 10% (完了)
+
+dex_out("第一行\n");
+dex_out("第二行\n");  // \n 手动换行</code></pre>
+  </div>
+
+  <h3>实战:写入并统计文件</h3>
+  <pre><code class="lang-dex">include "std";
+
+// 写一份"成绩单"
+let data = "alice:90\nbob:85\ncarol:78\n";
+dex_write_file("scores.txt", data);
+
+// 统计行数(通过 dex_strlen / dex_str_contains 实现"数换行")
+let content = dex_read_file("scores.txt");
+let lines = 0;
+let i = 0;
+while i &lt; dex_strlen(content) {
+    // 简单演示:换行符是 \n,这里数它的个数
+    if dex_str_sub(content, i, 1) == "\n" {
+        lines = lines + 1;
+    }
+    i = i + 1;
+}
+print "共 " + lines + " 行";
+dex_remove_file("scores.txt");</code></pre>
+</section>
+
+<!-- ===================== time ===================== -->
+<section id="time">
+  <h2><span class="n">05</span>时间函数(time)</h2>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_now_ms() -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">当前毫秒时间戳(可用于计时)。</div>
+    <pre><code class="lang-dex">let t0 = dex_now_ms();
+dex_sleep_ms(100);                 // 睡 100ms
+let t1 = dex_now_ms();
+print "耗时(ms): " + (t1 - t0);    // 约 100</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_sleep_ms(ms: <span class="ret">int</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">休眠指定毫秒数。</div>
+    <pre><code class="lang-dex">dex_sleep_ms(500);   // 停半秒</code></pre>
+  </div>
+
+  <h3>实战:简易秒表</h3>
+  <pre><code class="lang-dex">include "std";
+
+let start = dex_now_ms();
+let i = 0;
+while i &lt; 1000000 {
+    i = i + 1;
+}
+let end = dex_now_ms();
+print "循环 100 万次耗时(ms): " + (end - start);</code></pre>
+</section>
+
+<!-- ===================== random ===================== -->
+<section id="random">
+  <h2><span class="n">06</span>随机函数(random)</h2>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_rand() -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">0 到 RAND_MAX 的伪随机整数。用取模 <code>%</code> 限定范围。</div>
+    <pre><code class="lang-dex">print dex_rand() % 100;      // 0..99
+print dex_rand() % 6 + 1;    // 1..6(骰子)</code></pre>
+  </div>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_srand(seed: <span class="ret">int</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">设置随机种子(相同种子 → 相同序列,便于复现)。</div>
+    <pre><code class="lang-dex">dex_srand(42);           // 固定种子
+print dex_rand() % 100;  // 每次运行结果一致</code></pre>
+  </div>
+
+  <h3>实战:猜数字(交互)</h3>
+  <pre><code class="lang-dex">include "std";
+
+dex_srand(dex_now_ms());               // 用当前时间做随机种子
+let secret = dex_itoa(dex_rand() % 100 + 1);  // 1..100,存成字符串
+let guess = "";
+let tries = 0;
+while guess != secret {
+    print "猜一个 1..100 的数:";
+    guess = dex_str_trim(dex_input());  // 读一行并去掉空白
+    tries = tries + 1;
+}
+print "猜对了!共 " + tries + " 次";</code></pre>
+  <div class="tip"><strong>说明:</strong>数字和输入都用<strong>字符串</strong>比较
+  (<code>secret</code> 用 <code>dex_itoa</code> 转成字符串,<code>guess</code> 来自
+  <code>dex_input()</code>),这样不需要"字符串转整数"也能做交互判断。
+  在 DEXIDE 里用「终端」按钮运行可交互输入。</div>
+</section>
+
+<!-- ===================== system ===================== -->
+<section id="system">
+  <h2><span class="n">07</span>系统函数(system)</h2>
+
+  <div class="fn-card">
+    <div class="fn-sig">dex_system(cmd: <span class="ret">string</span>) -&gt; <span class="ret">int</span></div>
+    <div class="fn-desc">执行系统命令,返回退出码。</div>
+    <pre><code class="lang-dex">dex_system("echo hello from dex");   // 在终端打印
+dex_system("dir");                    // Windows 列目录(Unix 用 ls)</code></pre>
+  </div>
+  <div class="warn"><strong>注意:</strong>命令字符串会交给操作系统执行,<strong>不要</strong>传入
+  不可信的用户输入(与其它语言的 <code>system()</code> 一样有注入风险)。</div>
+</section>
+
+<!-- ===================== 综合示例 ===================== -->
+<section id="full">
+  <h2><span class="n">08</span>综合示例</h2>
+  <p>一个程序把 6 个分组的函数串起来(<code>examples/std/guide_demo.dex</code>):</p>
+  <pre><code class="lang-dex">include "std";
+
+print "== math ==";
+print dex_abs(-7);             // 7
+print dex_pow(2.0, 10.0);      // 1024
+print dex_imax(3, 9);          // 9
+
+print "== string ==";
+print dex_str_upper("abc");    // ABC
+print dex_str_repeat("ab", 3); // ababab
+print dex_str_sub("hello", 1, 3); // ell
+print "n=" + 42;               // n=42(+ 自动转字符串)
+
+print "== io ==";
+dex_write_file("_guide.txt", "line1\nline2\n");
+print dex_file_exists("_guide.txt");     // 1
+print dex_read_file("_guide.txt");       // 两行内容
+dex_append_file("_guide.txt", "line3\n");
+dex_remove_file("_guide.txt");           // 清理
+print dex_file_exists("_guide.txt");     // 0
+
+print "== time / random ==";
+dex_srand(123);
+print dex_rand() % 100;        // 0..99
+print dex_now_ms() > 0;        // 1
+dex_sleep_ms(50);
+print "done";</code></pre>
+  <div class="tip"><strong>建议:</strong>把它存成 <code>.dex</code>,用
+  <code>python main.py compile</code> + <code>python main.py run</code> 运行;
+  或在 DEXIDE 里点「▶ 运行」「终端」按钮。</div>
+</section>
+
+<!-- ===================== 静态链接 ===================== -->
+<section id="static">
+  <h2><span class="n">09</span>静态链接:程序自带标准库</h2>
+  <p>默认(<code>include "std"</code>)是<strong>动态链接</strong>——运行 <code>.dexbc</code> 时旁边要有
+  <code>libdexstd.dll</code>。想发布<strong>单文件、脱离 Python、无需 DLL</strong> 的程序,
+  用静态版定义文件:</p>
+  <pre><code class="lang-dex">include "std_static";    // 与 include "std" 用法完全一样
+                         // 区别:libdexstd.dll 的字节会被内嵌进 .dexbc
+
+print dex_abs(-42);      // 照常调用</code></pre>
+  <pre><code class="lang-sh">python main.py compile examples/std/demo_std_static.dex
+./vm/vm.exe examples/std/demo_std_static.dexbc   # 只需 vm.exe + .dexbc</code></pre>
+  <p>编译后,<code>.dexbc</code> 是自包含的(约 190 KB,内含整个标准库),运行时不再需要
+  Python 或外部 DLL——这正是本项目"程序未来完全脱离 Python"的目标。</p>
+</section>
+
+</main>
+
+<footer>
+  DexLang 标准库详解 · DEXCODE 项目 · 33 个函数 · 纯 C 实现 · 零 Python 依赖
+</footer>
+
+<script>
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  const KW = new Set(["let","if","else","while","func","return","print",
+                      "true","false","include","refer","extern"]);
+  function hl(code) {
+    const re = /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|(.)/g;
+    let out = "", m;
+    while ((m = re.exec(code))) {
+      if (m[1] !== undefined)      out += '<span class="c-com">' + esc(m[1]) + '</span>';
+      else if (m[2] !== undefined) out += '<span class="c-str">' + esc(m[2]) + '</span>';
+      else if (m[3] !== undefined) out += '<span class="c-num">' + esc(m[3]) + '</span>';
+      else if (m[4] !== undefined) {
+        if (KW.has(m[4]))          out += '<span class="c-kw">' + m[4] + '</span>';
+        else if (m[4].indexOf("dex_") === 0) out += '<span class="c-nat">' + m[4] + '</span>';
+        else                       out += '<span class="c-id">' + m[4] + '</span>';
+      }
+      else if (m[5] !== undefined) out += esc(m[5]);
+      else                         out += esc(m[6]);
+    }
+    return out;
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("code.lang-dex").forEach(function (el) {
+      el.innerHTML = hl(el.textContent);
+    });
+  });
+</script>
+</body>
+</html>

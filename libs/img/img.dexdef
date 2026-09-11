@@ -1,0 +1,7 @@
+// 图片渲染库接口:把图片渲染到控制台
+// 构建 DLL:见 libdeximg.c 顶部注释
+refer "libdeximg.dll";
+
+extern func dex_render(path: string) -> string;
+extern func dex_img_width(path: string) -> int;
+extern func dex_img_height(path: string) -> int;

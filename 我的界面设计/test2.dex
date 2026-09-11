@@ -1,0 +1,104 @@
+include "egui_fast";
+
+// ---- 信号回调(自动生成,补充你的逻辑) ----
+func 1_c(id) {
+    // TODO: 处理 button 控件 1 的 'clicked' 信号
+}
+func 3_c(id) {
+    // TODO: 处理 button 控件 3 的 'clicked' 信号
+}
+func 5_c(id) {
+    // TODO: 处理 button 控件 5 的 'clicked' 信号
+}
+func 4_c(id) {
+    // TODO: 处理 button 控件 4 的 'clicked' 信号
+}
+func 2_c(id) {
+    // TODO: 处理 button 控件 2 的 'clicked' 信号
+}
+func 9_c(id) {
+    // TODO: 处理 button 控件 9 的 'clicked' 信号
+}
+func 8_c(id) {
+    // TODO: 处理 button 控件 8 的 'clicked' 信号
+}
+func 7_c(id) {
+    // TODO: 处理 button 控件 7 的 'clicked' 信号
+}
+func 6_c(id) {
+    // TODO: 处理 button 控件 6 的 'clicked' 信号
+}
+
+let win = eg_window("九宫格", 640, 640);
+eg_connect(win, "closed", "on_win_closed");
+
+func on_win_closed(id) {
+    eg_quit();
+}
+
+eg_add("button", win, 1);
+eg_set_pos(1, 60, 80);
+eg_set_size(1, 140, 140);
+eg_set_text(1, "#");
+eg_connect(1, "clicked", "1_c");
+
+eg_add("button", win, 3);
+eg_set_pos(3, 380, 80);
+eg_set_size(3, 140, 140);
+eg_set_text(3, "#");
+eg_connect(3, "clicked", "3_c");
+
+eg_add("button", win, 5);
+eg_set_pos(5, 220, 240);
+eg_set_size(5, 140, 140);
+eg_set_text(5, "#");
+eg_connect(5, "clicked", "5_c");
+
+eg_add("button", win, 4);
+eg_set_pos(4, 60, 240);
+eg_set_size(4, 140, 140);
+eg_set_text(4, "#");
+eg_connect(4, "clicked", "4_c");
+
+eg_add("button", win, 2);
+eg_set_pos(2, 220, 80);
+eg_set_size(2, 140, 140);
+eg_set_text(2, "#");
+eg_connect(2, "clicked", "2_c");
+
+eg_add("button", win, 9);
+eg_set_pos(9, 380, 400);
+eg_set_size(9, 140, 140);
+eg_set_text(9, "#");
+eg_connect(9, "clicked", "9_c");
+
+eg_add("button", win, 8);
+eg_set_pos(8, 220, 400);
+eg_set_size(8, 140, 140);
+eg_set_text(8, "#");
+eg_connect(8, "clicked", "8_c");
+
+eg_add("button", win, 7);
+eg_set_pos(7, 60, 400);
+eg_set_size(7, 140, 140);
+eg_set_text(7, "#");
+eg_connect(7, "clicked", "7_c");
+
+eg_add("button", win, 6);
+eg_set_pos(6, 380, 240);
+eg_set_size(6, 140, 140);
+eg_set_text(6, "#");
+eg_connect(6, "clicked", "6_c");
+
+eg_add("label", win, 0);
+eg_set_pos(0, 60, 560);
+eg_set_size(0, 100, 24);
+eg_set_text(0, "当前出手:");
+
+eg_add("label", win, 16);
+eg_set_pos(16, 60, 606);
+eg_set_size(16, 100, 24);
+eg_set_text(16, "消息:");
+
+eg_app_run();
+print "退出";

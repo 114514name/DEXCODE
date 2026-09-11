@@ -1,0 +1,28 @@
+# egui_fast_static.dex — EGUI fast 模式 + 静态链接
+#
+# 与 egui_fast.dex 相同的一键事件循环,但内部引用静态定义文件,
+# 编译时把 libegui.dll 字节内嵌进字节码,运行时无需外部 DLL。
+#
+# 用法(fast + 静态):
+#   include "egui_fast_static";
+#   func on_click(id) { ... }
+#   let win = eg_window("标题", 400, 300);
+#   eg_add("button", win, 1); ... eg_connect(1, "clicked", "on_click");
+#   eg_app_run();
+#
+# 编译后仅需 vm.exe 运行,不依赖 Python,也不依赖任何 DLL 文件。
+
+include "egui_static";
+
+# 一键事件循环(同 egui_fast)
+func eg_app_run() {
+    while eg_running() {
+        eg_poll();
+        while eg_next() != 0 {
+            let cb = eg_event_cb();
+            if cb != "" {
+                call(cb, eg_event_id());
+            }
+        }
+    }
+}

@@ -1,0 +1,20 @@
+// use_math.dex — 演示 include 引入 DLL 原生函数
+//
+// include "math"  在 libs/ 目录搜索 math.dexdef
+// 之后即可像普通函数一样调用 DLL 导出函数,编译器会检查参数个数与类型。
+
+include "math";
+
+print dex_add(2, 3);
+print dex_fact(5);
+print dex_sqrt(9.0);
+print dex_len("hello");
+print dex_hello();
+print dex_sum3(1, 2, 3);
+
+// 原生函数可以与普通函数/控制流组合
+let n = 0;
+while n < 4 {
+    print dex_add(n, 10);
+    n = n + 1;
+}

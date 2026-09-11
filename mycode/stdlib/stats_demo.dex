@@ -1,0 +1,24 @@
+// stats_demo.dex — 标准库综合示例(对应 docs/quickstart.html 示例 B)
+// 统计一列随机数:求和、最大值,并用本语言封装 clamp。
+include "std";            // 引入标准库 libdexstd.dll
+
+func clamp(v, lo, hi) {   // 用本语言封装标准库
+    return dex_imax(lo, dex_imin(v, hi));
+}
+
+let sum = 0;
+let max = 0;
+let i = 0;
+while i < 5 {
+    let v = dex_rand() % 100;   // 随机数 0..99
+    print "v = " + v;           // + 自动把数字转成字符串
+    sum = sum + v;
+    max = dex_imax(max, v);
+    i = i + 1;
+}
+print "sum = " + sum;
+print "max = " + max;
+print "pi = " + 3.14159;
+print "abs(-5) = " + dex_abs(-5);
+print "clamp(100, 0, 50) = " + clamp(100, 0, 50);
+// 等价标准库写法:dex_str_concat("sum = ", dex_itoa(sum))

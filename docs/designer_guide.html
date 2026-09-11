@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EGUI Designer 使用详解</title>
+<style>
+  :root {
+    --bg: #1e1e2e; --bg2: #181825; --bg3: #313244; --bg4: #45475a;
+    --text: #cdd6f4; --sub: #a6adc8; --dim: #6c7086;
+    --accent: #89b4fa; --accent2: #f5c2e7;
+    --kw: #cba6f7; --str: #a6e3a1; --num: #fab387;
+    --com: #6c7086; --nat: #89dceb; --warn: #f9e2af;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.7; }
+  header { background: linear-gradient(135deg,#11111b,#1e1e2e 60%,#313244);
+    border-bottom: 2px solid var(--bg4); padding: 3rem 1.5rem 2.5rem; text-align: center; }
+  header h1 { margin: 0; font-size: 2.4rem;
+    background: linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { color: var(--sub); margin: .6rem auto 0; max-width: 760px; }
+  .badges { margin-top: 1rem; }
+  .badge { display: inline-block; background: var(--bg3); color: var(--sub);
+    border: 1px solid var(--bg4); border-radius: 999px; padding: .2rem .9rem;
+    margin: .2rem; font-size: .85rem; }
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(24,24,37,.92);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--bg4);
+    padding: .55rem 1rem; text-align: center; overflow-x: auto; white-space: nowrap; }
+  nav a { color: var(--sub); text-decoration: none; margin: 0 .6rem; font-size: .92rem; }
+  nav a:hover { color: var(--accent); }
+  main { max-width: 920px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  section { margin: 2.6rem 0; }
+  h2 { font-size: 1.55rem; color: var(--accent); border-bottom: 2px solid var(--bg4);
+    padding-bottom: .35rem; margin-top: 0; }
+  h2 .n { color: var(--dim); margin-right: .5rem; font-weight: 400; }
+  h3 { font-size: 1.15rem; color: var(--accent2); margin: 1.6rem 0 .5rem; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  p code, li code, td code { background: var(--bg3); color: var(--nat);
+    border-radius: 4px; padding: .1em .4em; font-size: .9em; }
+  pre { background: var(--bg2); border: 1px solid var(--bg4); border-radius: 10px;
+    padding: 1rem 1.2rem; overflow-x: auto; line-height: 1.55; font-size: .92rem;
+    margin: .7rem 0 1.2rem; }
+  pre code { background: none; color: var(--text); padding: 0; }
+  .c-com { color: var(--com); font-style: italic; }
+  .c-str { color: var(--str); }
+  .c-num { color: var(--num); }
+  .c-kw  { color: var(--kw); font-weight: 600; }
+  .c-nat { color: var(--nat); }
+  .c-id  { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: .8rem 0 1.2rem; font-size: .92rem; }
+  th, td { border: 1px solid var(--bg4); padding: .5rem .8rem; text-align: left; }
+  th { background: var(--bg3); color: var(--accent); }
+  tr:nth-child(even) td { background: rgba(49,50,68,.35); }
+  .tip, .warn { border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0;
+    font-size: .93rem; border-left: 4px solid; }
+  .tip { background: rgba(137,180,250,.1); border-color: var(--accent); }
+  .warn { background: rgba(249,226,175,.1); border-color: var(--warn); }
+  .tip strong { color: var(--accent); }
+  .warn strong { color: var(--warn); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+    justify-content: center; margin: 1.2rem 0; }
+  .flow .step { background: var(--bg3); border: 1px solid var(--bg4);
+    border-radius: 8px; padding: .45rem 1rem; font-size: .9rem; }
+  .flow .arrow { color: var(--accent); font-weight: 700; }
+  .ui { border: 1px solid var(--bg4); border-radius: 10px; background: var(--bg2);
+    padding: .4rem; margin: 1rem 0; }
+  .ui .ui-bar { background: var(--bg3); border-radius: 7px 7px 0 0; padding: .4rem .8rem;
+    font-size: .85rem; color: var(--sub); }
+  .ui .ui-body { background: var(--bg2); border-radius: 0 0 7px 7px; padding: .8rem;
+    display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  .ui .ui-chips span { background: var(--bg3); border: 1px solid var(--bg4);
+    border-radius: 6px; padding: .2rem .6rem; font-size: .8rem; color: var(--text); }
+  .kbd { background: var(--bg3); border: 1px solid var(--bg4); border-bottom-width: 2px;
+    border-radius: 5px; padding: .05rem .4rem; font-size: .85em; }
+  footer { text-align: center; color: var(--dim); padding: 2rem;
+    border-top: 1px solid var(--bg4); font-size: .85rem; }
+  @media (max-width: 640px) { header h1 { font-size: 1.8rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EGUI Designer 使用详解</h1>
+  <p>像 QT Designer 一样<strong>画界面、配编号、连信号</strong>,再一键生成 DexLang 代码。
+    本指南从启动到生成代码,逐步讲解每个面板、每个控件与每条信号。</p>
+  <div class="badges">
+    <span class="badge">图形化设计</span>
+    <span class="badge">拖拽布局</span>
+    <span class="badge">编号操纵</span>
+    <span class="badge">信号连接</span>
+    <span class="badge">一键生成代码</span>
+    <span class="badge">可保存/打开设计</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#start">启动</a>
+  <a href="#layout">界面布局</a>
+  <a href="#workflow">完整流程</a>
+  <a href="#window">窗体设置</a>
+  <a href="#widgets">添加控件</a>
+  <a href="#props">属性编辑</a>
+  <a href="#signals">信号连接</a>
+  <a href="#gen">生成代码</a>
+  <a href="#save">保存/打开</a>
+  <a href="#format">.egui 格式</a>
+  <a href="#example">完整示例</a>
+  <a href="#run">编译运行</a>
+  <a href="#faq">常见问题</a>
+</nav>
+
+<main>
+
+<!-- ================= 启动 ================= -->
+<section id="start">
+  <h2><span class="n">01</span>启动 Designer</h2>
+  <p>在项目根目录执行:</p>
+  <pre><code>python main.py designer</code></pre>
+  <p>也可以在启动时直接打开一个已有的设计文件:</p>
+  <pre><code>python main.py designer 我的界面.egui</code></pre>
+  <p class="tip"><strong>注意</strong>:Designer 是<em>开发期</em>工具,仅用于"设计 → 生成代码"。
+  它生成的是 DexLang 源码(<code>.dex</code>),真正运行时不依赖它,也不需要 Python。</p>
+
+  <h3>快速流程总览</h3>
+  <div class="flow">
+    <span class="step">① 设置窗体标题/大小</span><span class="arrow">→</span>
+    <span class="step">② 添加控件</span><span class="arrow">→</span>
+    <span class="step">③ 拖拽定位 + 改属性</span><span class="arrow">→</span>
+    <span class="step">④ 连接信号</span><span class="arrow">→</span>
+    <span class="step">⑤ 生成 .dex 代码</span><span class="arrow">→</span>
+    <span class="step">⑥ 编译运行</span>
+  </div>
+</section>
+
+<!-- ================= 界面布局 ================= -->
+<section id="layout">
+  <h2><span class="n">02</span>界面布局</h2>
+  <p>Designer 主窗口分为四个区域:</p>
+
+  <div class="ui">
+    <div class="ui-bar">① 顶部工具栏 · 窗体设置 + 添加控件</div>
+    <div class="ui-body">
+      <span class="ui-chips"><span>窗体: [标题]</span> <span>宽 [520]</span> <span>高 [400]</span></span>
+      <span class="ui-chips"><span>添加控件: label / button / checkbox / radio / edit / edit_multi / combo / list / slider / progress / group</span></span>
+    </div>
+  </div>
+  <div class="ui">
+    <div class="ui-bar">② 中央画布 · 窗体与控件</div>
+    <div class="ui-body" style="justify-content:center; min-height:70px;">
+      <span class="ui-chips"><span>窗体矩形(带标题)</span> <span>控件矩形(左上角显示编号与类型)</span></span>
+    </div>
+  </div>
+  <div class="ui">
+    <div class="ui-bar">③ 右侧面板 · 属性 + 信号</div>
+    <div class="ui-body" style="flex-direction:column; align-items:stretch;">
+      <span class="ui-chips"><span>属性: 编号(id) · 文本 · x · y · 宽 · 高</span></span>
+      <span class="ui-chips"><span>信号连接: [信号类型] [回调名] [连接] → 信号列表</span></span>
+      <span class="ui-chips"><span>[删除选中信号] [删除控件]</span></span>
+    </div>
+  </div>
+  <div class="ui">
+    <div class="ui-bar">④ 底部状态栏</div>
+    <div class="ui-body"><span class="ui-chips"><span>操作提示与当前状态</span></span></div>
+  </div>
+
+  <h3>菜单栏</h3>
+  <table>
+    <tr><th>菜单</th><th>项</th><th>作用</th></tr>
+    <tr><td rowspan="4"><strong>文件</strong></td><td>新建</td><td>清空当前设计,重新开始</td></tr>
+    <tr><td>打开设计...</td><td>载入一个 <code>.egui</code> 设计文件</td></tr>
+    <tr><td>保存设计...</td><td>把当前设计存为 <code>.egui</code> 文件</td></tr>
+    <tr><td>生成 .dex 代码...</td><td>把当前设计导出为 DexLang 源码(核心出口)</td></tr>
+    <tr><td rowspan="1"><strong>帮助</strong></td><td>帮助</td><td>打开使用说明弹窗</td></tr>
+  </table>
+</section>
+
+<!-- ================= 完整流程 ================= -->
+<section id="workflow">
+  <h2><span class="n">03</span>完整工作流(六步)</h2>
+  <p>下面用一个"简易登录界面"贯穿演示 Designer 的完整操作。</p>
+
+  <h3>第 1 步:设置窗体</h3>
+  <p>在顶部工具栏的"窗体"区填写标题、宽度、高度(修改即时生效,画布上的窗体矩形会跟着变化)。</p>
+  <pre><code><span class="c-com">// 例如:</span>
+标题: 登录  宽: 360  高: 240</code></pre>
+
+  <h3>第 2 步:添加控件</h3>
+  <p>点击顶部工具栏上的控件类型按钮,即可在窗体上新增一个控件。
+  每点一次都会自动分配一个<strong>递增的编号</strong>(从 1 开始)。</p>
+  <pre><code><span class="c-com">// 依次点击:label、edit、edit、button、button</span>
+<span class="c-com">// 得到 5 个控件,编号自动为 1、2、3、4、5</span></code></pre>
+
+  <h3>第 3 步:选中与拖拽定位</h3>
+  <ul>
+    <li><strong>点击</strong>画布上的控件矩形 → 选中(高亮橙色边框),右侧显示其属性。</li>
+    <li><strong>按住拖拽</strong> → 移动控件位置。</li>
+    <li>按 <span class="kbd">Delete</span> 或点击右侧"删除控件" → 删除选中控件。</li>
+    <li>点击窗体空白处 → 取消选中。</li>
+  </ul>
+
+  <h3>第 4 步:编辑属性</h3>
+  <p>选中控件后,在右侧"属性"区修改编号、文本、x、y、宽、高(逐项实时生效,画布同步刷新)。</p>
+  <pre><code><span class="c-com">// 把 5 个控件布置成一个登录表单:</span>
+控件1 label   文本 "用户名"   位置 (20, 24)   尺寸 (80, 24)
+控件2 edit    文本 ""         位置 (110, 20)  尺寸 (220, 26)
+控件3 label   文本 "密码"     位置 (20, 58)   尺寸 (80, 24)
+控件4 edit    文本 ""         位置 (110, 54)  尺寸 (220, 26)
+控件5 button  文本 "登录"     位置 (130, 96)  尺寸 (100, 32)</code></pre>
+
+  <h3>第 5 步:连接信号</h3>
+  <p>选中按钮控件,在右侧"信号连接"区:</p>
+  <ol>
+    <li>在信号下拉框选择 <code>clicked</code>(按钮只有这一个信号)。</li>
+    <li>在回调名输入框填写 <code>on_login</code>。</li>
+    <li>点"连接" → 该连接出现在下方列表: <code>clicked -&gt; on_login</code>。</li>
+  </ol>
+  <p>也可给窗口连接 <code>closed</code> 信号以处理关闭。窗口信号是"窗体本身",
+  在画布上点击窗体矩形(或任意空白处的窗体标题)即可选中窗口。</p>
+  <p class="tip"><strong>回调命名</strong>:建议用 <code>on_编号_信号</code> 或
+  <code>on_语义名</code> 的命名习惯,方便后续在代码里维护。</p>
+
+  <h3>第 6 步:生成代码</h3>
+  <p>菜单 <strong>文件 → 生成 .dex 代码...</strong>,选择保存位置,即可得到可直接编译运行的
+  DexLang 源码。</p>
+</section>
+
+<!-- ================= 窗体设置 ================= -->
+<section id="window">
+  <h2><span class="n">04</span>窗体设置详解</h2>
+  <table>
+    <tr><th>项</th><th>默认</th><th>说明</th></tr>
+    <tr><td>标题</td><td>我的程序</td><td>窗口标题栏文本,出现在 <code>eg_window("标题", ...)</code></td></tr>
+    <tr><td>宽</td><td>520</td><td>窗体宽度(像素),范围 200–2000</td></tr>
+    <tr><td>高</td><td>400</td><td>窗体高度(像素),范围 200–2000</td></tr>
+  </table>
+  <p>画布左上角以 <code>(20, 20)</code> 为窗体原点(即窗体的客户区原点),
+  控件的 x/y 坐标相对窗体原点计算,与生成代码里 <code>eg_set_pos</code> 的取值一致。</p>
+</section>
+
+<!-- ================= 添加控件 ================= -->
+<section id="widgets">
+  <h2><span class="n">05</span>控件类型与默认尺寸</h2>
+  <p>Designer 支持与 EGUI 完全一致的 11 种控件。新添加的控件使用各自的默认尺寸,
+  可在右侧属性区调整。</p>
+  <table>
+    <tr><th>kind</th><th>说明</th><th>默认尺寸</th><th>可用信号</th></tr>
+    <tr><td><code>label</code></td><td>静态文本标签</td><td>120×24</td><td>—</td></tr>
+    <tr><td><code>button</code></td><td>按钮</td><td>100×30</td><td><code>clicked</code></td></tr>
+    <tr><td><code>checkbox</code></td><td>复选框</td><td>120×26</td><td><code>changed</code></td></tr>
+    <tr><td><code>radio</code></td><td>单选按钮</td><td>100×26</td><td><code>changed</code></td></tr>
+    <tr><td><code>edit</code></td><td>单行输入框</td><td>160×26</td><td><code>changed</code></td></tr>
+    <tr><td><code>edit_multi</code></td><td>多行输入框</td><td>160×60</td><td><code>changed</code></td></tr>
+    <tr><td><code>combo</code></td><td>下拉组合框</td><td>140×26</td><td><code>selected</code></td></tr>
+    <tr><td><code>list</code></td><td>列表框</td><td>140×60</td><td><code>selected</code></td></tr>
+    <tr><td><code>slider</code></td><td>滑块(0–100)</td><td>180×26</td><td><code>changed</code></td></tr>
+    <tr><td><code>progress</code></td><td>进度条(0–100)</td><td>180×26</td><td>—</td></tr>
+    <tr><td><code>group</code></td><td>分组框</td><td>200×120</td><td>—</td></tr>
+  </table>
+  <div class="warn"><strong>说明</strong>:combo / list 的下拉项、以及 slider / progress 的初始值,
+  Designer 不生成(它们通常由逻辑动态填充)。生成代码后,在回调或 <code>eg_app_run()</code>
+  之前用 <code>eg_add_item(id, "...")</code> / <code>eg_set_value(id, v)</code> 补充即可。</div>
+</section>
+
+<!-- ================= 属性编辑 ================= -->
+<section id="props">
+  <h2><span class="n">06</span>属性编辑</h2>
+  <table>
+    <tr><th>属性</th><th>含义</th><th>生成代码</th></tr>
+    <tr><td>编号(id)</td><td>控件的唯一整数编号,用于一切运行时操纵</td><td><code>eg_add("kind", win, id)</code> 与所有 <code>eg_set_*</code>/<code>eg_get_*</code>/<code>eg_connect</code> 的第一个参数</td></tr>
+    <tr><td>文本(text)</td><td>控件上显示的文字</td><td><code>eg_set_text(id, "...")</code></td></tr>
+    <tr><td>x / y</td><td>相对窗体原点的坐标</td><td><code>eg_set_pos(id, x, y)</code></td></tr>
+    <tr><td>宽 / 高</td><td>控件尺寸</td><td><code>eg_set_size(id, w, h)</code></td></tr>
+  </table>
+  <p class="tip"><strong>编号唯一性</strong>:编号不能与其它控件重复,重复时修改会被忽略。
+  建议按"区域/含义"规划编号(如 1–10 用于输入区、11–20 用于按钮区),
+  方便后续在回调里阅读。</p>
+</section>
+
+<!-- ================= 信号连接 ================= -->
+<section id="signals">
+  <h2><span class="n">07</span>信号连接</h2>
+  <p>信号连接是 EGUI"Qt 风格"设计的核心:把控件产生的<em>信号</em>连到<em>语言函数</em>。
+  在 Designer 里选中控件后:</p>
+  <ul>
+    <li><strong>信号下拉框</strong>:列出该控件类型支持的信号(只读,不能乱填)。</li>
+    <li><strong>回调名</strong>:你自定义的函数名,生成代码时会自动创建该函数的占位体。</li>
+    <li>点 <strong>连接</strong>:把 <code>(信号 → 回调)</code> 加入下方列表。</li>
+    <li>列表选中一项后点 <strong>删除选中信号</strong>:移除该连接。</li>
+  </ul>
+
+  <h3>信号与事件数据</h3>
+  <table>
+    <tr><th>信号</th><th>来源</th><th>回调里可取的数据</th></tr>
+    <tr><td><code>clicked</code></td><td>button</td><td>—</td></tr>
+    <tr><td><code>changed</code></td><td>checkbox / radio</td><td><code>eg_event_value()</code>: 1 勾选 / 0 未勾选</td></tr>
+    <tr><td><code>changed</code></td><td>edit</td><td><code>eg_event_str()</code>: 当前文本</td></tr>
+    <tr><td><code>changed</code></td><td>slider</td><td><code>eg_event_value()</code>: 滑块位置(0–100)</td></tr>
+    <tr><td><code>selected</code></td><td>combo / list</td><td><code>eg_event_value()</code>: 选中项索引;<code>eg_event_str()</code>: combo 的文本</td></tr>
+    <tr><td><code>closed</code></td><td>窗口</td><td>—</td></tr>
+  </table>
+  <p>所有回调统一签名 <code>func 名字(id)</code>,第一个参数是触发信号的控件编号。
+  需要的额外数据在函数体内用 <code>eg_event_*()</code> 读取。</p>
+</section>
+
+<!-- ================= 生成代码 ================= -->
+<section id="gen">
+  <h2><span class="n">08</span>生成的代码结构</h2>
+  <p>菜单 <strong>文件 → 生成 .dex 代码...</strong> 会生成一段结构化的 DexLang 源码。
+  以"登录界面"为例,生成结果如下:</p>
+  <pre><code><span class="c-kw">include</span> <span class="c-str">"egui_fast"</span>;
+
+<span class="c-com">// ---- 信号回调(自动生成,补充你的逻辑) ----</span>
+<span class="c-kw">func</span> on_login(id) {
+    <span class="c-com">// TODO: 处理 button 控件 5 的 'clicked' 信号</span>
+}
+
+<span class="c-kw">let</span> win = eg_window(<span class="c-str">"登录"</span>, 360, 240);
+eg_connect(win, <span class="c-str">"closed"</span>, <span class="c-str">"on_win_closed"</span>);
+
+<span class="c-kw">func</span> on_win_closed(id) {
+    eg_quit();
+}
+
+eg_add(<span class="c-str">"label"</span>, win, 1);
+eg_set_pos(1, 20, 24);  eg_set_size(1, 80, 24);
+eg_set_text(1, <span class="c-str">"用户名"</span>);
+
+eg_add(<span class="c-str">"edit"</span>, win, 2);
+eg_set_pos(2, 110, 20); eg_set_size(2, 220, 26);
+
+eg_add(<span class="c-str">"label"</span>, win, 3);
+eg_set_pos(3, 20, 58);  eg_set_size(3, 80, 24);
+eg_set_text(3, <span class="c-str">"密码"</span>);
+
+eg_add(<span class="c-str">"edit"</span>, win, 4);
+eg_set_pos(4, 110, 54); eg_set_size(4, 220, 26);
+
+eg_add(<span class="c-str">"button"</span>, win, 5);
+eg_set_pos(5, 130, 96); eg_set_size(5, 100, 32);
+eg_set_text(5, <span class="c-str">"登录"</span>);
+eg_connect(5, <span class="c-str">"clicked"</span>, <span class="c-str">"on_login"</span>);
+
+eg_app_run();
+<span class="c-kw">print</span> <span class="c-str">"退出"</span>;</code></pre>
+  <p>生成代码的规则:</p>
+  <ul>
+    <li>所有回调(含窗口 <code>closed</code>)自动生成占位函数,里面是 <code>TODO</code> 注释。</li>
+    <li>同一个回调名被多个控件/信号复用时,只生成一次函数体。</li>
+    <li>窗口自动连接 <code>on_win_closed</code> 并在其中调用 <code>eg_quit()</code>。</li>
+    <li>每个控件按 <code>eg_add → eg_set_pos → eg_set_size → eg_set_text → eg_connect</code> 顺序生成。</li>
+    <li>最后调用 <code>eg_app_run()</code>(fast 模式事件循环,自动分发所有信号)。</li>
+  </ul>
+  <div class="tip"><strong>接下来</strong>:打开生成的 <code>.dex</code>,把每个回调里的 <code>TODO</code>
+  替换成真实逻辑,即可编译运行。</div>
+</section>
+
+<!-- ================= 保存/打开 ================= -->
+<section id="save">
+  <h2><span class="n">09</span>保存 / 打开设计</h2>
+  <p>设计永远不会"一次性":用 <strong>文件 → 保存设计...</strong> 存为
+  <code>.egui</code> 文件,之后随时 <strong>文件 → 打开设计...</strong> 回来继续改。
+  也可以在启动时直接传入文件:</p>
+  <pre><code>python main.py designer 登录界面.egui</code></pre>
+  <p class="tip"><strong>工作流建议</strong>:改设计 → 生成 .dex → 编译运行看效果 →
+  回到 Designer 微调 → 再生成。设计文件与代码分离,界面布局可反复迭代。</p>
+</section>
+
+<!-- ================= .egui 格式 ================= -->
+<section id="format">
+  <h2><span class="n">10</span>.egui 设计文件格式</h2>
+  <p><code>.egui</code> 是 JSON 文本,结构直观,也可手工编辑或由程序生成:</p>
+  <pre><code>{
+  "title": "登录",
+  "width": 360,
+  "height": 240,
+  "widgets": [
+    { "kind": "label",  "id": 1, "text": "用户名",
+      "x": 20, "y": 24, "w": 80, "h": 24, "signals": [] },
+    { "kind": "edit",   "id": 2, "text": "",
+      "x": 110, "y": 20, "w": 220, "h": 26, "signals": [] },
+    { "kind": "button", "id": 5, "text": "登录",
+      "x": 130, "y": 96, "w": 100, "h": 32,
+      "signals": [ ["clicked", "on_login"] ] }
+  ]
+}</code></pre>
+  <table>
+    <tr><th>字段</th><th>含义</th></tr>
+    <tr><td><code>title / width / height</code></td><td>窗体标题与大小</td></tr>
+    <tr><td><code>widgets[]</code></td><td>控件数组</td></tr>
+    <tr><td><code>kind / id / text</code></td><td>类型、编号、文本</td></tr>
+    <tr><td><code>x / y / w / h</code></td><td>位置与尺寸</td></tr>
+    <tr><td><code>signals</code></td><td>信号连接数组,每项是 <code>[信号, 回调名]</code></td></tr>
+  </table>
+</section>
+
+<!-- ================= 完整示例 ================= -->
+<section id="example">
+  <h2><span class="n">11</span>完整示例:登录 + 滑块联动</h2>
+  <p>下面演示在 Designer 中搭建一个"设置面板":包含复选框、滑块与进度条,
+  并给回调填入真实逻辑后运行。</p>
+
+  <h3>① 设计</h3>
+  <ul>
+    <li>窗体:标题 <code>设置面板</code>,宽 400,高 260。</li>
+    <li>控件:label(1)、checkbox(2,文本"启用效果")、slider(3)、progress(4)、button(5,文本"应用")。</li>
+    <li>信号:checkbox <code>changed → on_toggle</code>;slider <code>changed → on_slide</code>;button <code>clicked → on_apply</code>。</li>
+  </ul>
+
+  <h3>② 生成的代码 + 补充逻辑</h3>
+  <pre><code><span class="c-kw">include</span> <span class="c-str">"egui_fast"</span>;
+
+<span class="c-kw">func</span> on_toggle(id) {
+    <span class="c-com">// 勾选状态 → 是否启用滑块</span>
+    eg_set_enabled(3, eg_event_value());
+}
+<span class="c-kw">func</span> on_slide(id) {
+    <span class="c-com">// 滑块位置 → 进度条</span>
+    eg_set_value(4, eg_event_value());
+}
+<span class="c-kw">func</span> on_apply(id) {
+    eg_set_text(1, <span class="c-str">"数值: "</span> + eg_get_value(3));
+}
+
+<span class="c-kw">let</span> win = eg_window(<span class="c-str">"设置面板"</span>, 400, 260);
+eg_connect(win, <span class="c-str">"closed"</span>, <span class="c-str">"on_win_closed"</span>);
+<span class="c-kw">func</span> on_win_closed(id) { eg_quit(); }
+
+eg_add(<span class="c-str">"label"</span>, win, 1);  eg_set_pos(1, 20, 20);  eg_set_size(1, 200, 24);
+eg_add(<span class="c-str">"checkbox"</span>, win, 2); eg_set_pos(2, 20, 56); eg_set_size(2, 140, 26);
+eg_set_text(2, <span class="c-str">"启用效果"</span>); eg_connect(2, <span class="c-str">"changed"</span>, <span class="c-str">"on_toggle"</span>);
+eg_add(<span class="c-str">"slider"</span>, win, 3);  eg_set_pos(3, 20, 100); eg_set_size(3, 240, 26);
+eg_connect(3, <span class="c-str">"changed"</span>, <span class="c-str">"on_slide"</span>);
+eg_add(<span class="c-str">"progress"</span>, win, 4); eg_set_pos(4, 20, 140); eg_set_size(4, 240, 26);
+eg_add(<span class="c-str">"button"</span>, win, 5); eg_set_pos(5, 280, 100); eg_set_size(5, 90, 30);
+eg_set_text(5, <span class="c-str">"应用"</span>); eg_connect(5, <span class="c-str">"clicked"</span>, <span class="c-str">"on_apply"</span>);
+
+eg_set_value(3, 30);   <span class="c-com">// 滑块初始 30</span>
+eg_set_value(4, 30);   <span class="c-com">// 进度条初始 30</span>
+
+eg_app_run();
+<span class="c-kw">print</span> <span class="c-str">"退出"</span>;</code></pre>
+
+  <h3>③ 运行</h3>
+  <pre><code>python main.py run examples/egui/设置面板.dex</code></pre>
+  <p>拖动滑块,进度条实时跟随;勾选复选框控制滑块可用性;点"应用"把当前值显示到标签。</p>
+</section>
+
+<!-- ================= 编译运行 ================= -->
+<section id="run">
+  <h2><span class="n">12</span>编译与运行生成的代码</h2>
+  <p>Designer 生成的是源码,与手写代码完全同待遇。三步走:</p>
+  <pre><code><span class="c-com"># 1. 编译为字节码(生成 .dexbc)</span>
+python main.py compile examples/egui/设置面板.dex
+
+<span class="c-com"># 2. 用 vm.exe 直接运行(不依赖 Python)</span>
+vm/vm.exe examples/egui/设置面板.dexbc
+
+<span class="c-com"># 或一行直接编译并运行</span>
+python main.py run examples/egui/设置面板.dex</code></pre>
+  <p class="tip"><strong>发布</strong>:若希望独立分发(不含 DLL),把源码开头的
+  <code>include "egui_fast"</code> 换成 <code>include "egui_fast_static"</code> 再编译,
+  运行时只需要 <code>.dexbc</code> 和 <code>vm.exe</code>。</p>
+</section>
+
+<!-- ================= FAQ ================= -->
+<section id="faq">
+  <h2><span class="n">13</span>常见问题</h2>
+  <h3>为什么控件拖不动?</h3>
+  <p>先点击选中(出现橙色高亮边框)再拖拽;点的是控件矩形内部,而不是窗体空白处。</p>
+  <h3>编号可以重复吗?</h3>
+  <p>不可以。重复的编号修改会被忽略;编号是运行时唯一标识,重复会导致读写错乱。</p>
+  <h3>combo / list 的下拉项怎么填?</h3>
+  <p>Designer 不生成下拉项。生成代码后,在回调区或 <code>eg_app_run()</code> 之前用
+  <code>eg_add_item(id, "选项")</code> 逐条添加即可。</p>
+  <h3>窗口的 closed 信号怎么连?</h3>
+  <p>在画布上点击窗体矩形(标题区域)选中窗口,再在信号面板选择 <code>closed</code>。
+  生成代码时窗口已默认连接 <code>on_win_closed</code>(内部调用 <code>eg_quit()</code>)。</p>
+  <h3>生成的回调想改成别的名字?</h3>
+  <p>在 Designer 的"回调名"输入框填写新名字再"连接"即可;重复连接同名信号会覆盖旧回调。</p>
+  <h3>Designer 是运行时依赖吗?</h3>
+  <p>不是。它只生成代码;生成的 <code>.dex</code> 编译成 <code>.dexbc</code> 后,
+  运行时只需要 <code>vm.exe</code>,完全不需要 Designer 或 Python。</p>
+</section>
+
+</main>
+
+<footer>
+  DEXCODE · EGUI Designer 使用详解 · 设计 → 生成 → 编译 → 运行
+</footer>
+
+</body>
+</html>

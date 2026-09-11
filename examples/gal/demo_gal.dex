@@ -1,0 +1,93 @@
+// demo_gal.dex — GAL 引擎演示(fast 风格:语言侧主循环驱动)
+//
+// 运行: python main.py run examples/gal/demo_gal.dex
+// 或  python main.py compile examples/gal/demo_gal.dex && vm/vm.exe ...
+//
+// 展示:窗口、背景图、角色立绘、打字机文本、点击推进、选项分支。
+// 资源:examples/gal/res/(bg.png 背景,char.png/char2.png 立绘)
+
+include "gal";
+
+func wait_click() {
+    // 等待当前文本打完并点击翻页
+    while gal_running() {
+        gal_poll();
+        if gal_text_done() && gal_clicked() {
+            return;
+        }
+        gal_wait(16);
+    }
+}
+
+func wait_pick() {
+    // 等待玩家做出选项选择
+    while gal_running() {
+        gal_poll();
+        if gal_picked() >= 0 {
+            return;
+        }
+        gal_wait(16);
+    }
+}
+
+// ---- 开场 ----
+gal_init(960, 540);
+gal_set_title("星之语 · 演示");
+gal_bg_color(0x101018);
+gal_speaker("");
+gal_text("……雨夜的站台,我遇到了那个女孩。");
+wait_click();
+gal_text_clear();
+
+// ---- 进入教室 ----
+gal_bg("examples/gal/res/bg.png");
+gal_speaker("小雨");
+gal_text("早上好!今天也来得好早呢。");
+wait_click();
+gal_text_clear();
+
+// ---- 立绘登场 ----
+gal_sprite(1, "examples/gal/res/char.png");
+gal_sprite_scale(1, 70);
+gal_sprite_pos(1, 60);
+gal_sprite_show(1, 1);
+gal_speaker("小雨");
+gal_text("你看,这是我昨天画的那幅画……");
+wait_click();
+gal_text_clear();
+
+gal_sprite(2, "examples/gal/res/char2.png");
+gal_sprite_scale(2, 70);
+gal_sprite_pos(2, 620);
+gal_sprite_show(2, 1);
+gal_speaker("???");
+gal_text("喂,你们俩在聊什么这么开心?");
+wait_click();
+gal_text_clear();
+
+// ---- 选项分支 ----
+gal_speaker("");
+gal_text("放学后,小雨邀请你一起回家。你要怎么办?");
+gal_set_choice(0, "好呀,一起走吧");
+gal_set_choice(1, "抱歉,今天我要去社团");
+gal_show_choices();
+wait_pick();
+gal_hide_choices();
+gal_text_clear();
+
+let picked = gal_picked();
+if picked == 0 {
+    gal_speaker("小雨");
+    gal_text("太好了!那我们去河堤那边绕一圈吧~");
+} else {
+    gal_speaker("小雨");
+    gal_text("这样啊……那,明天见。");
+}
+wait_click();
+gal_text_clear();
+
+gal_speaker("");
+gal_text("—— 未完待续 ——");
+wait_click();
+gal_close();
+print "demo 结束";

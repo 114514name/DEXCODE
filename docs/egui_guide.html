@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EGUI(easyGUI)图形界面库教学</title>
+<style>
+  :root {
+    --bg: #1e1e2e; --bg2: #181825; --bg3: #313244; --bg4: #45475a;
+    --text: #cdd6f4; --sub: #a6adc8; --dim: #6c7086;
+    --accent: #89b4fa; --accent2: #f5c2e7;
+    --kw: #cba6f7; --str: #a6e3a1; --num: #fab387;
+    --com: #6c7086; --nat: #89dceb; --warn: #f9e2af;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.7; }
+  header { background: linear-gradient(135deg,#11111b,#1e1e2e 60%,#313244);
+    border-bottom: 2px solid var(--bg4); padding: 3rem 1.5rem 2.5rem; text-align: center; }
+  header h1 { margin: 0; font-size: 2.4rem;
+    background: linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { color: var(--sub); margin: .6rem auto 0; max-width: 760px; }
+  .badges { margin-top: 1rem; }
+  .badge { display: inline-block; background: var(--bg3); color: var(--sub);
+    border: 1px solid var(--bg4); border-radius: 999px; padding: .2rem .9rem;
+    margin: .2rem; font-size: .85rem; }
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(24,24,37,.92);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--bg4);
+    padding: .55rem 1rem; text-align: center; overflow-x: auto; white-space: nowrap; }
+  nav a { color: var(--sub); text-decoration: none; margin: 0 .6rem; font-size: .92rem; }
+  nav a:hover { color: var(--accent); }
+  main { max-width: 920px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  section { margin: 2.6rem 0; }
+  h2 { font-size: 1.55rem; color: var(--accent); border-bottom: 2px solid var(--bg4);
+    padding-bottom: .35rem; margin-top: 0; }
+  h2 .n { color: var(--dim); margin-right: .5rem; font-weight: 400; }
+  h3 { font-size: 1.15rem; color: var(--accent2); margin: 1.6rem 0 .5rem; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  p code, li code, td code { background: var(--bg3); color: var(--nat);
+    border-radius: 4px; padding: .1em .4em; font-size: .9em; }
+  pre { background: var(--bg2); border: 1px solid var(--bg4); border-radius: 10px;
+    padding: 1rem 1.2rem; overflow-x: auto; line-height: 1.55; font-size: .92rem;
+    margin: .7rem 0 1.2rem; }
+  pre code { background: none; color: var(--text); padding: 0; }
+  .c-com { color: var(--com); font-style: italic; }
+  .c-str { color: var(--str); }
+  .c-num { color: var(--num); }
+  .c-kw  { color: var(--kw); font-weight: 600; }
+  .c-nat { color: var(--nat); }
+  .c-id  { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: .8rem 0 1.2rem; font-size: .92rem; }
+  th, td { border: 1px solid var(--bg4); padding: .5rem .8rem; text-align: left; }
+  th { background: var(--bg3); color: var(--accent); }
+  tr:nth-child(even) td { background: rgba(49,50,68,.35); }
+  .tip, .warn { border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0;
+    font-size: .93rem; border-left: 4px solid; }
+  .tip { background: rgba(137,180,250,.1); border-color: var(--accent); }
+  .warn { background: rgba(249,226,175,.1); border-color: var(--warn); }
+  .tip strong { color: var(--accent); }
+  .warn strong { color: var(--warn); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+    justify-content: center; margin: 1.2rem 0; }
+  .flow .step { background: var(--bg3); border: 1px solid var(--bg4);
+    border-radius: 8px; padding: .45rem 1rem; font-size: .9rem; }
+  .flow .arrow { color: var(--accent); font-weight: 700; }
+  footer { text-align: center; color: var(--dim); padding: 2rem;
+    border-top: 1px solid var(--bg4); font-size: .85rem; }
+  @media (max-width: 640px) { header h1 { font-size: 1.8rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EGUI(easyGUI)图形界面库</h1>
+  <p>一个"Qt 类似物":用 DexLang 编写 Windows 桌面程序。控件用统一编号操纵、
+    采用 Qt 一样的信号式设计;完全由 DLL 驱动,无需 Python,可静态编译,
+    运行时只需一个 <code>vm.exe</code>。</p>
+  <div class="badges">
+    <span class="badge">纯 C 实现</span>
+    <span class="badge">信号式设计</span>
+    <span class="badge">fast / base 双模式</span>
+    <span class="badge">静态编译</span>
+    <span class="badge">无 Python 依赖</span>
+    <span class="badge">图形化 Designer</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#intro">简介</a>
+  <a href="#quickstart">快速上手</a>
+  <a href="#controls">控件参考</a>
+  <a href="#signals">信号系统</a>
+  <a href="#loop">事件循环</a>
+  <a href="#modes">两种模式</a>
+  <a href="#static">静态编译</a>
+  <a href="#designer">Designer</a>
+  <a href="#demo">完整示例</a>
+  <a href="#api">API 总表</a>
+  <a href="#faq">常见问题</a>
+</nav>
+
+<main>
+
+<!-- ================= 简介 ================= -->
+<section id="intro">
+  <h2><span class="n">01</span>EGUI 是什么?</h2>
+  <p>EGUI(easyGUI)是 DEXCODE 的图形界面库,目标是让 DexLang 能像 Qt 一样方便地
+  编写桌面程序。它的设计哲学:</p>
+  <ul>
+    <li><strong>完全由 DLL 驱动</strong>:界面能力封装在
+      <code>libs/egui/libegui.dll</code>(纯 C + WinAPI),语言侧只负责调用。</li>
+    <li><strong>无需 Python</strong>:Python 只用于<em>开发期</em>的编译/设计工具;
+      运行时只有 <code>vm.exe</code> 解释字节码。</li>
+    <li><strong>控件用编号操纵</strong>:每个控件分配一个整数编号(id),
+      之后的读写都用这个编号,简单直接。</li>
+    <li><strong>Qt 一样的信号式设计</strong>:控件产生"信号"(点击/改变/选中/关闭),
+      你把它<em>连接到</em>一个语言函数,事件循环自动分发。</li>
+    <li><strong>可静态编译</strong>:DLL 字节可内嵌进字节码,分发时无需携带任何 DLL。</li>
+  </ul>
+
+  <div class="flow">
+    <span class="step">编写 .dex 源码</span><span class="arrow">→</span>
+    <span class="step">python main.py compile</span><span class="arrow">→</span>
+    <span class="step">.dexbc 字节码(可含 DLL)</span><span class="arrow">→</span>
+    <span class="step">vm.exe 运行</span>
+  </div>
+  <p class="tip"><strong>理念</strong>:Python 只是"厨师",做完菜(字节码)就离场;
+  上桌的只有 vm.exe 和字节码。</p>
+</section>
+
+<!-- ================= 快速上手 ================= -->
+<section id="quickstart">
+  <h2><span class="n">02</span>快速上手</h2>
+  <p>fast 模式是推荐写法:一句 <code>include "egui_fast"</code> 引入语言封装模块,
+  它内部引用 DLL 并提供一个一键事件循环 <code>eg_app_run()</code>。</p>
+  <pre><code><span class="c-kw">include</span> <span class="c-str">"egui_fast"</span>;
+
+<span class="c-com">// 信号回调:统一签名 func 名字(id)</span>
+<span class="c-kw">func</span> on_click(id) {
+    eg_set_text(2, <span class="c-str">"你好, "</span> + eg_get_text(3) + <span class="c-str">"!"</span>);
+}
+<span class="c-kw">func</span> on_close(id) {
+    eg_quit();   <span class="c-com">// 关闭时退出事件循环</span>
+}
+
+<span class="c-kw">let</span> win = eg_window(<span class="c-str">"我的程序"</span>, 360, 200);
+eg_add(<span class="c-str">"label"</span>,  win, 1); eg_set_pos(1, 20, 20); eg_set_size(1, 220, 24);
+eg_add(<span class="c-str">"edit"</span>,   win, 3); eg_set_pos(3, 20, 50); eg_set_size(3, 200, 26);
+eg_add(<span class="c-str">"button"</span>, win, 2); eg_set_pos(2, 240, 48); eg_set_size(2, 90, 30);
+eg_set_text(2, <span class="c-str">"问候"</span>);
+
+eg_connect(2, <span class="c-str">"clicked"</span>, <span class="c-str">"on_click"</span>);
+eg_connect(win, <span class="c-str">"closed"</span>, <span class="c-str">"on_close"</span>);
+
+eg_app_run();   <span class="c-com">// 进入事件循环</span>
+</code></pre>
+  <p>运行:</p>
+  <pre><code>python main.py run examples/egui/demo_egui.dex
+<span class="c-com"># 或先编译再运行:</span>
+python main.py compile examples/egui/demo_egui.dex
+vm/vm.exe examples/egui/demo_egui.dexbc</code></pre>
+</section>
+
+<!-- ================= 控件参考 ================= -->
+<section id="controls">
+  <h2><span class="n">03</span>窗口与控件</h2>
+  <h3>创建窗口</h3>
+  <pre><code><span class="c-kw">let</span> win = eg_window(<span class="c-str">"标题"</span>, 宽, 高);   <span class="c-com">// 返回窗口编号(1 起)</span></code></pre>
+  <h3>添加控件</h3>
+  <p>统一用 <code>eg_add(kind, parent, id)</code> 创建;位置/尺寸/文本随后设置:</p>
+  <pre><code>eg_add(<span class="c-str">"button"</span>, win, 1);
+eg_set_pos(1, 20, 20);      <span class="c-com">// 相对窗体客户区</span>
+eg_set_size(1, 120, 32);
+eg_set_text(1, <span class="c-str">"点我"</span>);</code></pre>
+
+  <h3>控件类型一览</h3>
+  <table>
+    <tr><th>kind</th><th>说明</th><th>常用信号</th></tr>
+    <tr><td><code>label</code></td><td>静态文本标签</td><td>—</td></tr>
+    <tr><td><code>button</code></td><td>按钮</td><td><code>clicked</code></td></tr>
+    <tr><td><code>checkbox</code></td><td>复选框</td><td><code>changed</code></td></tr>
+    <tr><td><code>radio</code></td><td>单选按钮(同组互斥)</td><td><code>changed</code></td></tr>
+    <tr><td><code>edit</code></td><td>单行输入框</td><td><code>changed</code></td></tr>
+    <tr><td><code>edit_multi</code></td><td>多行输入框</td><td><code>changed</code></td></tr>
+    <tr><td><code>combo</code></td><td>下拉组合框</td><td><code>selected</code></td></tr>
+    <tr><td><code>list</code></td><td>列表框</td><td><code>selected</code></td></tr>
+    <tr><td><code>slider</code></td><td>滑块(0–100)</td><td><code>changed</code></td></tr>
+    <tr><td><code>progress</code></td><td>进度条(0–100)</td><td>—</td></tr>
+    <tr><td><code>group</code></td><td>分组框</td><td>—</td></tr>
+  </table>
+
+  <h3>编号操纵</h3>
+  <p>这是 EGUI 的核心:创建控件时给编号,之后一切读写都用编号,无需持有句柄。</p>
+  <table>
+    <tr><th>函数</th><th>作用</th></tr>
+    <tr><td><code>eg_set_text(id, 文本)</code> / <code>eg_get_text(id)</code></td><td>读/写控件文本(编辑框、按钮、标签…)</td></tr>
+    <tr><td><code>eg_set_value(id, v)</code> / <code>eg_get_value(id)</code></td><td>读/写"值":勾选状态、滑块/进度位置、选中项索引</td></tr>
+    <tr><td><code>eg_add_item(id, 文本)</code> / <code>eg_clear_items(id)</code></td><td>向 combo / list 添加/清空项目</td></tr>
+    <tr><td><code>eg_set_enabled(id, 1|0)</code></td><td>启用/禁用控件</td></tr>
+    <tr><td><code>eg_set_visible(id, 1|0)</code></td><td>显示/隐藏控件</td></tr>
+    <tr><td><code>eg_set_pos(id, x, y)</code> / <code>eg_set_size(id, w, h)</code></td><td>定位 / 改尺寸</td></tr>
+    <tr><td><code>eg_close(win)</code> / <code>eg_set_title(win, 标题)</code></td><td>关闭窗口 / 改窗口标题</td></tr>
+  </table>
+  <pre><code><span class="c-kw">let</span> c = eg_add(<span class="c-str">"checkbox"</span>, win, 5);
+eg_set_text(5, <span class="c-str">"记住我"</span>);
+eg_set_value(5, 1);                  <span class="c-com">// 默认勾选</span>
+<span class="c-kw">if</span> eg_get_value(5) == 1 { ... }   <span class="c-com">// 读取勾选状态</span></code></pre>
+</section>
+
+<!-- ================= 信号系统 ================= -->
+<section id="signals">
+  <h2><span class="n">04</span>信号系统(Qt 风格)</h2>
+  <p>EGUI 的信号是字符串:<code>clicked</code>、<code>changed</code>、<code>selected</code>、
+  <code>closed</code>。把信号"连接"到语言函数:</p>
+  <pre><code>eg_connect(控件编号, <span class="c-str">"信号"</span>, <span class="c-str">"回调函数名"</span>);</code></pre>
+  <p>回调统一签名 <code>func 名字(id)</code>。信号携带的额外数据用事件读取函数获取:</p>
+  <table>
+    <tr><th>信号</th><th>来源控件</th><th>事件值</th></tr>
+    <tr><td><code>clicked</code></td><td>button</td><td>—</td></tr>
+    <tr><td><code>changed</code></td><td>checkbox / radio</td><td><code>eg_event_value()</code>: 1=勾选, 0=未勾选</td></tr>
+    <tr><td><code>changed</code></td><td>edit</td><td><code>eg_event_str()</code>: 当前文本</td></tr>
+    <tr><td><code>changed</code></td><td>slider</td><td><code>eg_event_value()</code>: 滑块位置(0–100)</td></tr>
+    <tr><td><code>selected</code></td><td>combo / list</td><td><code>eg_event_value()</code>: 选中项索引;combo 还可用 <code>eg_event_str()</code> 取文本</td></tr>
+    <tr><td><code>closed</code></td><td>窗口(win)</td><td>—</td></tr>
+  </table>
+  <pre><code><span class="c-kw">func</span> on_slide(id) {
+    eg_set_value(9, eg_event_value());          <span class="c-com">// 滑块 → 进度条</span>
+    eg_set_text(10, <span class="c-str">"进度 "</span> + eg_event_value() + <span class="c-str">"%"</span>);
+}
+eg_connect(8, <span class="c-str">"changed"</span>, <span class="c-str">"on_slide"</span>);</code></pre>
+  <p class="tip"><strong>说明</strong>:一个控件可连接多个不同信号;同一个 <code>(编号, 信号)</code>
+  重复连接会覆盖之前的回调。信号分发由语言侧 <code>call(回调名, id)</code> 完成——
+  这是语言内置的动态调用指令。</p>
+</section>
+
+<!-- ================= 事件循环 ================= -->
+<section id="loop">
+  <h2><span class="n">05</span>事件循环</h2>
+  <p>fast 模式的 <code>eg_app_run()</code> 其实就是一个循环:</p>
+  <pre><code><span class="c-kw">while</span> eg_running() {
+    eg_poll();                    <span class="c-com">// 泵消息,信号进入事件队列</span>
+    <span class="c-kw">while</span> eg_next() != 0 {      <span class="c-com">// 弹出队头事件;0 = 队列空</span>
+        <span class="c-kw">let</span> cb = eg_event_cb();   <span class="c-com">// 按 (编号,信号) 查回调名</span>
+        <span class="c-kw">if</span> cb != <span class="c-str">""</span> {
+            call(cb, eg_event_id());   <span class="c-com">// 动态调用回调</span>
+        }
+    }
+}</code></pre>
+  <p>事件读取函数:</p>
+  <table>
+    <tr><th>函数</th><th>含义</th></tr>
+    <tr><td><code>eg_next()</code></td><td>弹出队头事件,返回其编号;队列空返回 0</td></tr>
+    <tr><td><code>eg_event_id()</code></td><td>当前事件控件编号</td></tr>
+    <tr><td><code>eg_event_signal()</code></td><td>当前事件信号名</td></tr>
+    <tr><td><code>eg_event_cb()</code></td><td>当前事件已连接的回调名(未连接为空串)</td></tr>
+    <tr><td><code>eg_event_value()</code> / <code>eg_event_str()</code></td><td>事件携带的数值 / 文本</td></tr>
+    <tr><td><code>eg_running()</code></td><td>是否仍有窗口打开且未退出</td></tr>
+    <tr><td><code>eg_quit()</code></td><td>请求结束事件循环</td></tr>
+  </table>
+</section>
+
+<!-- ================= 两种模式 ================= -->
+<section id="modes">
+  <h2><span class="n">06</span>两种模式:fast / base</h2>
+  <table>
+    <tr><th></th><th>fast 模式</th><th>base 模式</th></tr>
+    <tr><td><strong>引入方式</strong></td><td><code>include "egui_fast"</code></td><td><code>include "egui"</code></td></tr>
+    <tr><td><strong>本质</strong></td><td>语言模块(.dex),内部 include DLL 定义,并封装 <code>eg_app_run()</code></td><td>直接引用 DLL 定义文件(.dexdef)</td></tr>
+    <tr><td><strong>事件循环</strong></td><td><code>eg_app_run()</code> 一行搞定</td><td>自己写 while 循环</td></tr>
+    <tr><td><strong>适用</strong></td><td>日常开发、快速上手</td><td>需要完全掌控事件循环</td></tr>
+  </table>
+  <p>两种模式共享同一套函数(创建控件、信号连接等),只差"循环谁写"。</p>
+  <pre><code><span class="c-com">// fast 模式(egui_fast.dex 内部 include egui)</span>
+<span class="c-kw">include</span> <span class="c-str">"egui_fast"</span>;
+...
+eg_app_run();
+
+<span class="c-com">// base 模式:自己写循环</span>
+<span class="c-kw">include</span> <span class="c-str">"egui"</span>;
+...
+<span class="c-kw">while</span> eg_running() { eg_poll(); <span class="c-kw">while</span> eg_next() != 0 { ... } }</code></pre>
+</section>
+
+<!-- ================= 静态编译 ================= -->
+<section id="static">
+  <h2><span class="n">07</span>静态编译与无 Python 依赖</h2>
+  <p>静态链接会把 <code>libegui.dll</code> 的字节<strong>内嵌进字节码</strong>。
+  运行时 VM 把它解包到临时文件并加载,程序自带界面能力——无需分发任何 DLL。</p>
+  <pre><code><span class="c-kw">include</span> <span class="c-str">"egui_static"</span>;        <span class="c-com">// base + 静态</span>
+<span class="c-kw">include</span> <span class="c-str">"egui_fast_static"</span>;    <span class="c-com">// fast + 静态(推荐)</span></code></pre>
+  <p>分发清单只有两样东西:</p>
+  <div class="flow">
+    <span class="step">程序.dexbc</span><span class="step">vm.exe</span>
+  </div>
+  <p class="tip"><strong>验证</strong>:<code>tests/test_nopydep.py</code> 会把 DLL 移走后仍用
+  vm.exe 运行静态程序,证明运行时无 Python、无外部 DLL。</p>
+</section>
+
+<!-- ================= Designer ================= -->
+<section id="designer">
+  <h2><span class="n">08</span>EGUI Designer:图形化设计界面</h2>
+  <p>像 QT Designer 一样,<strong>先画界面、分配编号,再生成代码</strong>:</p>
+  <pre><code>python main.py designer</code></pre>
+  <div class="flow">
+    <span class="step">顶部工具栏添加控件</span><span class="arrow">→</span>
+    <span class="step">画布上拖拽定位</span><span class="arrow">→</span>
+    <span class="step">右侧设置编号/文本/尺寸</span><span class="arrow">→</span>
+    <span class="step">连接信号与回调</span><span class="arrow">→</span>
+    <span class="step">文件 → 生成 .dex 代码</span>
+  </div>
+  <ul>
+    <li>画布模拟窗体,控件是拖得动的矩形,左上角显示编号。</li>
+    <li>右侧属性栏编辑编号、文本、位置、尺寸(改完即生效)。</li>
+    <li>"信号连接"区:选择信号类型、填写回调函数名,点"连接"。</li>
+    <li>生成的 .dex 会自动创建回调占位函数、控件创建/定位/连接代码,
+      最后调用 <code>eg_app_run()</code>。补上回调逻辑即可编译运行。</li>
+    <li>设计可保存为 <code>.egui</code> 文件,之后随时重新打开编辑。</li>
+  </ul>
+  <pre><code><span class="c-com">// Designer 生成的代码(节选)</span>
+<span class="c-kw">include</span> <span class="c-str">"egui_fast"</span>;
+<span class="c-kw">func</span> on_start(id) {
+    <span class="c-com">// TODO: 处理 button 控件 1 的 'clicked' 信号</span>
+}
+<span class="c-kw">let</span> win = eg_window(<span class="c-str">"我的窗口"</span>, 520, 400);
+eg_connect(win, <span class="c-str">"closed"</span>, <span class="c-str">"on_win_closed"</span>);
+eg_add(<span class="c-str">"button"</span>, win, 1);
+eg_set_pos(1, 20, 20); eg_set_size(1, 100, 30);
+eg_set_text(1, <span class="c-str">"开始"</span>);
+eg_connect(1, <span class="c-str">"clicked"</span>, <span class="c-str">"on_start"</span>);
+eg_app_run();</code></pre>
+  <p class="tip"><strong>完整教程</strong>:Designer 的界面布局、每个控件、信号连接、生成代码
+  结构、<code>.egui</code> 文件格式与常见问题,见
+  <a href="designer_guide.html">《EGUI Designer 使用详解》</a>。</p>
+</section>
+
+<!-- ================= 完整示例 ================= -->
+<section id="demo">
+  <h2><span class="n">09</span>完整示例</h2>
+  <p>见 <code>examples/egui/demo_egui.dex</code>:一个展示全部控件的程序——
+  输入名字问候、勾选/单选切换、下拉与列表选择、滑块联动进度条。</p>
+  <pre><code><span class="c-kw">include</span> <span class="c-str">"egui_fast"</span>;
+<span class="c-kw">include</span> <span class="c-str">"std"</span>;
+
+<span class="c-kw">func</span> on_click(id) {
+    eg_set_text(2, <span class="c-str">"你好, "</span> + eg_get_text(3) + <span class="c-str">"!"</span>);
+    eg_set_value(12, eg_get_value(12) + 10);
+}
+<span class="c-kw">func</span> on_slider(id) {
+    eg_set_value(12, eg_event_value());
+    eg_set_text(13, <span class="c-str">"进度 "</span> + eg_event_value() + <span class="c-str">"%"</span>);
+}
+<span class="c-kw">func</span> on_combo(id) {
+    eg_set_text(2, <span class="c-str">"组合框: "</span> + eg_event_str());
+}
+<span class="c-kw">func</span> on_close(id) { eg_quit(); }
+
+<span class="c-kw">let</span> win = eg_window(<span class="c-str">"EGUI 控件演示"</span>, 540, 400);
+eg_connect(win, <span class="c-str">"closed"</span>, <span class="c-str">"on_close"</span>);
+
+eg_add(<span class="c-str">"label"</span>, win, 1);  eg_set_pos(1, 20, 16);  eg_set_size(1, 60, 24);  eg_set_text(1, <span class="c-str">"状态:"</span>);
+eg_add(<span class="c-str">"label"</span>, win, 2);  eg_set_pos(2, 80, 16);  eg_set_size(2, 320, 24); eg_set_text(2, <span class="c-str">"就绪"</span>);
+eg_add(<span class="c-str">"edit"</span>, win, 3);   eg_set_pos(3, 100, 48); eg_set_size(3, 200, 26); eg_set_text(3, <span class="c-str">"世界"</span>);
+eg_add(<span class="c-str">"button"</span>, win, 11); eg_set_pos(11, 320, 46); eg_set_size(11, 90, 30); eg_set_text(11, <span class="c-str">"问候"</span>);
+eg_connect(11, <span class="c-str">"clicked"</span>, <span class="c-str">"on_click"</span>);
+
+eg_add(<span class="c-str">"group"</span>, win, 20); eg_set_pos(20, 20, 90); eg_set_size(20, 240, 120); eg_set_text(20, <span class="c-str">"选项"</span>);
+eg_add(<span class="c-str">"checkbox"</span>, win, 4); eg_set_pos(4, 36, 118); eg_set_size(4, 200, 26); eg_set_text(4, <span class="c-str">"启用"</span>);
+eg_add(<span class="c-str">"radio"</span>, win, 6); eg_set_pos(6, 36, 150); eg_set_size(6, 90, 26); eg_set_text(6, <span class="c-str">"方案 A"</span>);
+eg_add(<span class="c-str">"radio"</span>, win, 7); eg_set_pos(7, 140, 150); eg_set_size(7, 90, 26); eg_set_text(7, <span class="c-str">"方案 B"</span>);
+
+eg_add(<span class="c-str">"group"</span>, win, 21); eg_set_pos(21, 280, 90); eg_set_size(21, 240, 120); eg_set_text(21, <span class="c-str">"选择"</span>);
+eg_add(<span class="c-str">"combo"</span>, win, 5); eg_set_pos(5, 296, 118); eg_set_size(5, 200, 26);
+eg_add_item(5, <span class="c-str">"苹果"</span>); eg_add_item(5, <span class="c-str">"香蕉"</span>); eg_add_item(5, <span class="c-str">"橙子"</span>);
+eg_connect(5, <span class="c-str">"selected"</span>, <span class="c-str">"on_combo"</span>);
+
+eg_add(<span class="c-str">"group"</span>, win, 22); eg_set_pos(22, 20, 230); eg_set_size(22, 500, 130); eg_set_text(22, <span class="c-str">"进度"</span>);
+eg_add(<span class="c-str">"slider"</span>, win, 9); eg_set_pos(9, 36, 258); eg_set_size(9, 320, 26); eg_set_value(9, 30);
+eg_connect(9, <span class="c-str">"changed"</span>, <span class="c-str">"on_slider"</span>);
+eg_add(<span class="c-str">"progress"</span>, win, 12); eg_set_pos(12, 36, 300); eg_set_size(12, 320, 26); eg_set_value(12, 30);
+eg_add(<span class="c-str">"label"</span>, win, 13); eg_set_pos(13, 380, 302); eg_set_size(13, 120, 24); eg_set_text(13, <span class="c-str">"进度 30%"</span>);
+
+eg_app_run();</code></pre>
+</section>
+
+<!-- ================= API 总表 ================= -->
+<section id="api">
+  <h2><span class="n">10</span>API 总表</h2>
+  <table>
+    <tr><th>函数</th><th>签名</th><th>说明</th></tr>
+    <tr><td><code>eg_window</code></td><td>(title, w, h) → win</td><td>创建窗口</td></tr>
+    <tr><td><code>eg_add</code></td><td>(kind, parent, id) → id</td><td>添加控件</td></tr>
+    <tr><td><code>eg_set_pos</code></td><td>(id, x, y)</td><td>定位</td></tr>
+    <tr><td><code>eg_set_size</code></td><td>(id, w, h)</td><td>改尺寸</td></tr>
+    <tr><td><code>eg_set_text</code></td><td>(id, text)</td><td>设文本</td></tr>
+    <tr><td><code>eg_get_text</code></td><td>(id) → string</td><td>取文本</td></tr>
+    <tr><td><code>eg_set_value</code></td><td>(id, v)</td><td>设值(勾选/滑块/进度/选中)</td></tr>
+    <tr><td><code>eg_get_value</code></td><td>(id) → int</td><td>取值</td></tr>
+    <tr><td><code>eg_add_item</code></td><td>(id, text)</td><td>combo/list 加项</td></tr>
+    <tr><td><code>eg_clear_items</code></td><td>(id)</td><td>清空项目</td></tr>
+    <tr><td><code>eg_set_enabled</code></td><td>(id, on)</td><td>启用/禁用</td></tr>
+    <tr><td><code>eg_set_visible</code></td><td>(id, on)</td><td>显示/隐藏</td></tr>
+    <tr><td><code>eg_connect</code></td><td>(id, signal, cb)</td><td>连接信号</td></tr>
+    <tr><td><code>eg_poll</code></td><td>()</td><td>泵消息</td></tr>
+    <tr><td><code>eg_running</code></td><td>() → int</td><td>循环是否继续</td></tr>
+    <tr><td><code>eg_quit</code></td><td>()</td><td>结束循环</td></tr>
+    <tr><td><code>eg_next</code></td><td>() → int</td><td>弹出事件编号</td></tr>
+    <tr><td><code>eg_event_id</code></td><td>() → int</td><td>事件控件编号</td></tr>
+    <tr><td><code>eg_event_signal</code></td><td>() → string</td><td>事件信号</td></tr>
+    <tr><td><code>eg_event_cb</code></td><td>() → string</td><td>事件回调名</td></tr>
+    <tr><td><code>eg_event_value</code></td><td>() → int</td><td>事件数值</td></tr>
+    <tr><td><code>eg_event_str</code></td><td>() → string</td><td>事件文本</td></tr>
+    <tr><td><code>eg_close</code></td><td>(win)</td><td>关闭窗口</td></tr>
+    <tr><td><code>eg_set_title</code></td><td>(win, title)</td><td>改窗口标题</td></tr>
+    <tr><td><code>eg_win_hwnd / eg_ctrl_hwnd</code></td><td>(id) → int</td><td>取原生句柄(自动化测试用)</td></tr>
+  </table>
+  <p class="tip"><strong>回调</strong>:统一 <code>func 名(id)</code>;需要信号额外数据时在函数内用
+  <code>eg_event_value()</code> / <code>eg_event_str()</code>。</p>
+</section>
+
+<!-- ================= FAQ ================= -->
+<section id="faq">
+  <h2><span class="n">11</span>常见问题</h2>
+  <h3>回调里怎么拿编辑框的文本?</h3>
+  <p>用 <code>eg_get_text(id)</code>;编辑框的 <code>changed</code> 信号也可用
+  <code>eg_event_str()</code> 直接取本次变化的文本。</p>
+  <h3>怎么让滑块控制进度条?</h3>
+  <p>在滑块的 <code>changed</code> 回调里:<code>eg_set_value(进度条id, eg_event_value())</code>。</p>
+  <h3>关闭按钮为什么有时不退出?</h3>
+  <p>连接了 <code>closed</code> 信号时,窗口不会自动关闭,而是交给你在回调里决定
+  (通常调用 <code>eg_quit()</code>)。没连接 <code>closed</code> 时,点关闭会直接结束。</p>
+  <h3>运行提示"找不到 DLL"?</h3>
+  <p>动态模式(<code>egui</code>/<code>egui_fast</code>)需要 <code>libs/egui/libegui.dll</code>
+  在编译时记录的路径下;要独立分发请用静态模式(<code>egui_static</code>/<code>egui_fast_static</code>)。</p>
+  <h3>EGUI 需要 Python 吗?</h3>
+  <p>运行时不需要。Python 只用于开发期的编译与 Designer;发布时交付
+  <code>.dexbc</code> + <code>vm.exe</code> 即可,见 <code>tests/test_nopydep.py</code>。</p>
+</section>
+
+</main>
+
+<footer>
+  DEXCODE · EGUI(easyGUI)图形界面库 · DLL 驱动 · 无 Python 依赖 · 信号式设计
+</footer>
+
+</body>
+</html>

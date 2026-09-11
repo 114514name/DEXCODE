@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WinAPI 与 DEX UI 库教学</title>
+<style>
+  :root {
+    --bg: #1e1e2e; --bg2: #181825; --bg3: #313244; --bg4: #45475a;
+    --text: #cdd6f4; --sub: #a6adc8; --dim: #6c7086;
+    --accent: #89b4fa; --accent2: #f5c2e7;
+    --kw: #cba6f7; --str: #a6e3a1; --num: #fab387;
+    --com: #6c7086; --nat: #89dceb; --warn: #f9e2af;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.7; }
+  header { background: linear-gradient(135deg,#11111b,#1e1e2e 60%,#313244);
+    border-bottom: 2px solid var(--bg4); padding: 3rem 1.5rem 2.5rem; text-align: center; }
+  header h1 { margin: 0; font-size: 2.4rem;
+    background: linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { color: var(--sub); margin: .6rem auto 0; max-width: 740px; }
+  .badges { margin-top: 1rem; }
+  .badge { display: inline-block; background: var(--bg3); color: var(--sub);
+    border: 1px solid var(--bg4); border-radius: 999px; padding: .2rem .9rem;
+    margin: .2rem; font-size: .85rem; }
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(24,24,37,.92);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--bg4);
+    padding: .55rem 1rem; text-align: center; overflow-x: auto; white-space: nowrap; }
+  nav a { color: var(--sub); text-decoration: none; margin: 0 .6rem; font-size: .92rem; }
+  nav a:hover { color: var(--accent); }
+  main { max-width: 900px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }
+  section { margin: 2.6rem 0; }
+  h2 { font-size: 1.55rem; color: var(--accent); border-bottom: 2px solid var(--bg4);
+    padding-bottom: .35rem; margin-top: 0; }
+  h2 .n { color: var(--dim); margin-right: .5rem; font-weight: 400; }
+  h3 { font-size: 1.15rem; color: var(--accent2); margin: 1.6rem 0 .5rem; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  p code, li code, td code { background: var(--bg3); color: var(--nat);
+    border-radius: 4px; padding: .1em .4em; font-size: .9em; }
+  pre { background: var(--bg2); border: 1px solid var(--bg4); border-radius: 10px;
+    padding: 1rem 1.2rem; overflow-x: auto; line-height: 1.55; font-size: .92rem;
+    margin: .7rem 0 1.2rem; }
+  pre code { background: none; color: var(--text); padding: 0; }
+  .c-com { color: var(--com); font-style: italic; }
+  .c-str { color: var(--str); }
+  .c-num { color: var(--num); }
+  .c-kw  { color: var(--kw); font-weight: 600; }
+  .c-nat { color: var(--nat); }
+  .c-id  { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; margin: .8rem 0 1.2rem; font-size: .93rem; }
+  th, td { border: 1px solid var(--bg4); padding: .5rem .8rem; text-align: left; }
+  th { background: var(--bg3); color: var(--accent); }
+  tr:nth-child(even) td { background: rgba(49,50,68,.35); }
+  .tip, .warn { border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0;
+    font-size: .93rem; border-left: 4px solid; }
+  .tip { background: rgba(137,180,250,.1); border-color: var(--accent); }
+  .warn { background: rgba(249,226,175,.1); border-color: var(--warn); }
+  .tip strong { color: var(--accent); }
+  .warn strong { color: var(--warn); }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+    justify-content: center; margin: 1.2rem 0; }
+  .flow .step { background: var(--bg3); border: 1px solid var(--bg4);
+    border-radius: 8px; padding: .45rem 1rem; font-size: .9rem; }
+  .flow .arrow { color: var(--accent); font-weight: 700; }
+  footer { text-align: center; color: var(--dim); padding: 2rem;
+    border-top: 1px solid var(--bg4); font-size: .85rem; }
+  @media (max-width: 640px) { header h1 { font-size: 1.8rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WinAPI 与 DEX UI 库教学</h1>
+  <p>Windows 界面是怎么"画"出来的?本文从 Win32 API 的核心概念讲起,再到本项目
+  <code>libs/ui/libdexui.dll</code>——一个把 WinAPI 封装成 DexLang 可调用界面的纯 C 库。</p>
+  <div class="badges">
+    <span class="badge">🪟 Win32 API</span>
+    <span class="badge">🧩 句柄 / 消息循环 / 窗口过程</span>
+    <span class="badge">📦 libs/ui/libdexui.dll</span>
+    <span class="badge">🖱 事件模型(poll / run)</span>
+  </div>
+</header>
+
+<nav>
+  <a href="#intro">简介</a>
+  <a href="#winapi">WinAPI 核心</a>
+  <a href="#handles">句柄与控件</a>
+  <a href="#messages">消息与事件</a>
+  <a href="#dll">libdexui 库设计</a>
+  <a href="#api">API 详解</a>
+  <a href="#demo">示例程序</a>
+  <a href="#build">构建与运行</a>
+  <a href="#faq">常见问题</a>
+</nav>
+
+<main>
+
+<!-- ===================== 简介 ===================== -->
+<section id="intro">
+  <h2><span class="n">01</span>简介</h2>
+  <p>在 Windows 上,图形界面的底层是 <strong>Win32 API</strong>(用户态接口,位于 <code>user32.dll</code>、
+  <code>kernel32.dll</code> 等系统 DLL)。任何"窗口程序"——记事本、浏览器,乃至本项目的 DEXIDE——最终
+  都是通过这些 API 跟系统交互的。</p>
+  <p>本项目的 <strong>UI 库</strong>(<code>libs/ui/libdexui.dll</code>)是一个纯 C 编写的小封装:
+  用 WinAPI 创建窗口和控件(标签/按钮/输入框),再把这 10 个底层动作暴露成 DexLang 能调用的函数。
+  它完全由 C 实现、零依赖、零 Python。</p>
+  <div class="flow">
+    <span class="step">DexLang 程序</span><span class="arrow">→</span>
+    <span class="step">include "ui" + NCALL</span><span class="arrow">→</span>
+    <span class="step">libdexui.dll(纯 C)</span><span class="arrow">→</span>
+    <span class="step">Win32 API(user32.dll)</span><span class="arrow">→</span>
+    <span class="step">🪟 窗口</span>
+  </div>
+</section>
+
+<!-- ===================== WinAPI 核心 ===================== -->
+<section id="winapi">
+  <h2><span class="n">02</span>WinAPI 核心概念</h2>
+  <p>写一个 Win32 窗口程序,通常走五步(本项目 DLL 里正是这么做的):</p>
+  <table>
+    <tr><th>步骤</th><th>API</th><th>作用</th></tr>
+    <tr><td>1. 定义窗口类</td><td><code>RegisterClassW(WNDCLASS)</code></td><td>登记"这种窗口长什么样、事件交给谁处理"</td></tr>
+    <tr><td>2. 创建窗口</td><td><code>CreateWindowExW</code></td><td>按类实例化一个窗口,返回句柄 <code>HWND</code></td></tr>
+    <tr><td>3. 创建控件</td><td><code>CreateWindowExW</code>(BUTTON/STATIC/EDIT)</td><td>在窗口里放按钮/标签/输入框(控件也是窗口!)</td></tr>
+    <tr><td>4. 消息循环</td><td><code>GetMessage</code>/<code>PeekMessage</code> + <code>DispatchMessage</code></td><td>不断取消息、派发给窗口过程</td></tr>
+    <tr><td>5. 处理事件</td><td><code>WndProc</code>(窗口过程)</td><td>收到 <code>WM_COMMAND</code> 等消息后做出响应</td></tr>
+  </table>
+  <p>核心思想:<strong>窗口是被"消息"驱动的</strong>——用户点鼠标、敲键盘,系统都会生成一条消息,
+  放进程序的消息队列;程序循环取消息,派发到对应窗口的窗口过程去处理。</p>
+</section>
+
+<!-- ===================== 句柄 ===================== -->
+<section id="handles">
+  <h2><span class="n">03</span>句柄(HANDLE)与控件</h2>
+  <p>Windows 不喜欢把内部对象直接交给你,而是给一个<strong>句柄</strong>(一个整数"编号"),
+  你通过它请系统办事。窗口是 <code>HWND</code>,按钮/标签/输入框也各有自己的 <code>HWND</code>——
+  <strong>控件本质上是"子窗口"</strong>。</p>
+  <pre><code class="lang-c">HWND win  = CreateWindowExW(...);              // 主窗口句柄
+HWND btn  = CreateWindowExW(L"BUTTON", ...,    // 按钮(子窗口)
+                            win, (HMENU)(INT_PTR)3, ...);
+// 给控件一个"数字 id"(这里的 3)非常重要:
+// 点击按钮时,WM_COMMAND 消息会带上这个 id(GetDlgCtrlID),
+// 程序靠它区分"是哪个按钮被点了"。</code></pre>
+  <div class="warn"><strong>本项目的教训:</strong>最初 <code>dex_ui_button</code> 创建按钮时没把控件 id 传给
+  <code>HMENU</code>,导致 <code>GetDlgCtrlID</code> 恒为 0,点击事件永远对不上——表现为"点按钮没反应"。
+  修复:把分配的 id 作为 <code>(HMENU)(INT_PTR)id</code> 传入即可。</div>
+</section>
+
+<!-- ===================== 消息与事件 ===================== -->
+<section id="messages">
+  <h2><span class="n">04</span>消息(Message)与事件模型</h2>
+  <p>最常见的消息之一:<strong><code>WM_COMMAND</code></strong>——控件被激活(按钮点击、菜单选择)时发给父窗口。</p>
+  <pre><code class="lang-c">// 窗口过程:所有消息都进这里
+LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    switch (msg) {
+    case WM_COMMAND:
+        // 按钮点击:HIWORD(w) == BN_CLICKED;LOWORD(w) == 被点按钮的 id
+        if (HIWORD(w) == BN_CLICKED) clicked_id = LOWORD(w);
+        return 0;
+    case WM_DESTROY:      // 窗口被关闭
+        running = 0;
+        return 0;
+    }
+    return DefWindowProcW(h, msg, w, l);   // 其余交给系统默认处理
+}</code></pre>
+  <p>消息循环有两种口味,本项目两种都用:</p>
+  <table>
+    <tr><th>方式</th><th>API</th><th>特点</th></tr>
+    <tr><td>阻塞式</td><td><code>GetMessage</code></td><td>没有消息就睡着(省 CPU);窗口关闭才返回</td></tr>
+    <tr><td>轮询式</td><td><code>PeekMessage</code></td><td>有消息就处理,没有立刻返回(适合"边跑逻辑边管窗口")</td></tr>
+  </table>
+  <p>本项目把这两种包装成:<code>dex_ui_run(win)</code>(阻塞式,纯显示)与
+  <code>dex_ui_poll(win)</code>(轮询式,配合事件返回,做交互)。</p>
+  <div class="warn"><strong>又一个教训:</strong>窗口关闭时若调用 <code>PostQuitMessage</code>,会把
+  <code>WM_QUIT</code> 塞进消息队列,污染同一线程里"下一个窗口"的轮询(表现为 poll 莫名返回 -1)。
+  所以这里让 <code>WM_DESTROY</code> 只置 <code>running=0</code>,不投递 WM_QUIT。</div>
+</section>
+
+<!-- ===================== DLL 库设计 ===================== -->
+<section id="dll">
+  <h2><span class="n">05</span>libdexui 库设计:从 WinAPI 到 DexLang</h2>
+  <p>WinAPI 函数参数很多,但 DexLang 的 FFI 限制<strong>每个函数最多 3 个参数</strong>。怎么把
+  <code>CreateWindowExW(类, 标题, 样式, x, y, 宽, 高, 父窗, id, 实例, 参数)</code> 塞进去?</p>
+  <p><strong>设计取舍</strong>:</p>
+  <ul>
+    <li>位置只给 <code>y</code>(控件沿纵向排布,横坐标/宽度由库自动计算)</li>
+    <li>文本用 <code>dex_ui_set_text(control, text)</code> 事后设置(创建时不传)</li>
+    <li>窗口 id、控件 id 都是库内部递增分配的整数,作为"句柄"返回给 DexLang</li>
+    <li>中文全链路:UTF-8(DexLang)↔ UTF-16(WinAPI)用
+      <code>MultiByteToWideChar</code>/<code>WideCharToMultiByte</code> 互转</li>
+  </ul>
+  <pre><code class="lang-c">// 库内部:一次注册一个窗口类,记录句柄与控件表
+typedef struct { HWND hwnd; int id; } Ctrl;
+typedef struct {
+    HWND hwnd; int running;
+    Ctrl ctrls[MAX_CTRL]; int nctrls; int next_ctrl_id;
+} Win;
+
+EXPORT int64_t dex_ui_button(int64_t win, int64_t y) {
+    Win *wn = get_win(win);
+    int cw = client_w(wn->hwnd);              // 窗口客户区宽度
+    int cid = wn->next_ctrl_id++;             // 分配控件 id
+    HWND h = CreateWindowExW(0, L"BUTTON", L"",
+                             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                             cw - 118, (int)y, 104, 24,
+                             wn->hwnd, (HMENU)(INT_PTR)cid,  // ← id 必须传!
+                             GetModuleHandleW(NULL), NULL);
+    wn->ctrls[wn->nctrls].hwnd = h; wn->ctrls[wn->nctrls].id = cid;
+    wn->nctrls++;
+    return cid;                                // 返回控件 id 给 DexLang
+}</code></pre>
+  <p>控件 id 同时被三处使用:返回给 DexLang 程序、作为 <code>HMENU</code> 让 <code>GetDlgCtrlID</code>
+  返回它、在 <code>WM_COMMAND</code> 里出现。三者一致,事件才能对上。</p>
+</section>
+
+<!-- ===================== API ===================== -->
+<section id="api">
+  <h2><span class="n">06</span>API 详解(10 个函数)</h2>
+  <p>接口定义在 <code>libs/ui/ui.dexdef</code>。每个签名都落在 C VM 的 FFI 支持集合内。</p>
+  <table>
+    <tr><th>函数</th><th>签名</th><th>说明</th></tr>
+    <tr><td><code>dex_ui_create</code></td><td>(title: string, w: int, h: int) -&gt; int</td><td>创建主窗口,返回窗口 id</td></tr>
+    <tr><td><code>dex_ui_label</code></td><td>(win: int, y: int) -&gt; int</td><td>添加标签,返回控件 id</td></tr>
+    <tr><td><code>dex_ui_button</code></td><td>(win: int, y: int) -&gt; int</td><td>添加按钮(点击产生事件)</td></tr>
+    <tr><td><code>dex_ui_edit</code></td><td>(win: int, y: int) -&gt; int</td><td>添加输入框</td></tr>
+    <tr><td><code>dex_ui_set_text</code></td><td>(control: int, text: string) -&gt; int</td><td>设置控件文本</td></tr>
+    <tr><td><code>dex_ui_get_text</code></td><td>(control: int) -&gt; string</td><td>读取控件文本(支持中文)</td></tr>
+    <tr><td><code>dex_ui_running</code></td><td>(win: int) -&gt; int</td><td>窗口是否还开着(1/0)</td></tr>
+    <tr><td><code>dex_ui_poll</code></td><td>(win: int) -&gt; int</td><td>泵消息并返回事件(见下)</td></tr>
+    <tr><td><code>dex_ui_run</code></td><td>(win: int) -&gt; int</td><td>阻塞运行到窗口关闭(纯显示)</td></tr>
+    <tr><td><code>dex_ui_destroy</code></td><td>(win: int) -&gt; int</td><td>销毁窗口</td></tr>
+  </table>
+  <p><strong>事件约定</strong>(<code>dex_ui_poll</code> 的返回值):</p>
+  <ul>
+    <li><code>0</code> —— 没有事件</li>
+    <li><code>&gt; 0</code> —— 被点击的<strong>按钮控件 id</strong></li>
+    <li><code>-1</code> —— 窗口已关闭</li>
+  </ul>
+</section>
+
+<!-- ===================== 示例 ===================== -->
+<section id="demo">
+  <h2><span class="n">07</span>示例程序</h2>
+  <p>这就是 <code>examples/ui/demo_ui.dex</code> —— 输入名字,点按钮,标签显示问候语:</p>
+  <pre><code class="lang-dex">include "ui";
+
+let win = dex_ui_create("DEX UI 示例", 340, 170);
+let lbl = dex_ui_label(win, 12);
+let ed  = dex_ui_edit(win, 44);
+let btn = dex_ui_button(win, 80);
+dex_ui_set_text(lbl, "输入名字,然后点按钮");
+dex_ui_set_text(btn, "打招呼");
+
+// 交互模式:轮询消息 + 处理事件
+while dex_ui_running(win) {
+    let e = dex_ui_poll(win);                 // 泵消息,返回事件
+    if e == btn {                             // 是"打招呼"被点
+        dex_ui_set_text(lbl, "你好, " + dex_ui_get_text(ed) + "!");
+    }
+}
+print "窗口已关闭";
+</code></pre>
+  <p><strong>逐行对照 WinAPI 概念</strong>:</p>
+  <table>
+    <tr><th>DexLang 代码</th><th>背后做的 WinAPI 事</th></tr>
+    <tr><td><code>dex_ui_create(...)</code></td><td>RegisterClassW + CreateWindowExW + ShowWindow</td></tr>
+    <tr><td><code>dex_ui_label / edit / button</code></td><td>CreateWindowExW(STATIC / EDIT / BUTTON 子窗口)</td></tr>
+    <tr><td><code>dex_ui_poll(win)</code></td><td>PeekMessage + DispatchMessage(把点击派发给窗口过程)</td></tr>
+    <tr><td><code>e == btn</code></td><td>窗口过程在 WM_COMMAND 里记下被点按钮的控件 id</td></tr>
+    <tr><td><code>dex_ui_set_text(...)</code></td><td>SetWindowTextW</td></tr>
+    <tr><td><code>dex_ui_get_text(...)</code></td><td>GetWindowTextW + UTF-16→UTF-8</td></tr>
+    <tr><td><code>while dex_ui_running(win)</code></td><td>WM_DESTROY 把 running 置 0,循环退出</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 构建运行 ===================== -->
+<section id="build">
+  <h2><span class="n">08</span>构建与运行</h2>
+  <p>UI 库 DLL 需要 <code>user32.dll</code> 等系统库,用 zig 的 MinGW 目标编译:</p>
+  <pre><code class="lang-sh">zig cc -shared -target x86_64-windows-gnu -O2 \
+    -o libs/ui/libdexui.dll libs/ui/libdexui.c</code></pre>
+  <pre><code class="lang-dex"># 编译 + 运行(会出现窗口)
+python main.py compile examples/ui/demo_ui.dex
+python main.py run examples/ui/demo_ui.dexbc
+# 或在 DEXIDE 里打开 examples/ui/demo_ui.dex,点「▶ 运行」/「终端」</code></pre>
+  <p>静态内嵌版:把 <code>ui.dexdef</code> 换成 <code>ui_static.dexdef</code>(<code>refer static</code>),
+  DLL 字节会打包进 <code>.dexbc</code>,分发时无需外部 DLL。</p>
+</section>
+
+<!-- ===================== FAQ ===================== -->
+<section id="faq">
+  <h2><span class="n">09</span>常见问题</h2>
+  <h3>Q1:窗口一闪而过?/ 程序立即结束?</h3>
+  <p>消息循环没跑起来。要么用 <code>dex_ui_run(win)</code>(阻塞),要么用
+  <code>while dex_ui_running(win) { let e = dex_ui_poll(win); ... }</code>(轮询)。</p>
+  <h3>Q2:点按钮没反应?</h3>
+  <p>控件 id 没对上(见 03 节教训):创建控件时必须把分配的 id 传给 <code>HMENU</code>,
+  否则 <code>WM_COMMAND</code> 里 <code>LOWORD(w)</code> 是 0,永远不等于按钮 id。</p>
+  <h3>Q3:关闭窗口后,再开一个窗口,poll 总是返回 -1?</h3>
+  <p>上一条 <code>WM_QUIT</code> 残留(见 04 节教训)。保证 <code>WM_DESTROY</code> 只置
+  <code>running=0</code>、不 <code>PostQuitMessage</code> 即可。</p>
+  <h3>Q4:中文乱码?</h3>
+  <p>WinAPI 用 UTF-16,本库在 DLL 内部用 <code>MultiByteToWideChar</code> / <code>WideCharToMultiByte</code>
+  与 DexLang 的 UTF-8 互转,全链路保持中文不乱码。</p>
+  <h3>Q5:能否自定义窗口内容?</h3>
+  <p>这是"教学级"库,目前固定三种控件(标签/按钮/输入框)和一种纵向布局。
+  想扩展可在 <code>libs/ui/libdexui.c</code> 里仿照 <code>dex_ui_button</code> 增加新控件与布局。</p>
+</section>
+
+</main>
+
+<footer>
+  WinAPI 与 DEX UI 库教学 · DEXCODE 项目 · 纯 C 的 libdexui.dll · 零 Python 依赖
+</footer>
+
+<script>
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  const KW = new Set(["let","if","else","while","func","return","print",
+                      "true","false","include","refer","extern"]);
+  function hl(code) {
+    const re = /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|(.)/g;
+    let out = "", m;
+    while ((m = re.exec(code))) {
+      if (m[1] !== undefined)      out += '<span class="c-com">' + esc(m[1]) + '</span>';
+      else if (m[2] !== undefined) out += '<span class="c-str">' + esc(m[2]) + '</span>';
+      else if (m[3] !== undefined) out += '<span class="c-num">' + esc(m[3]) + '</span>';
+      else if (m[4] !== undefined) {
+        if (KW.has(m[4]))          out += '<span class="c-kw">' + m[4] + '</span>';
+        else if (m[4].indexOf("dex_") === 0) out += '<span class="c-nat">' + m[4] + '</span>';
+        else                       out += '<span class="c-id">' + m[4] + '</span>';
+      }
+      else if (m[5] !== undefined) out += esc(m[5]);
+      else                         out += esc(m[6]);
+    }
+    return out;
+  }
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("code.lang-dex, code.lang-c, code.lang-sh").forEach(function (el) {
+      el.innerHTML = hl(el.textContent);
+    });
+  });
+</script>
+</body>
+</html>

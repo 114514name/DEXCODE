@@ -1,0 +1,11 @@
+// 静态链接定义文件
+// refer static 会把 libdexmath.dll 的字节内嵌进字节码(.dexbc),
+// 运行时无需外部 DLL,程序自带该库。
+refer static "libdexmath.dll";
+
+extern func dex_add(a: int, b: int) -> int;
+extern func dex_fact(n: int) -> int;
+extern func dex_sqrt(x: float) -> float;
+extern func dex_len(s: string) -> int;
+extern func dex_hello() -> string;
+extern func dex_sum3(a: int, b: int, c: int) -> int;

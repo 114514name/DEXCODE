@@ -1,0 +1,18 @@
+// demo_ui.dex — WinAPI UI 库演示
+// 交互:输入名字,点"打招呼"按钮,标签会显示问候语。
+include "ui";
+
+let win = dex_ui_create("DEX UI 示例", 340, 170);
+let lbl = dex_ui_label(win, 12);
+let ed = dex_ui_edit(win, 44);
+let btn = dex_ui_button(win, 80);
+dex_ui_set_text(lbl, "输入名字,然后点按钮");
+dex_ui_set_text(btn, "打招呼");
+
+while dex_ui_running(win) {
+    let e = dex_ui_poll(win);
+    if e == btn {
+        dex_ui_set_text(lbl, "你好, " + dex_ui_get_text(ed) + "!");
+    }
+}
+print "窗口已关闭";

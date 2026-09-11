@@ -1,0 +1,43 @@
+include "egui_fast_static";
+
+// ---- 信号回调(自动生成,补充你的逻辑) ----
+func _press_button(id) {
+	print "inFunc"; 
+	let GetText = eg_get_text(3);
+    eg_set_text(2,"消息: "+GetText);
+}
+
+let win = eg_window("test1", 520, 400);
+eg_connect(win, "closed", "on_win_closed");
+
+func on_win_closed(id) {
+    eg_quit();
+}
+
+eg_add("label", win, 1);
+eg_set_pos(1, 23, 31);
+eg_set_size(1, 190, 24);
+eg_set_text(1, "这是我的第一个测试程序");
+
+eg_add("label", win, 2);
+eg_set_pos(2, 25, 71);
+eg_set_size(2, 1200, 24);
+eg_set_text(2, "消息:");
+
+eg_add("edit", win, 3);
+eg_set_pos(3, 26, 281);
+eg_set_size(3, 160, 26);
+
+eg_add("label", win, 4);
+eg_set_pos(4, 28, 242);
+eg_set_size(4, 120, 24);
+eg_set_text(4, "请键入信息");
+
+eg_add("button", win, 5);
+eg_set_pos(5, 200, 279);
+eg_set_size(5, 100, 30);
+eg_set_text(5, "发送");
+eg_connect(5, "clicked", "_press_button");
+
+eg_app_run();
+print "退出";

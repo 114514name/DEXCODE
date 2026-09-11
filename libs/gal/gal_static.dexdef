@@ -1,0 +1,126 @@
+# gal_static.dexdef — GAL 引擎接口(静态内嵌版)
+#
+# 与 gal.dexdef 相同,但使用静态链接:编译时把 libdexxgal.dll 字节内嵌进字节码,
+# 运行时无需外部 DLL 文件(VM 自动解包到临时目录加载)。
+# 使用: include "gal_static";
+#
+# 注:函数名以 gal_ 开头;路径相对运行目录。
+
+refer static "libdexxgal.dll";
+
+# ---- 窗口 / 基础 ----
+extern func gal_init(w: int, h: int) -> int;
+extern func gal_set_title(title: string) -> int;
+extern func gal_running() -> int;
+extern func gal_poll() -> int;
+extern func gal_wait(ms: int) -> int;
+extern func gal_rand(max: int) -> int;   # 随机整数 0..max-1
+extern func gal_close() -> int;
+
+# ---- 背景 ----
+extern func gal_bg(path: string) -> int;
+extern func gal_bg_color(color: int) -> int;
+extern func gal_bg_fit(mode: int) -> int;   # 背景适配:0拉伸 1原尺寸 2保持比例完整 3保持比例填满
+extern func gal_bg_trans(path: string, ms: int) -> int;   # 柔和换背景:新旧背景交叉淡化
+
+# 场景特效(位掩码,可叠加):1老电影 2回忆 4朦胧 8震动 16马赛克 32反色 64模糊
+#                               128镜像 256灰度 512暗角 1024扫描线 2048夜视
+#                               4096老电视(CRT) 8192故障(Glitch)
+extern func gal_fx_add(fx: int) -> int;
+extern func gal_fx_remove(fx: int) -> int;
+extern func gal_fx_clear() -> int;
+extern func gal_fx_strength(v: int) -> int;   # 强度 0-100
+
+# ---- 立绘(id: 0-3 图层) ----
+extern func gal_sprite(id: int, path: string) -> int;
+extern func gal_sprite_pos(id: int, x: int) -> int;
+extern func gal_sprite_scale(id: int, pct: int) -> int;
+extern func gal_sprite_show(id: int, on: int) -> int;
+extern func gal_sprite_pos_mode(id: int, pos: int) -> int;   # 0中 1左 2右 3偏左 4偏右
+extern func gal_sprite_autofit(id: int, on: int) -> int;     # 自适应
+# 立绘适配:0原大小(×缩放%) 1自动适配(裁剪透明+高78%) 2完整显示(等比) 3填满(等比)
+extern func gal_sprite_fit(id: int, mode: int) -> int;
+extern func gal_sprite_anim(id: int, anim: int) -> int;      # 0无 1呼吸 2淡入 3上浮 4抖动 5脉冲 6消失
+extern func gal_sprite_xy(id: int, x: int, y: int) -> int;   # 精确坐标(手动模式)
+extern func gal_sprite_alpha(id: int, a: int) -> int;        # 透明度 0-255(高亮/变暗)
+
+# ---- 文本(打字机) ----
+extern func gal_text(text: string) -> int;
+extern func gal_text_done() -> int;
+extern func gal_text_clear() -> int;
+extern func gal_speaker(name: string) -> int;
+extern func gal_text_color(color: int) -> int;
+extern func gal_text_size(px: int) -> int;
+extern func gal_text_pos(pos: int) -> int;                   # 0中间 1左 2右 3偏左 4偏右
+extern func gal_clicked() -> int;
+extern func gal_skip(on: int) -> int;
+extern func gal_text_mode(mode: int) -> int;   # 0逐字 1直接全部 2先空框点击后显示
+extern func gal_text_speed(ms: int) -> int;    # 逐字间隔毫秒/字,0=默认40
+extern func gal_box(on: int) -> int;
+extern func gal_box_style(avatar: int, name: int) -> int;    # 有头像/有人名
+extern func gal_box_autofit(on: int) -> int;                 # 对话框自适应
+
+# ---- 选项 ----
+extern func gal_set_choice(i: int, text: string) -> int;
+extern func gal_show_choices() -> int;
+extern func gal_hide_choices() -> int;
+extern func gal_picked() -> int;
+
+# ---- 变量存储(全局,跨镜头) ----
+extern func gal_var_set(name: string, value: string) -> int;
+extern func gal_var_get(name: string) -> string;
+extern func gal_var_num(name: string) -> int;
+extern func gal_itoa(v: int) -> string;
+extern func gal_atof(s: string) -> float;
+extern func gal_ftoa(f: float) -> string;
+
+# ---- 文件 IO(存档/读档/读写文本) ----
+extern func gal_file_write(path: string, content: string) -> int;   # 写文本文件(覆盖)
+extern func gal_file_read(path: string) -> string;                   # 读文本文件
+
+extern func gal_save_vars(path: string) -> int;   # 把所有变量存入文件(存档)
+extern func gal_load_vars(path: string) -> int;   # 从文件恢复变量(读档)
+
+# ---- 主题系统 ----
+extern func gal_theme_apply(name: string) -> int;   # 应用内置风格(默认/中世纪/史诗/简约/科幻/樱花/风雅/压抑/奇特)
+extern func gal_trail_enable(on: int) -> int;       # 鼠标拖尾开关:0关 1开
+extern func gal_trail_get() -> int;                 # 当前拖尾开关(0/1)
+
+# ---- 音频 ----
+extern func gal_play_bgm(path: string) -> int;
+extern func gal_stop_bgm() -> int;
+extern func gal_play_se(path: string) -> int;
+extern func gal_stop_se() -> int;
+extern func gal_stop_sound() -> int;   # 停止全部声音(BGM + SE)
+extern func gal_volume(v: int) -> int;
+
+# ---- 镜头过渡(柔和切换) ----
+extern func gal_fade_out(ms: int) -> int;   # 淡出到全黑
+extern func gal_fade_in(ms: int) -> int;    # 从全黑淡入
+
+# ---- 快速消息提示(Toast) ----
+extern func gal_toast(text: string, corner: int, ms: int) -> int;   # 角落提示:0左上 1右上 2左下 3右下
+
+# ---- 工具 ----
+extern func gal_screenshot(path: string) -> int;
+
+# ---- 菜单系统 ----
+extern func gal_menu_begin() -> int;                 # 进入独占菜单
+# 控件 type:0按钮 1文字 2图片 3面板 4输入框
+# 属性 prop: text/x/y/w/h/show/fit/bg/fg/img(fit=图片适配 0拉伸 1原大小 2完整 3填满)
+extern func gal_menu_new(name: string, typ: int) -> int;
+extern func gal_menu_set(name: string, prop: string, value: string) -> int;
+extern func gal_menu_bg(path: string) -> int;
+extern func gal_menu_exit(result: string) -> int;    # 退出并设结果
+# 叠加菜单(不阻塞镜头)
+extern func gal_menu_overlay_show() -> int;
+extern func gal_menu_overlay_hide() -> int;
+# 信号(镜头 ↔ 叠加菜单)
+extern func gal_signal_emit(name: string, data: string) -> int;
+extern func gal_signal_name() -> string;
+extern func gal_signal_data() -> string;
+extern func gal_menu_active() -> int;
+extern func gal_menu_event() -> string;
+extern func gal_menu_result() -> string;
+extern func gal_menu_overlay_on() -> int;
+extern func gal_menu_get_text(name: string) -> string;   # 读取控件文字(输入框内容)

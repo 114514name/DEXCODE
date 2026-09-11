@@ -1,0 +1,6 @@
+// 图片渲染到控制台示例:调用 libdeximg.dll
+include "img";
+
+print dex_img_width("libs/img/test_img.bmp");
+print dex_img_height("libs/img/test_img.bmp");
+print dex_render("libs/img/test_img.bmp");

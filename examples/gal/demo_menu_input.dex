@@ -1,0 +1,78 @@
+include "gal_static";
+
+func wait_click() {
+  while gal_running() {
+    gal_poll();
+    if gal_text_done() && gal_clicked() { return; }
+    gal_wait(16);
+  }
+}
+func wait_pick() {
+  while gal_running() {
+    gal_poll();
+    if gal_picked() >= 0 { return; }
+    gal_wait(16);
+  }
+}
+
+gal_init(960, 540);
+gal_set_title("数据入口演示 · 菜单控件文字流化");
+gal_box(1);
+gal_theme_apply("中世纪");
+
+// ===== 镜头 1: 开场 =====
+func scene_0() {
+  gal_bg("res/bg.png");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("【演示】镜头会把「问候语」传给菜单,菜单按钮上的文字由镜头决定。");
+    wait_click();
+    gal_text_clear();
+    let r = menu_0_问候弹窗("欢迎光临,冒险者!");
+    if r == "确定" {
+        gal_text_pos(0);
+        gal_text_mode(0);
+        gal_text_speed(60);
+        gal_text("你点了确定。菜单按钮显示的是镜头传入的问候语——数据流化的效果。");
+        wait_click();
+        gal_text_clear();
+        gal_close();
+        return;
+    }
+}
+
+// ===== 菜单 1: 问候弹窗 (独占) =====
+func menu_0_问候弹窗(_mi0: string) -> string {
+    gal_menu_begin();
+    gal_menu_bg("res/menu_bg.png");
+    gal_menu_new("panel", 3);
+    gal_menu_set("panel", "x", "250");
+    gal_menu_set("panel", "y", "150");
+    gal_menu_set("panel", "w", "460");
+    gal_menu_set("panel", "h", "200");
+    gal_menu_set("panel", "show", "1");
+    gal_menu_set("panel", "bg", "1844528");
+    gal_menu_new("ok_btn", 0);
+    gal_menu_set("ok_btn", "x", "360");
+    gal_menu_set("ok_btn", "y", "200");
+    gal_menu_set("ok_btn", "w", "240");
+    gal_menu_set("ok_btn", "h", "64");
+    gal_menu_set("ok_btn", "show", "1");
+    gal_menu_set("ok_btn", "text", _mi0);
+    while gal_menu_active() {
+        gal_poll();
+        let e = gal_menu_event();
+        if e == "ok_btn" {
+            gal_menu_exit("确定");
+            return gal_menu_result();
+        }
+        gal_wait(16);
+    }
+    return gal_menu_result();
+}
+
+scene_0();
+print "end";

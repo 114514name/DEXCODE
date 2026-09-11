@@ -1,0 +1,62 @@
+{
+  "title": "test1",
+  "width": 520,
+  "height": 400,
+  "widgets": [
+    {
+      "kind": "label",
+      "id": 1,
+      "text": "这是我的第一个测试程序",
+      "x": 23,
+      "y": 31,
+      "w": 150,
+      "h": 24,
+      "signals": []
+    },
+    {
+      "kind": "label",
+      "id": 2,
+      "text": "消息:",
+      "x": 25,
+      "y": 71,
+      "w": 120,
+      "h": 24,
+      "signals": []
+    },
+    {
+      "kind": "edit",
+      "id": 3,
+      "text": "",
+      "x": 26,
+      "y": 281,
+      "w": 160,
+      "h": 26,
+      "signals": []
+    },
+    {
+      "kind": "label",
+      "id": 4,
+      "text": "请键入信息",
+      "x": 28,
+      "y": 242,
+      "w": 120,
+      "h": 24,
+      "signals": []
+    },
+    {
+      "kind": "button",
+      "id": 5,
+      "text": "发送",
+      "x": 200,
+      "y": 281,
+      "w": 100,
+      "h": 30,
+      "signals": [
+        [
+          "clicked",
+          "_press_button"
+        ]
+      ]
+    }
+  ]
+}

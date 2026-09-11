@@ -1,0 +1,209 @@
+include "gal_static";
+
+func wait_click() {
+  while gal_running() {
+    gal_poll();
+    if gal_text_done() && gal_clicked() { return; }
+    gal_wait(16);
+  }
+}
+func wait_pick() {
+  while gal_running() {
+    gal_poll();
+    if gal_picked() >= 0 { return; }
+    gal_wait(16);
+  }
+}
+
+gal_init(960, 540);
+gal_set_title("猫猫物语 · 黄昏初遇");
+gal_box(1);
+gal_theme_apply("樱花");
+gal_trail_enable(1);
+
+// ===== 镜头 1: 黄昏初遇 =====
+func scene_0() {
+  gal_bg("res/park_dusk.jpg");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("黄昏时分,金色的阳光洒在安静的街道上……");
+    wait_click();
+    gal_text_clear();
+    gal_sprite(0, "res/cat_black.png");
+    gal_sprite_pos_mode(0, 1);
+    gal_sprite_scale(0, 100);
+    gal_sprite_fit(0, 2);
+    gal_sprite_alpha(0, 255);
+    gal_sprite_show(0, 1);
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("……(望着远方的夕阳,眼中带着一丝落寞)");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("又一天过去了啊。黄昏……总是让人安心又寂寞。");
+    wait_click();
+    gal_text_clear();
+    gal_sprite(1, "res/cat_white.png");
+    gal_sprite_pos_mode(1, 2);
+    gal_sprite_scale(1, 100);
+    gal_sprite_fit(1, 2);
+    gal_sprite_alpha(1, 255);
+    gal_sprite_show(1, 1);
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("嗨!找到你了!!");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("!!……你、你好。你是……?");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("我是小白!刚搬来附近的。远远看到你在看夕阳,觉得……你好像需要一个朋友。");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("(愣了一下)……朋友?");
+    wait_click();
+    gal_text_clear();
+    gal_var_set("affection", gal_itoa(0));
+    gal_var_set("affection", gal_itoa((gal_var_num("affection") + 10)));
+    gal_toast("[好感] 好感度 +10", 3, 1500);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("小白: 你想去哪里呢?");
+    gal_set_choice(0, "一起去公园看日落!");
+    gal_set_choice(1, "去街角咖啡店坐坐吧");
+    gal_set_choice(2, "就在这里聊聊天就好");
+    gal_show_choices();
+    wait_pick();
+    let _p1 = gal_picked();
+    gal_hide_choices();
+    gal_text_clear();
+    if _p1 == 0 {
+        scene_1();
+    }
+    else if _p1 == 1 {
+        scene_2();
+    }
+    else if _p1 == 2 {
+        scene_3();
+    }
+}
+
+// ===== 镜头 2: 公园约会 =====
+func scene_1() {
+  gal_bg("res/park_day.jpg");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("太好了!!公园山顶能看到整座城市的日落!");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("(嘴角微微上扬)好,走吧。我知道一条近路。");
+    wait_click();
+    gal_text_clear();
+    gal_var_set("affection", gal_itoa((gal_var_num("affection") + 15)));
+    gal_toast("[好感] 好感度 +15", 3, 1500);
+    scene_2();
+}
+
+// ===== 镜头 3: 咖啡馆 =====
+func scene_2() {
+  gal_bg("res/cafe.jpg");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("好呀!我听说那家的热牛奶特别好喝!");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("……热牛奶?嗯,听起来不错。其实……我平时都是一个人去那家店的。");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("那今天就是两个人啦!走吧走吧~");
+    wait_click();
+    gal_text_clear();
+    gal_var_set("affection", gal_itoa((gal_var_num("affection") + 10)));
+    gal_toast("[好感] 好感度 +10", 3, 1500);
+    scene_3();
+}
+
+// ===== 镜头 4: 夜色 =====
+func scene_3() {
+  gal_bg("res/street_night.jpg");
+  gal_bg_fit(0);
+  gal_fade_in(0);  // 若由「柔和切镜头」淡出切入,这里淡入;否则无效果
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("嗯!在这儿一边看夕阳一边聊天也很好!");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("(有些意外)你……不觉得无聊吗?");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小白");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("怎么会!和朋友在一起,就算只是看天空,也很有意思呀!");
+    wait_click();
+    gal_text_clear();
+    gal_speaker("小黑");
+    gal_text_pos(0);
+    gal_text_mode(0);
+    gal_text_speed(60);
+    gal_text("……朋友。这个词,已经很久没有听到过了。");
+    wait_click();
+    gal_text_clear();
+    gal_var_set("affection", gal_itoa((gal_var_num("affection") + 5)));
+    gal_toast("[好感] 好感度 +5", 3, 1500);
+    gal_close();
+    return;
+}
+
+scene_0();
+print "end";

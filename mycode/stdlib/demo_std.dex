@@ -1,0 +1,56 @@
+// DEXCODE 标准库演示:include "std" 引入纯 C 实现的 libdexstd.dll
+//
+// 本程序既直接调用 DLL 原语,也演示"用本语言(DexLang)实现"的
+// 高层封装函数(下方 clamp/shout/file_len)。运行时不依赖任何 Python,
+// 只需要 vm.exe + 本 .dexbc(标准库 DLL 也可用 refer static 静态内嵌)。
+
+include "std";
+
+// ---- 用本语言实现的高层封装(基于 DLL 原语) ----
+func clamp(v, lo, hi) {
+    return dex_imax(lo, dex_imin(v, hi));
+}
+func shout(s) {
+    return dex_str_upper(s);
+}
+func file_len(p) {
+    return dex_strlen(dex_read_file(p));
+}
+func not_empty(s) {
+    return dex_strlen(s) > 0;
+}
+
+print "== 数学 ==";
+print dex_abs(-5);            // 5
+print dex_pow(2.0, 10.0);     // 1024
+print dex_imax(3, 9);         // 9
+print clamp(7, 0, 5);         // 5
+print dex_floor(3.7);         // 3
+print dex_ceil(3.2);          // 4
+print dex_round(3.5);         // 4
+
+print "== 字符串 ==";
+print shout("hello");         // HELLO
+print dex_str_lower("AbC");   // abc
+print dex_str_trim("  hi  "); // hi
+print dex_str_concat("foo", "bar");   // foobar
+print dex_str_repeat("ab", 3);        // ababab
+print dex_str_sub("hello", 1, 3);     // ell
+print dex_str_contains("hello world", "world"); // 1
+print dex_strlen("你好");     // 6 (UTF-8 字节数)
+
+print "== 文件 ==";
+print dex_write_file("_demo_std.txt", "line1\nline2\n"); // 0
+print dex_file_exists("_demo_std.txt");                  // 1
+print dex_read_file("_demo_std.txt");                    // 内容两行
+print file_len("_demo_std.txt");                         // 12
+print dex_append_file("_demo_std.txt", "more\n");        // 0
+print not_empty("_demo_std.txt");                        // 1
+print dex_remove_file("_demo_std.txt");                  // 0
+print dex_file_exists("_demo_std.txt");                  // 0
+
+print "== 时间 / 随机 ==";
+dex_srand(42);
+print dex_rand() % 100;       // 0..99 的伪随机
+print dex_now_ms() > 0;       // 1
+print "done";

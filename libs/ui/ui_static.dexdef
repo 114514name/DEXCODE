@@ -1,0 +1,14 @@
+// DEXCODE UI 库接口(静态链接版):DLL 字节内嵌进 .dexbc,
+// 运行时无需外部 libdexui.dll。
+refer static "libdexui.dll";
+
+extern func dex_ui_create(title: string, w: int, h: int) -> int;
+extern func dex_ui_label(win: int, y: int) -> int;
+extern func dex_ui_button(win: int, y: int) -> int;
+extern func dex_ui_edit(win: int, y: int) -> int;
+extern func dex_ui_set_text(control: int, text: string) -> int;
+extern func dex_ui_get_text(control: int) -> string;
+extern func dex_ui_running(win: int) -> int;
+extern func dex_ui_poll(win: int) -> int;
+extern func dex_ui_run(win: int) -> int;
+extern func dex_ui_destroy(win: int) -> int;

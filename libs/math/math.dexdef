@@ -1,0 +1,14 @@
+# math.dexdef — 数学库接口定义
+#
+# refer 指向实际的可加载库文件(相对本定义文件所在目录解析)
+# extern func 声明库的导出函数接口,供主代码像普通函数一样调用,
+# 并让编译器据此检查参数个数与字面量类型。
+
+refer "libdexmath.dll";
+
+extern func dex_add(a: int, b: int) -> int;
+extern func dex_fact(n: int) -> int;
+extern func dex_sqrt(x: float) -> float;
+extern func dex_len(s: string) -> int;
+extern func dex_hello() -> string;
+extern func dex_sum3(a: int, b: int, c: int) -> int;
