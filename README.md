@@ -298,7 +298,7 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 
 ## 开发约定
 
-**编码**:所有源文件为 **UTF-8 无 BOM**,仓库内换行统一 **LF**(见 `.gitattributes`)。
+**编码**:所有源文件为 **UTF-8 无 BOM**。
 
 > ⚠️ **不要用 PowerShell 的 `Set-Content` / `Out-File` 重写源码文本文件。**
 > PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中文注释
@@ -306,6 +306,11 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 > 里的旧快照恢复。请使用支持 UTF-8 的编辑器,或用 `git` 做文本替换。
 > 若必须用脚本批量改写,请用 Python 且显式指定
 > `open(path, 'w', encoding='utf-8', newline='\n')`。
+
+> 注:仓库**不使用 `.gitattributes`**。当前换行本来就是混合的(原有 `.py`/`.md`
+> 为 CRLF,`.c` 为 LF);一旦声明 `text=auto` 之类的规则,git 会持续重新规范化,
+> 使工作树长期显示大量"已修改"。保持原样即可,新文件建议用 LF。
+> `.bat` 目前也是 LF,cmd.exe 可正常执行(已实测 `build_libs.bat`)。
 
 **提交前**:工作树必须干净,且 `python tests/test_*.py` 全通过。
 
