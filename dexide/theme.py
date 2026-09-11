@@ -31,19 +31,32 @@ HL = {
     'library':    C['teal'],     # include/refer 的库路径
     'extern':     C['lavender'], # extern 关键字
     'deflib':     C['pink'],     # .dexdef 中的 refer 路径
+    # ---- 以下为"完整着色"补充(此前这些 token 全部落到 operator) ----
+    'decl':       C['mauve'],    # func/let/type/extern/release 声明关键字
+    'param':      C['subtext1'], # 函数参数名(形参)
+    'delim':      C['overlay0'], # 标点 ( ) [ ] ; , :
 }
 
-# 关键字 → 高亮类别
-_TAG_FLOW = {'if', 'else', 'while', 'return', 'func', 'let', 'true', 'false'}
+# 关键字 → 高亮类别。
+# 注意:词法器为每个关键字给出了**独立的 token 种类**(TokKind.LET / PRINT /
+# INCLUDE / ...),并不都是 IDENT。因此编辑器按 token 种类着色(见 editor.py 的
+# 映射表),本表只用于文本层面的辅助判断与悬停文档。
+_TAG_FLOW = {'if', 'else', 'while', 'return', 'true', 'false'}
+_TAG_DECL = {'func', 'let', 'type'}
 _TAG_EXTERN = {'include', 'refer'}
+_TAG_PRINT = {'print'}
 _TAG_TYPE = {'int', 'float', 'string', 'void'}
-_TAG_NATIVE = {'extern'}
+_TAG_NATIVE = {'extern', 'release'}
 
 
 def TAG_FOR_KEYWORD(word):
     if word in _TAG_FLOW:
         return 'keyword'
+    if word in _TAG_DECL:
+        return 'decl'
     if word in _TAG_EXTERN:
+        return 'builtin'
+    if word in _TAG_PRINT:
         return 'builtin'
     if word in _TAG_TYPE:
         return 'type'

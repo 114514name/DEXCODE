@@ -430,6 +430,189 @@ def test_editing():
         print(f"  SKIP  无显示环境: {e}")
 
 
+
+
+# ============================================================
+# 编辑器语法与缩进(本轮改进)
+# ============================================================
+
+def test_syntax_mask():
+    """注释/字符串掩码:缩进判断的基础(纯函数,无需 GUI)。"""
+    print("[editor] 注释与字符串掩码")
+    from dexide import syntax as S
+
+    src = ('let a = 1;\n'
+           '// 行注释 { \n'
+           'let s = "含 { 的字符串";\n'
+           '/* 块注释\n'
+           '   跨行 } { */\n'
+           '# 井号注释 {\n'
+           'func f() {\n'
+           '    let b = 2;\n'
+           '}\n')
+    comments, strings = S.scan(src)
+    check("识别行注释", any(c.line == 2 for c in comments))
+    check("识别块注释(跨行)", any(c.line == 4 and c.end_line == 5 for c in comments))
+    check("识别井号注释", any(c.line == 6 for c in comments))
+    check("识别字符串", any(s.line == 3 for s in strings))
+    # 行注释 + 块注释 + 井号注释 = 3 处
+    check("注释 3 处", len(comments) == 3, len(comments))
+
+    code = S.code_lines(src, comments, strings)
+    # 注释/字符串里的花括号必须被掩掉,否则缩进会算错
+    check("注释里的 { 被掩码", "{" not in code[1])
+    check("字符串里的 { 被掩码", "{" not in code[2])
+    check("块注释里的 { 被掩码", "{" not in code[4])
+    check("真实代码的 { 保留", "{" in code[6])
+
+    # 缩进:函数体一级 = 4
+    check("函数体缩进 4", S.indent_for_line(code, 8) == 4)
+    check("闭合行回到 0", S.indent_for_line(code, 9) == 0)
+
+
+def test_highlight_categories():
+    """语法着色:每个 token 种类都要有归属,不得全部落到 operator。
+
+    这正是一个实际缺陷的回归护栏:词法器为 print/include/refer/extern/type
+    给出的是**独立 token 种类**(不是 IDENT),旧实现只判断 IDENT,
+    于是它们落到 `return "operator"` 兜底分支被当作运算符着色。"""
+    print("[editor] 着色分类")
+    from dexide import editor as E
+    from dexlang.tokens import TokKind
+
+    mapped = set(E._KIND_TAG.keys())
+    # 关键:这些关键字必须有显式分类
+    for kind in ("PRINT", "INCLUDE", "REFER", "EXTERN", "TYPE", "LET",
+                 "FUNC", "IF", "ELSE", "WHILE", "RETURN", "RELEASE"):
+        check(f"{kind} 有显式着色", kind in mapped, sorted(mapped))
+    # 标点与运算符分开
+    check("括号/分号归 delim", E._KIND_TAG["LPAREN"] == "delim" and E._KIND_TAG["SEMI"] == "delim")
+    check("算术符号归 operator", E._KIND_TAG["PLUS"] == "operator")
+    # 所有非 EOF token 种类都应被覆盖(避免再有"漏网"落到兜底)
+    # IDENT 不在此表:它需要语义判断(是声明名/调用/变量/类型),由 _token_tag 单独处理
+    missing = [k.name for k in TokKind
+               if k.name not in ("EOF", "IDENT") and k.name not in mapped]
+    check("除 IDENT 外的 token 种类已覆盖", not missing, missing)
+
+
+def test_editor_indent_and_editing():
+    """编辑器的缩进与编辑便利功能(需要 Tk;失败则跳过)。"""
+    print("[editor] 缩进与编辑功能")
+    import tkinter as tk
+    from dexide.editor import CodeEditor
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+    except Exception as e:
+        print(f"  SKIP  (无 Tk: {e})")
+        return
+    from dexide.analyzer import ProjectAnalyzer
+    an = ProjectAnalyzer(SAMPLES)
+    an.reanalyze()
+    tmp = os.path.join(SAMPLES, "_ide_edit_tmp.dex")
+
+    class Ev:
+        def __init__(self, char="", keysym="", state=0):
+            self.char = char
+            self.keysym = keysym
+            self.state = state
+
+    def make(text):
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        ed = CodeEditor(root, tmp, an)
+        ed.set_text(text)
+        return ed
+
+    try:
+        # --- 回车缩进:按括号深度,而非"上一行是否以 { 结尾"---
+        def enter_indent(text, line, want, label):
+            ed = make(text)
+            ed.text.mark_set("insert", f"{line}.end")
+            ed._smart_newline()
+            at = int(ed.text.index("insert").split(".")[0])
+            seg = ed.text.get(f"{at}.0", f"{at}.0 lineend")
+            got = len(seg) - len(seg.lstrip())
+            ed.destroy()
+            check(label, got == want, f"缩进={got} 期望={want}")
+
+        enter_indent("func f() {\n", line=1, want=4, label="行尾 { 新行缩进 +4")
+        enter_indent("func f() {\n    let x = 1;\n}\n", line=3, want=0, label="行尾 } 新行回到 0")
+        enter_indent("// 说明 {\n", line=1, want=0, label="行注释里的 { 不缩进")
+        enter_indent("/* 说明 {\n", line=1, want=0, label="块注释里的 { 不缩进")
+        enter_indent('let s = "a{";\n', line=1, want=0, label="字符串里的 { 不缩进")
+        enter_indent("func f() {\n    if 1 {\n        let x = 1;\n    }\n",
+                     line=4, want=4, label="嵌套 } 新行回到内层 4")
+
+        # --- 自动配对 ---
+        ed = make("")
+        ed._on_key_press(Ev(char="(", keysym="parenleft"))
+        check("( 自动补 )", ed.text.get("1.0", "end-1c") == "()",
+              repr(ed.text.get("1.0", "end-1c")))
+        check("光标停在括号中间", ed.text.index("insert") == "1.1")
+        ed.destroy()
+
+        ed = make("")
+        ed._on_key_press(Ev(char='"', keysym="quotedbl"))
+        check('" 自动补 "', ed.text.get("1.0", "end-1c") == '""')
+        ed.destroy()
+
+        ed = make("()")
+        ed.text.mark_set("insert", "1.1")
+        ed._on_key_press(Ev(char=")", keysym="parenright"))
+        check("已存在的闭括号被跳过", ed.text.get("1.0", "end-1c") == "()",
+              repr(ed.text.get("1.0", "end-1c")))
+        ed.destroy()
+
+        ed = make("abc")
+        ed.text.tag_add("sel", "1.0", "1.3")
+        ed._on_key_press(Ev(char="(", keysym="parenleft"))
+        check("选区被包裹", ed.text.get("1.0", "end-1c") == "(abc)",
+              repr(ed.text.get("1.0", "end-1c")))
+        ed.destroy()
+
+        # --- Tab / Shift+Tab ---
+        ed = make("let a = 1;\nlet b = 2;\n")
+        ed.text.tag_add("sel", "1.0", "2.end")
+        ed._ac_navigate(Ev(keysym="Tab"))
+        body = ed.text.get("1.0", "end-1c").rstrip("\n")
+        check("Tab 缩进两行", body == "    let a = 1;\n    let b = 2;", repr(body))
+        ed._ac_navigate(Ev(keysym="ISO_Left_Tab"))
+        body = ed.text.get("1.0", "end-1c").rstrip("\n")
+        check("Shift+Tab 反缩进", body == "let a = 1;\nlet b = 2;", repr(body))
+        ed.destroy()
+
+        # --- Ctrl+/ 注释切换 ---
+        ed = make("let x = 1;")
+        ed.text.mark_set("insert", "1.0")
+        ed._ac_navigate(Ev(keysym="slash", state=0x4))
+        check("Ctrl+/ 加注释", ed.text.get("1.0", "end-1c") == "// let x = 1;",
+              repr(ed.text.get("1.0", "end-1c")))
+        ed._ac_navigate(Ev(keysym="slash", state=0x4))
+        check("Ctrl+/ 取消注释", ed.text.get("1.0", "end-1c") == "let x = 1;",
+              repr(ed.text.get("1.0", "end-1c")))
+        ed.destroy()
+
+        # --- 着色落点:标签必须对齐到字符(列号基准曾经差 1)---
+        ed = make("type P { x: int; }\n")
+        ed._apply_highlight()
+        rs = ed.text.tag_ranges("decl")
+        got = ed.text.get(rs[0], rs[1]) if rs else ""
+        check("声明关键字着色对齐", got == "type", repr(got))
+        rs2 = ed.text.tag_ranges("delim")
+        check("标点着色存在", bool(rs2))
+        ed.destroy()
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+        for f in (tmp,):
+            if os.path.exists(f):
+                os.remove(f)
+
+
 def main():
     print("DEXIDE 测试")
     test_analyzer()
@@ -439,6 +622,9 @@ def main():
     test_terminal_run()
     test_include_dirs_and_settings()
     test_editing()
+    test_syntax_mask()
+    test_highlight_categories()
+    test_editor_indent_and_editing()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     return 1 if FAIL else 0
 

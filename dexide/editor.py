@@ -6,12 +6,45 @@ import tkinter as tk
 from dexlang import Lexer, DexError
 from dexlang import opcodes as O
 
-from .theme import C, HL
+from .theme import C, HL, TAG_FOR_KEYWORD
+from . import syntax as S
 
-_KEYWORDS = {"let", "if", "else", "while", "func", "return", "print",
-             "true", "false", "include", "refer", "extern"}
+# token 种类名 → 高亮标签。
+# 词法器为每个关键字给出独立种类(不是 IDENT),所以必须在这里逐个归类 ——
+# 旧实现只判断 IDENT,导致 print/include/refer/extern/type 全部落到
+# `return "operator"` 兜底分支而被当作运算符着色。
+_KIND_TAG = {
+    # 声明与流程关键字
+    "LET": "decl", "FUNC": "decl", "TYPE": "decl",
+    "IF": "keyword", "ELSE": "keyword", "WHILE": "keyword",
+    "RETURN": "keyword", "TRUE": "keyword", "FALSE": "keyword",
+    # 库引入与原生声明
+    "INCLUDE": "builtin", "REFER": "builtin",
+    "EXTERN": "extern", "RELEASE": "extern",
+    "PRINT": "builtin",
+    # 字面量与标识符
+    "INT": "number", "FLOAT": "number", "STRING": "string",
+    # 运算符
+    "PLUS": "operator", "MINUS": "operator", "STAR": "operator",
+    "SLASH": "operator", "PERCENT": "operator",
+    "EQ": "operator", "EQEQ": "operator", "NE": "operator",
+    "LT": "operator", "LE": "operator", "GT": "operator", "GE": "operator",
+    "AND": "operator", "OR": "operator", "BANG": "operator",
+    "ARROW": "operator",
+    # 标点单独一类,视觉上弱于运算符
+    "SEMI": "delim", "COMMA": "delim", "LPAREN": "delim", "RPAREN": "delim",
+    "LBRACE": "delim", "RBRACE": "delim", "COLON": "delim", "DOT": "operator",
+}
 
-_TWO_CHAR = {"==", "!=", "<=", ">=", "&&", "||", "->"}
+# 类型名(参数/字段/返回类型标注)
+_TYPE_WORDS = frozenset({"int", "float", "string", "void"})
+
+# 文本形式的关键字集合(用于悬停/补全等按词判断的场合;
+# 语法着色本身按 token 种类进行,不依赖这个集合)
+_KEYWORDS_TEXT = frozenset({
+    "let", "if", "else", "while", "func", "return", "print",
+    "true", "false", "include", "refer", "extern", "type",
+})
 
 
 class CodeEditor(tk.Frame):
@@ -74,6 +107,7 @@ class CodeEditor(tk.Frame):
         self.ln.tag_configure("cur", foreground=C["peach"])
 
         # 事件
+        self.text.bind("<KeyPress>", self._on_key_press)
         self.text.bind("<KeyRelease>", self._on_key)
         self.text.bind("<<Modified>>", self._on_modified)
         self.text.bind("<ButtonRelease-1>", self._on_click)
@@ -90,6 +124,10 @@ class CodeEditor(tk.Frame):
         self.text.bind("<Return>", self._ac_navigate)
         self.text.bind("<KP_Enter>", self._ac_navigate)
         self.text.bind("<Tab>", self._ac_navigate)
+        self.text.bind("<Shift-Tab>", self._ac_navigate)
+        self.text.bind("<ISO_Left_Tab>", self._ac_navigate)
+        self.text.bind("<Control-slash>", self._ac_navigate)
+        self.text.bind("<Control-Key-slash>", self._ac_navigate)
         self.text.bind("<Escape>", self._ac_navigate)
         self.text.bind("<FocusOut>", lambda e: self._close_ac())
         self.bp.bind("<Button-1>", self._toggle_bp)
@@ -249,6 +287,84 @@ class CodeEditor(tk.Frame):
                           "BackSpace", "Delete", "Left", "Right", "Home",
                           "End", "Prior", "Next"))
 
+    # 可自动配对的字符
+    _AUTO_PAIRS = {"(": ")", "[": "]", "{": "}"}
+    _AUTO_QUOTES = ('"', "'")
+
+    def _on_key_press(self, ev):
+        """KeyPress:处理自动配对与"跳过已存在的闭括号"。
+
+        注意只在 KeyPress 里做这些,KeyRelease 仍保留原有逻辑
+        (自动补全与光标回调),两者职责不重叠。
+        """
+        if ev.state & 0x4:      # Ctrl 组合交给其它绑定
+            return None
+        # 回车/退格等交给 KeyRelease 与 _ac_navigate 处理。
+        # 必须显式拦截:否则 Tk 会先插入一个默认换行,紧接着 _ac_navigate
+        # 的智能换行又插一个,结果多出一个空行。
+        if ev.keysym in ("Return", "KP_Enter"):
+            return "break"
+        ch = ev.char or ""
+        if not ch:
+            return None
+        try:
+            idx = self.text.index("insert")
+            line, col = (int(x) for x in idx.split("."))
+            # 有选区时,输入配对字符应把选区包裹起来
+            if self.text.tag_ranges("sel"):
+                if ch in self._AUTO_PAIRS or ch in self._AUTO_QUOTES:
+                    return self._wrap_selection(ch)
+                return None
+
+            comments, strings = S.scan(self.get_text())
+            # 在注释里:不配对(注释里写括号很常见)
+            if S.span_contains_any(comments, line, col + 1):
+                return None
+
+            closer = self._AUTO_PAIRS.get(ch)
+            if closer:
+                self.text.insert("insert", ch + closer)
+                self.text.mark_set("insert", f"insert - 1c")
+                return "break"
+
+            if ch in self._AUTO_QUOTES:
+                # 字符串内再打引号通常是收尾,跳过已存在的
+                nxt = self._char_at(line, col + 1)
+                if nxt == ch:
+                    self.text.mark_set("insert", f"insert + 1c")
+                    return "break"
+                if S.span_contains_any(strings, line, col + 1):
+                    prev = self._char_at(line, col)
+                    if prev != "\\":        # 转义引号不配对
+                        return None
+                self.text.insert("insert", ch + ch)
+                self.text.mark_set("insert", f"insert - 1c")
+                return "break"
+
+            if ch in ")]}":
+                # 紧邻相同闭括号时直接越过,避免出现 )))
+                if self._char_at(line, col + 1) == ch:
+                    self.text.mark_set("insert", f"insert + 1c")
+                    return "break"
+                return None
+        except tk.TclError:
+            return None
+        return None
+
+    def _wrap_selection(self, ch):
+        """用配对字符包裹当前选区(与 VS Code 一致)。"""
+        try:
+            s = self.text.index("sel.first")
+            e = self.text.index("sel.last")
+            closer = self._AUTO_PAIRS.get(ch, ch)
+            body = self.text.get(s, e)
+            self.text.delete(s, e)
+            self.text.insert(s, ch + body + closer)
+            self.text.tag_remove("sel", "1.0", "end")
+            return "break"
+        except tk.TclError:
+            return None
+
     def _on_key(self, ev):
         # KeyRelease:回车/导航等纯按键不做补全逻辑。
         # 智能换行已在 KeyPress(_ac_navigate)完成,这里若再插入会多一个空行。
@@ -266,18 +382,139 @@ class CodeEditor(tk.Frame):
         if self.on_cursor_move:
             self.on_cursor_move()
 
+    # ---------- 缩进(语法感知) ----------
+    def _code_source(self):
+        """返回 (原文, 掩码后的代码行, 注释区间, 字符串区间)。
+
+        掩码把注释与字符串内容换成等长空格 —— 缩进判断必须基于它,
+        否则 `// 说明 {` 里的花括号会被当成真的块开始。
+        """
+        src = self.get_text()
+        comments, strings = S.scan(src)
+        return src, S.code_lines(src, comments, strings), comments, strings
+
+    def _indent_at(self, code_lines_list, line):
+        """第 line 行(1 基)应有的缩进空格数。"""
+        if 1 <= line <= len(code_lines_list):
+            return S.indent_for_line(code_lines_list, line)
+        return 0
+
     def _smart_newline(self):
-        """智能换行(KeyPress 触发):继承上一行缩进,行尾 { 多加一层。"""
+        """回车:按**括号深度**给出新行缩进(而非只看上一行是否以 { 结尾)。
+
+        处理三种情形:
+          1) 在行中间回车 —— 切分,后半段继承前半段的缩进;
+             若前半段以开括号结尾,后半段再加一级;若后半段以闭括号开头,减一级。
+          2) 在行尾回车 —— 新行缩进 = 当前行缩进 (行尾 `{` ? +1 : 0)。
+          3) 光标前只有空白 —— 与情形 2 相同,但基于该行的代码内容判断。
+        """
         try:
-            line = self._cursor_line()
-            prev = self.text.get(f"{line - 1}.0", f"{line - 1}.0 lineend")
-            indent = len(prev) - len(prev.lstrip())
-            if prev.rstrip().endswith("{"):
-                indent += 4
-            self.text.insert("insert", "\n" + " " * indent)
+            idx = self.text.index("insert")
+            line, col = (int(x) for x in idx.split("."))
+            src, code, comments, strings = self._code_source()
+            cur_text = self.text.get(f"{line}.0", f"{line}.0 lineend")
+
+            # 光标之前是否只有空白?是则"整行重排",否则按切分处理
+            before = cur_text[:col]
+            at_line_end = (col >= len(cur_text))
+            only_ws_before = before.strip() == ""
+
+            if at_line_end or only_ws_before:
+                # 情形 2/3:整行重排 —— 由该行(掩码后)的括号深度决定新行缩进
+                base = self._indent_at(code, line)
+                code_line = code[line - 1] if line - 1 < len(code) else ""
+                # 该行以开括号结尾 → 新行再进一级。
+                # 注意用"末字符属于集合"判断:str.endswith 的参数是**后缀串**,
+                # 写成 endswith("([{") 是在找整个 "([{" 结尾,永远为假。
+                stripped = code_line.rstrip()
+                if stripped and stripped[-1] in S._OPENERS:
+                    base += S.INDENT_UNIT
+                self.text.insert("insert", "\n" + " " * base)
+            else:
+                # 情形 1:切分 —— 后半段按自己的代码内容重新缩进,
+                # 因此要先删掉它原有的前导空白,避免新旧缩进叠加。
+                tail = cur_text[col:]
+                tail_ws = len(tail) - len(tail.lstrip())
+                if tail_ws:
+                    self.text.delete("insert", f"insert + {tail_ws}c")
+                new_indent = self._indent_at(code, line)
+                self.text.insert("insert", "\n" + " " * new_indent)
+            self.text.tag_remove("sel", "1.0", "end")
             return "break"
         except tk.TclError:
             return "break"
+
+    # ---------- 选中行缩进 / 注释切换 ----------
+    def _selected_line_range(self):
+        """返回受影响的 (首行, 末行)。无选区时为光标所在行。"""
+        try:
+            if self.text.tag_ranges("sel"):
+                s = self.text.index("sel.first")
+                e = self.text.index("sel.last")
+                l1 = int(s.split(".")[0])
+                l2 = int(e.split(".")[0])
+                # 选区结束正好在行首时不把该行算进来
+                if e.split(".")[1] == "0" and l2 > l1:
+                    l2 -= 1
+                return l1, l2
+            ln = self._cursor_line()
+            return ln, ln
+        except tk.TclError:
+            ln = self._cursor_line()
+            return ln, ln
+
+    def indent_lines(self, dedent=False):
+        """对选中行(或当前行)整体缩进/反缩进。"""
+        l1, l2 = self._selected_line_range()
+        unit = S.INDENT_UNIT
+        self.text.edit_separator()
+        # 从下往上改,避免行号变动
+        for ln in range(l2, l1 - 1, -1):
+            text = self.text.get(f"{ln}.0", f"{ln}.0 lineend")
+            if dedent:
+                if text.startswith("\t"):
+                    self.text.delete(f"{ln}.0", f"{ln}.1")
+                else:
+                    strip = 0
+                    for ch in text:
+                        if ch == " " and strip < unit:
+                            strip += 1
+                        else:
+                            break
+                    if strip:
+                        self.text.delete(f"{ln}.0", f"{ln}.{strip}")
+            else:
+                if text.strip() == "":
+                    continue
+                self.text.insert(f"{ln}.0", " " * unit)
+        self.text.edit_separator()
+        return "break"
+
+    def toggle_comment(self):
+        """Ctrl+/ :注释或取消注释选中行(或当前行)。"""
+        l1, l2 = self._selected_line_range()
+        lines = []
+        for ln in range(l1, l2 + 1):
+            lines.append(self.text.get(f"{ln}.0", f"{ln}.0 lineend"))
+        # 以"非空行是否都已被注释"决定是加还是去
+        meaningful = [t for t in lines if t.strip()]
+        all_commented = bool(meaningful) and all(t.lstrip().startswith("//") for t in meaningful)
+        self.text.edit_separator()
+        for ln in range(l2, l1 - 1, -1):
+            text = self.text.get(f"{ln}.0", f"{ln}.0 lineend")
+            if text.strip() == "":
+                continue
+            stripped = text.lstrip()
+            pad = len(text) - len(stripped)
+            if all_commented:
+                if stripped.startswith("// "):
+                    self.text.delete(f"{ln}.{pad}", f"{ln}.{pad + 3}")
+                elif stripped.startswith("//"):
+                    self.text.delete(f"{ln}.{pad}", f"{ln}.{pad + 2}")
+            else:
+                self.text.insert(f"{ln}.{pad}", "// ")
+        self.text.edit_separator()
+        return "break"
 
     def _on_click(self, _ev=None):
         if self.on_cursor_move:
@@ -291,9 +528,8 @@ class CodeEditor(tk.Frame):
         self._hl_after = self.after(250, self._apply_highlight)
 
     def _clear_hl_tags(self):
-        for tag in ("keyword", "type", "number", "string", "comment", "operator",
-                    "func", "native", "builtin", "variable", "library", "label",
-                    "extern", "err", "warn"):
+        # 直接按主题里定义的标签清理,避免手工维护的列表漏项
+        for tag in list(HL.keys()) + ["err", "warn"]:
             try:
                 self.text.tag_remove(tag, "1.0", "end")
             except tk.TclError:
@@ -306,23 +542,47 @@ class CodeEditor(tk.Frame):
 
         if self.path.endswith(".dxasm"):
             self._apply_asm_highlight(src)
-        else:
-            try:
-                tokens = Lexer(src, self.path).tokenize()
-            except DexError:
-                return
-            prev_ident = None   # 上一个标识符(判断是否为调用)
-            for tok in tokens:
-                tag = self._token_tag(tok, prev_ident)
-                if tag:
-                    self._apply_tag(tok.line, tok.col, len(tok.lexeme), tag)
-                if tok.kind.name == "IDENT":
-                    prev_ident = tok.lexeme
-                else:
-                    prev_ident = None
+            self._apply_problem_marks()
+            self._highlight_debug_line()
+            return
+
+        # 注释与字符串在词法器里被跳过/无 COMMENT token,故先按文本扫描着色;
+        # 词法错误(边打边写时很常见)不影响这一步,注释与字符串仍能稳定着色。
+        comments, strings = S.scan(src)
+        self._apply_span_tags(comments, "comment")
+        self._apply_span_tags(strings, "string")
+
+        # 其余部分以真实 token 为准(语义着色:函数调用、原生函数、变量、类型)
+        try:
+            tokens = Lexer(src, self.path).tokenize()
+        except DexError:
+            tokens = []
+        prev = None
+        for tok in tokens:
+            tag = self._token_tag(tok, prev)
+            if tag:
+                self._apply_tag(tok.line, tok.col, len(tok.lexeme), tag)
+            prev = tok
 
         self._apply_problem_marks()
         self._highlight_debug_line()
+
+    def _apply_span_tags(self, spans, tag):
+        """把若干区间整段着色(用于注释与字符串,支持跨行)。"""
+        # syntax.scan 给的是 0 基列;这里 +1 转成 1 基,与 token 坐标统一
+        by_line = S.comment_spans_by_line(spans)
+        for line, ranges in by_line.items():
+            for c0, c1 in ranges:
+                try:
+                    if c1 >= 10 ** 9:
+                        self.text.tag_add(tag, self._idx(line, c0 + 1), f"{line}.end")
+                    else:
+                        self.text.tag_add(tag, self._idx(line, c0 + 1),
+                                          self._idx(line, c1 + 1))
+                except tk.TclError:
+                    pass
+
+
 
     def _apply_problem_marks(self):
         # 错误/警告下划线
@@ -339,16 +599,20 @@ class CodeEditor(tk.Frame):
 
     # ---------- 汇编(.dxasm)着色 ----------
     def _apply_asm_highlight(self, src):
+        """汇编文本着色。
+
+        注意:本函数内部全部使用**1 基列**(与词法器 token 坐标一致),
+        因此正则给出的 0 基偏移都要 +1;`_apply_tag_abs` 也按 1 基解释。
+        """
         mnems = O.MNEMONIC_TO_OP  # 助记符名 → 操作码
         lines = src.split("\n")
         for i, line in enumerate(lines, 1):
-            ln = f"{i}.0"
             work = line
-            # 注释 #
+            # 注释 #:整段到行尾(用 _idx 构造索引,避免 "L.0 + Nc" 失效)
             hp = work.find("#")
             if hp >= 0:
                 try:
-                    self.text.tag_add("comment", f"{ln}+{hp}c", f"{i}.0 lineend")
+                    self.text.tag_add("comment", self._idx(i, hp + 1), f"{i}.0 lineend")
                 except tk.TclError:
                     pass
                 work = work[:hp]
@@ -358,7 +622,7 @@ class CodeEditor(tk.Frame):
             # 标签 NAME:
             m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*$", work)
             if m:
-                col = len(m.group(1))
+                col = len(m.group(1)) + 1
                 name = m.group(2)
                 self._apply_tag_abs(i, col, len(name), "label")
                 continue
@@ -366,7 +630,7 @@ class CodeEditor(tk.Frame):
             m = re.match(r"^(\s*)([A-Za-z.][\w]*)(.*)$", work)
             if not m:
                 continue
-            col = len(m.group(1))
+            col = len(m.group(1)) + 1
             head = m.group(2)
             rest = m.group(3)
             if head in (".func", ".lib", ".native"):
@@ -374,76 +638,102 @@ class CodeEditor(tk.Frame):
                 # .lib 的路径字符串
                 sm = re.search(r'"([^"]*)"', rest)
                 if sm:
+                    # sm.start() 指向开引号;内容从 +1 开始
                     c2 = col + len(head) + sm.start() + 1
                     self._apply_tag_abs(i, c2, len(sm.group(1)), "library")
             elif head == "NCALL" or head in mnems:
                 self._apply_tag_abs(i, col, len(head), "keyword")
             # 操作数:字符串 / @函数 / %局部 / 数字
+            base = col + len(head)
+            # 字符串字面量:只给内容着色(不含引号)
             for m2 in re.finditer(r'"([^"]*)"', rest):
-                c2 = col + len(head) + m2.start() + 1
-                self._apply_tag_abs(i, c2, len(m2.group(1)), "string")
-            for m2 in re.finditer(r"@([A-Za-z_]\w*)", rest):
-                c2 = col + len(head) + m2.start()
-                self._apply_tag_abs(i, c2, len(m2.group(0)), "func")
-            for m2 in re.finditer(r"%(\d+)", rest):
-                c2 = col + len(head) + m2.start()
-                self._apply_tag_abs(i, c2, len(m2.group(0)), "number")
+                self._apply_tag_abs(i, base + m2.start() + 1, len(m2.group(1)), "string")
+            # @函数 / %局部 / 数字:整体着色
+            for m2 in re.finditer(r"@[A-Za-z_]\w*", rest):
+                self._apply_tag_abs(i, base + m2.start(), len(m2.group(0)), "func")
+            for m2 in re.finditer(r"%\d+", rest):
+                self._apply_tag_abs(i, base + m2.start(), len(m2.group(0)), "number")
             for m2 in re.finditer(r"\b\d+(\.\d+)?\b", rest):
-                c2 = col + len(head) + m2.start()
-                self._apply_tag_abs(i, c2, len(m2.group(0)), "number")
+                self._apply_tag_abs(i, base + m2.start(), len(m2.group(0)), "number")
 
-    def _apply_tag_abs(self, line, col0, length, tag):
-        """按 (行, 0 基列) 应用标签。"""
+    # 列号一律沿用**词法器的 1 基列**:
+    #   - 词法器的 col 是 1 基(type 在 col=1,对应文本首字符);
+    #   - Tk 的 "L.1" 恰好也是该行第一个字符。
+    # 注意不要用 "L.0 + Nc" 形式 —— Tk 只解析一次 "+",
+    # 带运算的索引不能再次拼接相对偏移(会静默退化为位置 0)。
+    @staticmethod
+    def _idx(line, col):
+        # 1 基列 → Tk 索引:"1.1" 指该行**第 2** 个字符,故首字符是 "1.0"。
+        return f"{line}.{max(0, col - 1)}"
+
+    def _char_at(self, line, col):
+        """取 1 基列 col 处的字符。"""
+        try:
+            return self.text.get(self._idx(line, col), self._idx(line, col + 1))
+        except tk.TclError:
+            return ""
+
+    def _apply_tag_abs(self, line, col, length, tag):
+        """按 (行, 1 基列) 应用标签。"""
         if length <= 0:
             return
-        start = f"{line}.{col0}"
-        end = f"{line}.{col0 + length}"
         try:
-            self.text.tag_add(tag, start, end)
+            self.text.tag_add(tag, self._idx(line, col), self._idx(line, col + length))
         except tk.TclError:
             pass
 
-    def _token_tag(self, tok, prev_ident):
-        kind = tok.kind
-        name = kind.name
-        if name in ("EOF",):
+    def _token_tag(self, tok, prev=None):
+        """token → 高亮标签。
+
+        `prev` 是前一个 token:用它区分「声明出来的名字」与「引用」——
+        `func foo(...)` 里的 foo 是声明(着色为函数),而 `foo()` 里的 foo 是调用。
+        """
+        name = tok.kind.name
+        if name == "EOF":
             return None
-        if name == "INT" or name == "FLOAT":
-            return "number"
-        if name == "STRING":
-            return "string"
-        if kind.name in ("SEMI", "COMMA", "LPAREN", "RPAREN", "LBRACE", "RBRACE",
-                         "COLON"):
-            return "operator"
+
+        # 1) 由 token 种类直接决定的标签(覆盖全部关键字种类)
+        tag = _KIND_TAG.get(name)
+        if tag is not None:
+            # 声明关键字后面紧跟的标识符要特殊处理,见下
+            if name != "IDENT":
+                return tag
+
+        # 2) 标识符需要语义判断
         if name == "IDENT":
             w = tok.lexeme
-            if w in ("print",):
-                return "builtin"
-            if w in ("include", "refer"):
-                return "builtin"
-            if w == "extern":
-                return "extern"
-            if w in _KEYWORDS:
-                return "keyword"
-            # 调用?
-            is_call = False
-            try:
-                nxt = self.text.get(f"{tok.line}.{tok.col + len(w)}", f"{tok.line}.{tok.col + len(w) + 1}")
-                is_call = (nxt == "(")
-            except tk.TclError:
-                is_call = False
-            if is_call and self.analyzer and w in self.analyzer.native_names():
-                return "native"
-            if is_call and w in self.analyzer.all_func_names():
+            prev_name = prev.kind.name if prev is not None else None
+
+            # 紧随 func / type / extern func 的名字 → 声明
+            if prev_name == "FUNC":
                 return "func"
-            if w in ("int", "float", "string", "void"):
+            if prev_name == "TYPE":
+                return "decl"
+            # 形参名:`func f(a: int, b: string)` —— 前一个 token 是 LPAREN 或 COMMA,
+            # 且后面跟着 COLON
+            if prev_name in ("LPAREN", "COMMA") and self._next_char(tok) == ":":
+                return "param"
+
+            if w in _TYPE_WORDS:
                 return "type"
-            # 变量
+            if w in _KEYWORDS_TEXT:
+                return TAG_FOR_KEYWORD(w) or "keyword"
+
+            if self._next_char(tok) == "(":
+                # 调用:原生函数优先(名字可能重名,原生更具体)
+                if self.analyzer and w in self.analyzer.native_names():
+                    return "native"
+                if self.analyzer and w in self.analyzer.all_func_names():
+                    return "func"
+                return "func"
             if self._is_var(w):
                 return "variable"
             return None
-        # 运算符
-        return "operator"
+        return None
+
+    def _next_char(self, tok):
+        """取 token 结束位置的下一个字符(即时读文本,无需重新分析)。"""
+        return self._char_at(tok.line, tok.col + len(tok.lexeme))
 
     def _is_var(self, word):
         fa = self.analyzer.files.get(os_abspath(self.path))
@@ -468,14 +758,8 @@ class CodeEditor(tk.Frame):
         return best
 
     def _apply_tag(self, line, col, length, tag):
-        if length <= 0:
-            return
-        start = f"{line}.{col}"
-        end = f"{line}.{col + length}"
-        try:
-            self.text.tag_add(tag, start, end)
-        except tk.TclError:
-            pass
+        """按 (行, 1 基列) 应用标签 —— 与词法器 token 的坐标一致。"""
+        self._apply_tag_abs(line, col, length, tag)
 
     # ---------- 悬停提示 ----------
     def _on_motion(self, ev):
@@ -652,6 +936,12 @@ class CodeEditor(tk.Frame):
             return None
         if keysym in ("Return", "KP_Enter"):
             return self._smart_newline()
+        if keysym == "Tab":
+            return self.indent_lines(dedent=False)
+        if keysym in ("Shift-Tab", "ISO_Left_Tab"):
+            return self.indent_lines(dedent=True)
+        if keysym == "slash" and (ev.state & 0x4):
+            return self.toggle_comment()
         return None
 
     def _ac_commit(self):
