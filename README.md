@@ -283,6 +283,35 @@ L58:
 常量池(INT/FLOAT/STRING)、库表、原生函数表、函数表(每项 13 字节)、代码段
 (指令 = 1 字节操作码 + 可选 4 字节操作数)。详见 `docs/SPEC.md`。
 
+## 构建原生库
+
+`python main.py build-vm` 只构建 VM。六个原生库(`libs/*/lib*.dll`)用:
+
+```bash
+build_libs.bat          # 需要 ziglang(pip install ziglang)
+```
+
+各库源码头部的注释是该库的权威构建命令(例如 `libdexxgal.c` 需要
+`-lgdi32 -luser32 -lwinmm -lmsimg32`)。脚本会把 zig 缓存重定向到工作区内的
+`_zigcache/`、`_zigtmp/`(已被 `.gitignore` 排除),避免在受限环境下写
+`%LOCALAPPDATA%\zig` 被拒。
+
+## 开发约定
+
+**编码**:所有源文件为 **UTF-8 无 BOM**,仓库内换行统一 **LF**(见 `.gitattributes`)。
+
+> ⚠️ **不要用 PowerShell 的 `Set-Content` / `Out-File` 重写源码文本文件。**
+> PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中文注释
+> 全部变成乱码,并加上 BOM。本项目 `vm.c` 曾因此损坏 118 行,只能靠打包目录
+> 里的旧快照恢复。请使用支持 UTF-8 的编辑器,或用 `git` 做文本替换。
+> 若必须用脚本批量改写,请用 Python 且显式指定
+> `open(path, 'w', encoding='utf-8', newline='\n')`。
+
+**提交前**:工作树必须干净,且 `python tests/test_*.py` 全通过。
+
+**生成产物不入库**:`*.dxasm`、`*.dexbc`、`*.do`、`scene_out.dex` 等可由
+`.dex` 源码重建,已在 `.gitignore` 中排除。
+
 ## 测试
 
 共 **20 个测试文件 / 127 个测试函数 / 613 处断言**（`check(...)` 调用点；实际执行数

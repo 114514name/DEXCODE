@@ -1,0 +1,75 @@
+@echo off
+REM ============================================================
+REM  build_libs.bat - build all native libraries (libs/*/lib*.dll)
+REM
+REM  Why this exists: only prebuilt lib*.dll used to be shipped and no
+REM  build script existed for them, so the binaries had to be committed
+REM  (otherwise a fresh clone cannot run any example or test). This
+REM  script makes libs/*/lib*.dll reproducible from source.
+REM
+REM  The authoritative build command for each library is the comment at
+REM  the top of its .c file.
+REM
+REM  NOTE: this file is deliberately ASCII-only. cmd.exe parses .bat
+REM  files using the OEM code page, so UTF-8 text in a batch file turns
+REM  into garbage commands. Keep it ASCII; put docs in README instead.
+REM ============================================================
+setlocal
+
+set ROOT=%~dp0
+cd /d "%ROOT%"
+
+REM zig needs a writable cache; keep it inside the workspace so that
+REM restricted/sandboxed environments do not fail on %LOCALAPPDATA%\zig
+REM
+REM Always start from a clean cache: a previously failed link can be
+REM reused by zig and keep reporting the old undefined-symbol error even
+REM after the flags are fixed.
+set ZIGCACHE=%ROOT%_zigcache
+if exist "%ZIGCACHE%" rmdir /s /q "%ZIGCACHE%" 2>nul
+mkdir "%ZIGCACHE%" 2>nul
+set ZIG_GLOBAL_CACHE_DIR=%ZIGCACHE%
+set ZIG_LOCAL_CACHE_DIR=%ZIGCACHE%
+if not exist "%ROOT%_zigtmp" mkdir "%ROOT%_zigtmp"
+set TMP=%ROOT%_zigtmp
+set TEMP=%ROOT%_zigtmp
+
+REM ---- locate zig (PATH first, then the pip ziglang package) ----
+set ZIG=
+for %%p in (zig.exe) do if not defined ZIG set ZIG=%%~$PATH:p
+if not defined ZIG (
+  for /f "delims=" %%p in ('python -c "import ziglang,pathlib;print(pathlib.Path(ziglang.__file__).parent/'zig.exe')" 2^>nul') do set ZIG=%%p
+)
+if not defined ZIG (
+  echo [ERROR] zig not found. Install it with: pip install ziglang
+  exit /b 1
+)
+echo Using zig: %ZIG%
+echo.
+
+set COMMON=-shared -target x86_64-windows-gnu -O2 -std=c11
+
+echo === building native libraries ===
+
+echo [1/6] libs\math\libdexmath.dll
+"%ZIG%" cc %COMMON% -o libs\math\libdexmath.dll libs\math\libdexmath.c || exit /b 1
+
+echo [2/6] libs\std\libdexstd.dll
+"%ZIG%" cc %COMMON% -o libs\std\libdexstd.dll libs\std\libdexstd.c || exit /b 1
+
+echo [3/6] libs\img\libdeximg.dll
+"%ZIG%" cc %COMMON% -o libs\img\libdeximg.dll libs\img\libdeximg.c || exit /b 1
+
+echo [4/6] libs\ui\libdexui.dll
+"%ZIG%" cc %COMMON% -o libs\ui\libdexui.dll libs\ui\libdexui.c || exit /b 1
+
+echo [5/6] libs\egui\libegui.dll
+"%ZIG%" cc %COMMON% -lcomctl32 -luser32 -lgdi32 -lwinmm -lshell32 -o libs\egui\libegui.dll libs\egui\libegui.c || exit /b 1
+
+echo [6/6] libs\gal\libdexxgal.dll
+"%ZIG%" cc %COMMON% -lgdi32 -luser32 -lwinmm -lmsimg32 -o libs\gal\libdexxgal.dll libs\gal\libdexxgal.c || exit /b 1
+
+echo.
+echo Done. Rebuilt 6 native libraries.
+echo Cache dirs _zigcache\ and _zigtmp\ are excluded by .gitignore.
+endlocal
