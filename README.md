@@ -300,22 +300,23 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 
 **编码**:所有源文件为 **UTF-8 无 BOM**。
 
-> ⚠️ **不要用 PowerShell 的 `Set-Content` / `Out-File` 重写源码文本文件。**
+> **不要用 PowerShell 的 `Set-Content` / `Out-File` 重写源码文本文件。**
 > PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中文注释
 > 全部变成乱码,并加上 BOM。本项目 `vm.c` 曾因此损坏 118 行,只能靠打包目录
 > 里的旧快照恢复。请使用支持 UTF-8 的编辑器,或用 `git` 做文本替换。
 > 若必须用脚本批量改写,请用 Python 且显式指定
 > `open(path, 'w', encoding='utf-8', newline='\n')`。
 
-> 注:仓库**不使用 `.gitattributes`**。当前换行本来就是混合的(原有 `.py`/`.md`
-> 为 CRLF,`.c` 为 LF);一旦声明 `text=auto` 之类的规则,git 会持续重新规范化,
-> 使工作树长期显示大量"已修改"。保持原样即可,新文件建议用 LF。
-> `.bat` 目前也是 LF,cmd.exe 可正常执行(已实测 `build_libs.bat`)。
+> **编辑既有文件时不要把 CRLF 改成 LF。** 仓库原本是混合换行(原有 `.py`/`.md`
+> 为 CRLF,`.c` 为 LF)。若整个文件被改成 LF,`git diff` 会显示全文件重写,
+> 掩盖真实改动。仓库不再使用 `.gitattributes`,以免 git 反复做换行规范化。
+> `.bat` 目前是 LF,cmd.exe 可正常执行(已实测 `build_libs.bat`)。
 
 **提交前**:工作树必须干净,且 `python tests/test_*.py` 全通过。
 
 **生成产物不入库**:`*.dxasm`、`*.dexbc`、`*.do`、`scene_out.dex` 等可由
-`.dex` 源码重建,已在 `.gitignore` 中排除。
+`.dex` 源码重建,原因见 `.gitignore` 中的注释。
+
 
 ## 测试
 
