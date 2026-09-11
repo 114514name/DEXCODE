@@ -223,64 +223,57 @@ def test_float_literal_into_int_field_rejected():
 
 # ---------- 循环对象在 VM 层兜底(绕过编译器的字节码) ----------
 
+
 def test_cycle_guard_in_vm():
-    """编译器已拦截环的构造;这里验证即使字节码由其它工具生成(绕过编译器),
-    VM 的深度上限也能兜底,不会因递归耗尽 C 栈而崩溃。"""
-    print("VM 层环检测兜底")
+    """环已被三道措施排除,这里验证 VM 的兜底:即使字节码试图构造自引用,
+    也不会崩溃、不会双重释放。
+
+    排除环的三道措施:
+      1) 编译期拒绝递归类型(类型层面不可表达环);
+      2) 编译期校验字段赋值类型;
+      3) VM 侧 SET_FIELD 与 STORE 一样按**值语义**拷贝(P3/P4),
+         因此 `a.v = a` 会把 a 的一份副本放进字段,而不是让字段指向 a 自身。"""
+    print("VM 层环防护兜底")
     if not has_vm():
         print("  SKIP  (C VM 未构建)")
         return
 
-    # 直接构造 IR,跳过编译器的 SET_FIELD 类型校验:
-    # 建对象 -> 用它自己的引用填字段 -> 打印,形成自引用环。
     from dexlang.ir import (AsmFunc, Insn, AssemblyProgram,
                             ConstOperand, LocalOperand, TypeOperand, FieldOperand)
     from dexlang import opcodes as O
 
-    f = AsmFunc(name="main", arity=0, nlocals=1)
-    f.insns = [
-        Insn(op=O.PUSH, operand=ConstOperand(0)),      # 字段初值 int 0
-        Insn(op=O.MAKE_OBJ, operand=TypeOperand("N", 1)),
-        Insn(op=O.STORE, operand=LocalOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(0)),      # obj
-        Insn(op=O.LOAD, operand=LocalOperand(0)),      # value = 同一 obj → 自引用
-        Insn(op=O.SET_FIELD, operand=FieldOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(0)),
-        Insn(op=O.PRINT),
-        Insn(op=O.HALT),
-    ]
-    bc = assemble(AssemblyProgram(funcs=[f], natives=[], libs=[]))
-    out, err, rc = run_vm(bc, timeout=30)
-    check("自引用对象打印不崩溃(VM 兜底)", rc == 0, f"rc={rc} err={err[:140]}")
-    check("自引用对象打印被深度上限截断", "..." in out, repr(out[:80]))
+    # 绕过编译器直接构造字节码:建对象 -> 把自己的引用填进字段 -> 打印 + 比较
+    # 若是引用语义,这会形成自引用环;值语义下字段得到一份副本,故不成环。
+    def build(with_cmp):
+        f = AsmFunc(name="main", arity=0, nlocals=1)
+        insns = [
+            Insn(op=O.PUSH, operand=ConstOperand(0)),      # 字段初值 int 0
+            Insn(op=O.MAKE_OBJ, operand=TypeOperand("N", 1)),
+            Insn(op=O.STORE, operand=LocalOperand(0)),
+            Insn(op=O.LOAD, operand=LocalOperand(0)),      # obj
+            Insn(op=O.LOAD, operand=LocalOperand(0)),      # value = 同一 obj
+            Insn(op=O.SET_FIELD, operand=FieldOperand(0)),
+            Insn(op=O.LOAD, operand=LocalOperand(0)),
+            Insn(op=O.PRINT),
+        ]
+        if with_cmp:
+            insns += [Insn(op=O.LOAD, operand=LocalOperand(0)),
+                      Insn(op=O.LOAD, operand=LocalOperand(0)),
+                      Insn(op=O.EQ), Insn(op=O.PRINT)]
+        insns.append(Insn(op=O.HALT))
+        f.insns = insns
+        return assemble(AssemblyProgram(funcs=[f], natives=[], libs=[]))
 
-    # 环状对象比较同样不能崩
-    f2 = AsmFunc(name="main", arity=0, nlocals=2)
-    f2.insns = [
-        Insn(op=O.PUSH, operand=ConstOperand(0)),
-        Insn(op=O.MAKE_OBJ, operand=TypeOperand("N", 1)),
-        Insn(op=O.STORE, operand=LocalOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(0)),
-        Insn(op=O.MAKE_OBJ, operand=TypeOperand("N", 1)),
-        Insn(op=O.STORE, operand=LocalOperand(1)),
-        Insn(op=O.LOAD, operand=LocalOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(0)),
-        Insn(op=O.SET_FIELD, operand=FieldOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(1)),
-        Insn(op=O.LOAD, operand=LocalOperand(1)),
-        Insn(op=O.SET_FIELD, operand=FieldOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(0)),
-        Insn(op=O.LOAD, operand=LocalOperand(1)),
-        Insn(op=O.EQ),
-        Insn(op=O.PRINT),
-        Insn(op=O.HALT),
-    ]
-    bc2 = assemble(AssemblyProgram(funcs=[f2], natives=[], libs=[]))
-    out2, err2, rc2 = run_vm(bc2, timeout=30)
-    check("自引用对象比较不崩溃(VM 兜底)", rc2 == 0, f"rc={rc2} err={err2[:140]}")
+    out, err, rc = run_vm(build(with_cmp=False), timeout=30)
+    check("手写字节码构造自引用不崩溃", rc == 0, f"rc={rc} err={err[:140]}")
+    check("打印结果不是无限递归(值语义:字段是副本)",
+          "..." not in out and out.count("N(") <= 2, repr(out[:90]))
 
+    out2, err2, rc2 = run_vm(build(with_cmp=True), timeout=30)
+    check("自引用对象比较不崩溃", rc2 == 0, f"rc={rc2} err={err2[:140]}")
+    check("比较有确定结果", out2.strip().splitlines()[-1] in ("0", "1") if out2.strip() else False,
+          repr(out2[:90]))
 
-# ---------- 整型边界 ----------
 
 def test_int64_mod_edge():
     print("INT64_MIN % -1 不触发陷阱")

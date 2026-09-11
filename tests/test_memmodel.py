@@ -123,9 +123,14 @@ def test_budget():
     out, err, rc = run_c(ACCUM, {"DEXCODE_MAX_MEM_MB": "0"})
     check("0 = 不限制,程序正常跑完", rc == 0 and "done" in out, f"rc={rc} {err[:120]}")
 
-    # 小预算:必须在超限时停下,并给出指向性的诊断
-    out, err, rc = run_c(ACCUM, {"DEXCODE_MAX_MEM_MB": "8"})
-    check("小预算触发上限并退出", rc != 0, f"rc={rc}")
+    # 小预算:必须在超限时停下,并给出指向性的诊断。
+    # 注意:不能用累加器来触发 —— P4(P字符串引用计数)之后累加器的内存是平稳的。
+    # 这里改用"同时持有大量局部字符串",确定性地超过预算。
+    # 每个变量用**拼接**产生唯一内容(相同字面量会被常量池去重),从而真实占用堆
+    hold = "\n".join('let v%d = "%s" + "%d";' % (i, "y" * 4000, i) for i in range(600))
+    hog = hold + '\nprint "never";\n'
+    out, err, rc = run_c(hog, {"DEXCODE_MAX_MEM_MB": "1"})
+    check("小预算触发上限并退出", rc != 0, f"rc={rc} (未触发)")
     check("错误信息点明预算上限", "超过预算上限" in err, err[:200])
     check("错误信息给出最常见原因(循环内字符串累加)",
           "字符串累加" in err, err[:200])

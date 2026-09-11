@@ -19,6 +19,8 @@ from dexlang import (  # noqa: E402
 )
 from dexlang.pyvm import run_program  # noqa: E402
 
+TAG = "call"   # 本测试文件专用的临时文件名后缀
+
 PASS = 0
 FAIL = 0
 
@@ -50,7 +52,9 @@ def run_vm(bc_bytes):
     if not os.path.exists(vm):
         print("  SKIP  (C VM 未构建)")
         return None
-    tmp = os.path.join(ROOT, "_tmp_test.dexbc")
+    # 临时字节码路径带本文件唯一后缀:多个测试文件曾共用 _tmp_test.dexbc,
+    # 互相覆盖/删除会让 VM 读到被截断的文件而异常退出。
+    tmp = os.path.join(ROOT, f"_tmp_{TAG}.dexbc")
     with open(tmp, "wb") as f:
         f.write(bc_bytes)
     try:

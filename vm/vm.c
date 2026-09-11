@@ -161,15 +161,20 @@ typedef enum { V_INT, V_FLOAT, V_STR, V_OBJ } VType;
 
 typedef struct {
     VType type;
+    /* owned:该值是否**自持**一份引用(字符串引用计数)。只用于栈上的临时值 ——
+       CONCAT / NCALL 的产物在栈上自持一份,STORE 时把这份所有权移交给局部槽;
+       借用的值(LOAD 副本、常量池字符串、MAKE_OBJ 产物)为 0,
+       释放它们会误伤真正的持有者。 */
+    int owned;
     union {
         int64_t i;
         double f;
-        char *p; /* 字符串值直接指向常量池字符串 */
+        char *p; /* 字符串值:常量池字符串或 VM 堆副本(堆副本带引用计数头) */
         void *o; /* V_OBJ:指向 Obj */
     } as;
 } Value;
 
-/* 结构体实例(MAKE_OBJ 创建;字段数组在堆上,引用语义) */
+/* 结构体实例(MAKE_OBJ 创建;字段数组在堆上;P3 起为值语义,局部槽独占其副本) */
 typedef struct {
     const char *type_name;  /* 类型名(指向常量池字符串) */
     uint32_t nfields;
@@ -623,6 +628,104 @@ static Program *load_program(const uint8_t *data, size_t n) {
     return prog;
 }
 
+/* 对象图的最大递归深度,供打印/比较/值拷贝/释放四处防御使用。
+   环已由三道措施排除(编译期拒绝递归类型、编译期校验字段赋值类型、
+   VM 侧 STORE/SET_FIELD 值拷贝),这里只是防御手工构造的字节码。 */
+#define MAX_OBJ_DEPTH 64
+
+/* ---------------- 字符串引用计数(P4) ----------------
+ *
+ * 为什么字符串用引用计数、而结构体用独占所有权:
+ *   - 结构体在 P3 之后是值语义,每个局部槽持有独立副本(赋值时深拷贝),
+ *     因此"槽被覆盖/帧销毁即释放"是安全的;
+ *   - 字符串不可变但会被共享(多个槽、对象字段、返回值可同时引用同一块),
+ *     按槽释放会悬垂,因此用引用计数。
+ *
+ * 环不需要收集器:P3 已拒绝递归类型,环在类型层面不可表达。
+ *
+ * 所有权约定:
+ *   局部槽、对象字段 —— **拥有**引用(在槽/字段销毁时释放)
+ *   值栈            —— **借用**(压栈不增加引用,吐出的所有权归接收方)
+ */
+typedef struct { uint32_t magic; uint32_t rc; } VmStrHdr;
+
+#define VM_STR_MAGIC 0x56535452u   /* 'VSTR' */
+#define VM_STR_HDR  (sizeof(VmStrHdr))
+
+/* 判断是否为 VM 拥有的字符串。常量池字符串没有头,因此靠 magic 识别;
+   把任意 char* 当作头读取在理论上可能越界读,但常量池字符串本身就在
+   VM 的堆上(前后都有分配),实际不会触碰未映射页。 */
+static VmStrHdr *str_hdr(const char *p) {
+    if (!p) return NULL;
+    VmStrHdr *h = (VmStrHdr *)((char *)p - VM_STR_HDR);
+    return h->magic == VM_STR_MAGIC ? h : NULL;
+}
+
+/* 复制一份自有字符串(调用方获得一个引用)。 */
+static char *vm_strdup(const char *s) {
+    if (!s) s = "";
+    size_t n = strlen(s);
+    char *raw = (char *)vm_alloc(VM_STR_HDR + n + 1);
+    VmStrHdr *h = (VmStrHdr *)raw;
+    h->magic = VM_STR_MAGIC;
+    h->rc = 1;
+    char *data = raw + VM_STR_HDR;
+    memcpy(data, s, n + 1);
+    return data;
+}
+
+static void str_retain(char *p) {
+    VmStrHdr *h = str_hdr(p);
+    if (h) h->rc++;
+}
+
+static void str_release(char *p) {
+    VmStrHdr *h = str_hdr(p);
+    if (!h) return;               /* 常量池字符串:不归 VM 管 */
+    if (h->rc > 0) h->rc--;
+    if (h->rc == 0) vm_free(h);
+}
+
+static void value_retain(Value v);
+static void value_release_d(Value v, int depth);
+static Value copy_value(const Program *prog, Value v, int depth);
+
+static void value_retain(Value v) {
+    if (v.type == V_STR) str_retain(v.as.p);
+}
+
+/* 释放一个值。结构体自 P3 起为值语义、由局部槽独占,故可递归回收其字段与自身。
+   深度上限用于防御**手写字节码**构造出的环 —— 编译器已通过"拒绝递归类型"
+   排除了环,但字节码也可能来自其它工具。触顶时停止下潜(宁可少回收,不可崩栈)。 */
+static void value_release_d(Value v, int depth) {
+    if (v.type == V_STR) {
+        str_release(v.as.p);
+    } else if (v.type == V_OBJ && v.as.o) {
+        if (depth >= MAX_OBJ_DEPTH) return;
+        Obj *o = (Obj *)v.as.o;
+        for (uint32_t i = 0; i < o->nfields; i++)
+            value_release_d(o->fields[i], depth + 1);
+        if (o->fields) vm_free(o->fields);
+        vm_free(o);
+    }
+}
+
+static void value_release(Value v) {
+    value_release_d(v, 0);
+}
+
+/* 销毁一帧:先释放各局部槽持有的引用,再释放槽数组。
+   帧销毁是安全的释放时机 —— P3 值语义保证槽独占其对象副本,
+   字符串则由引用计数判断是否真正可回收。 */
+static void free_frame_locals(Frame *fr) {
+    if (fr->locals) {
+        for (uint32_t i = 0; i < fr->nlocals; i++)
+            value_release(fr->locals[i]);
+        vm_free(fr->locals);
+        fr->locals = NULL;
+    }
+}
+
 /* ---------- 值运算辅助 ---------- */
 static int value_truthy(Value v) {
     switch (v.type) {
@@ -633,14 +736,6 @@ static int value_truthy(Value v) {
     }
     return 0;
 }
-
-/* 对象图的最大递归深度,用于打印/比较/值拷贝三处的防御。
-   环已由两道措施排除:
-     1) 编译期拒绝递归类型(见 compiler.py 的 check_recursive_types),因此
-        `a.v = a` 这类构造在类型层面就不成立;
-     2) 编译期校验字段赋值类型。
-   这里仍设上限,是因为字节码也可能来自其它工具或被手工构造。 */
-#define MAX_OBJ_DEPTH 64
 
 /* ---------------- 结构体值语义(P3) ----------------
  *
@@ -666,17 +761,28 @@ static Value copy_obj(const Program *prog, const Obj *src, int depth) {
                     : NULL;
     for (uint32_t i = 0; i < src->nfields; i++)
         o->fields[i] = copy_value(prog, src->fields[i], depth + 1);
-    Value r = { V_OBJ, {0} };
+    Value r = { V_OBJ, 0, {0} };
     r.as.o = o;
     return r;
 }
 
+/* 产生一份**自有**副本:新对象持有自己的一份字段引用(字符串加计数)。
+   调用方获得这份所有权,并负责在适当时机 value_release。 */
 static Value copy_value(const Program *prog, Value v, int depth) {
-    /* 类型层面已排除递归,这里的上限只是防御手写字节码;
-       触顶时退化为共享(对象本身不释放,故不会悬垂)。 */
-    if (v.type != V_OBJ || depth >= MAX_OBJ_DEPTH) return v;
-    (void)prog;
-    return copy_obj(prog, (Obj *)v.as.o, depth);
+    /* 副本的 owned 必须清零:copy_value 用于"槽/字段取得一份自有引用",
+       而 owned 语义是"值**自己**还持有一份待移交的引用(仅栈上临时值)"。
+       若继承源值的标记,后续 STORE 会把属于槽的那份也递减掉(实测双重释放)。 */
+    if (v.type == V_STR) {
+        value_retain(v);
+        v.owned = 0;
+        return v;
+    }
+    if (v.type == V_OBJ && depth < MAX_OBJ_DEPTH) {
+        Value r = copy_obj(prog, (Obj *)v.as.o, depth);
+        return r;
+    }
+    v.owned = 0;
+    return v;
 }
 
 /* 打印单个值(不带换行;对象字段递归打印) */
@@ -778,13 +884,18 @@ static Value value_concat(const Program *prog, const Frame *fr, uint32_t pc,
     } else die(prog, fr, pc, "cannot concatenate this value");
 
     size_t na = strlen(as), nb = strlen(bs);
-    char *out = (char *)vm_alloc(na + nb + 1);
-    if (!out) die(prog, fr, pc, "out of memory");
+    /* 一次性建好结果(含引用计数头),避免先拼接再复制 */
+    char *raw = (char *)vm_alloc(VM_STR_HDR + na + nb + 1);
+    VmStrHdr *h = (VmStrHdr *)raw;
+    h->magic = VM_STR_MAGIC;
+    h->rc = 1;
+    char *out = raw + VM_STR_HDR;
     memcpy(out, as, na);
     memcpy(out + na, bs, nb);
     out[na + nb] = '\0';
     r.type = V_STR;
     r.as.p = out;
+    r.owned = 1;    /* 栈上自持一份;STORE 会接管这份所有权 */
     return r;
 }
 
@@ -861,14 +972,8 @@ static Value value_binop(const Program *prog, const Frame *fr, uint32_t pc,
 }
 
 /* ---------- 原生函数调用(FFI) ---------- */
-static char *xstrdup(const char *s) {
-    if (!s) s = "";
-    size_t len = strlen(s);
-    char *p = vm_alloc(len + 1);
-    if (!p) return NULL;
-    memcpy(p, s, len + 1);
-    return p;
-}
+/* 原生返回的字符串复制进 VM 堆;带引用计数头,与 CONCAT 的结果同一套管理。
+   外部无任何释放职责 —— 原生侧缓冲区由 P2 的释放函数处理,与之互不相干。 */
 
 /* 惰性加载库并解析符号;成功返回 0,失败返回 1(已向 stderr 报错)。 */
 static int native_resolve(Program *prog, Native *na) {
@@ -1030,7 +1135,11 @@ static int run(Program *prog) {
             uint32_t li = rd32(prog->code + pc + 1);
             if (li >= fr->nlocals) die(prog, fr, pc, "local index out of range");
             if (sp >= MAX_STACK) die(prog, fr, pc, "stack overflow");
-            stack[sp++] = fr->locals[li];
+            /* 压栈的是**借用视图**:清掉 owned,否则 STORE 会把属于槽的那一份
+               引用也递减掉(一份引用被释放两次 -> 使用已释放内存)。 */
+            stack[sp] = fr->locals[li];
+            stack[sp].owned = 0;
+            sp++;
             pc += 5;
             break;
         }
@@ -1039,8 +1148,20 @@ static int run(Program *prog) {
             uint32_t li = rd32(prog->code + pc + 1);
             if (li >= fr->nlocals) die(prog, fr, pc, "local index out of range");
             if (sp == 0) die(prog, fr, pc, "stack underflow");
-            /* 结构体按值语义存储:拷贝一份,使局部槽不与他人共享对象 */
-            fr->locals[li] = copy_value(prog, stack[--sp], 0);
+            /* 归属转移:赋值把栈上这份值的所有权交给局部槽。
+               顺序不可颠倒 —— 若先释放旧值,而新值恰好与旧值共享同一块内存,就会悬垂。
+               最后释放"栈上那一份":若它是自有引用(CONCAT/NCALL 刚产生的,rc=1),
+               这次递减恰好把所有权干净地移交给槽(槽仍持有 copy_value 加的那一份);
+               若它只是借用的(如 LOAD 的副本),则不做任何事。 */
+            {
+                Value sv = stack[--sp];
+                Value nv = copy_value(prog, sv, 0);
+                value_release(fr->locals[li]);
+                fr->locals[li] = nv;
+                /* 只有"自持"的栈值才递减:它把所有权交给了槽,槽已由 copy_value 持有
+                   一份,故这里释放栈那一份。借用的值(LOAD/常量/MAKE_OBJ)不能动。 */
+                if (sv.owned) value_release(sv);
+            }
             pc += 5;
             break;
         }
@@ -1082,7 +1203,7 @@ static int run(Program *prog) {
         case OP_NOT: {
             if (sp == 0) die(prog, fr, pc, "stack underflow");
             Value v = stack[--sp];
-            Value r = { V_INT, {0} };
+            Value r = { V_INT, 0, {0} };
             r.as.i = value_truthy(v) ? 0 : 1;
             stack[sp++] = r;
             pc += 1;
@@ -1095,7 +1216,7 @@ static int run(Program *prog) {
             Value a = stack[--sp];
             int x = value_truthy(a);
             int y = value_truthy(b);
-            Value r = { V_INT, {0} };
+            Value r = { V_INT, 0, {0} };
             r.as.i = (op == OP_AND) ? (x && y) : (x || y);
             stack[sp++] = r;
             pc += 1;
@@ -1382,11 +1503,12 @@ static int run(Program *prog) {
                 die(prog, fr, pc, "unsupported native arity %u (max 3)", na->arity);
             }
 
-            Value r = { V_INT, {0} };
+            Value r = { V_INT, 0, {0} };
             if (na->ret_type == NAT_FLOAT) { r.type = V_FLOAT; r.as.f = rf; }
             else if (na->ret_type == NAT_STR) {
                 r.type = V_STR;
-                r.as.p = xstrdup(rs);        /* VM 自己持有一份副本 */
+                r.as.p = vm_strdup(rs);      /* VM 自己持有一份副本(带引用计数) */
+                r.owned = 1;                 /* 栈上自持一份;STORE 会接管 */
                 /* 按 DXRL trailer 的约定释放原生侧缓冲区。
                    传给它的是 rs(原生库的原始指针),不是 r.as.p,因此不会双重释放。 */
                 Native *rel_nat = (Native *)prog->libs[na->lib_idx].release_fn;
@@ -1422,7 +1544,7 @@ static int run(Program *prog) {
             sp -= nfields;
             for (uint32_t i = 0; i < nfields; i++)
                 o->fields[i] = stack[sp + i];
-            Value r = { V_OBJ, {0} };
+            Value r = { V_OBJ, 0, {0} };
             r.as.o = o;
             if (sp >= MAX_STACK) die(prog, fr, pc, "stack overflow");
             stack[sp++] = r;
@@ -1451,7 +1573,14 @@ static int run(Program *prog) {
             if (objv.type != V_OBJ) die(prog, fr, pc, "SET_FIELD on non-object");
             Obj *o = (Obj *)objv.as.o;
             if (idx >= o->nfields) die(prog, fr, pc, "field index out of range");
-            o->fields[idx] = val;
+            /* 字段按值语义写入,且字段是值的**拥有者**。
+               这里同样用 copy_value 取一份自有副本 —— 与 STORE 一致:
+                 1) 字段不会与局部槽共享对象(否则 `a.v = a` 会造出环);
+                 2) 字符串的引用计数正确(副本自己持有一份)。
+               旧值随即释放;副本已先持有引用,故不存在"释放后又读同一块"的问题。 */
+            Value nv = copy_value(prog, val, 0);
+            value_release(o->fields[idx]);
+            o->fields[idx] = nv;
             pc += 5;
             break;
         }
@@ -1459,8 +1588,11 @@ static int run(Program *prog) {
         case OP_RET: {
             if (sp == 0) die(prog, fr, pc, "stack underflow on RET");
             Value rv = stack[--sp];
+            /* 返回值将交给调用方,必须先取得一份自有引用:
+               否则 free_frame_locals 会把它释放掉(`return s;` 时 rv 与槽共享同一字符串)。 */
+            value_retain(rv);
             if (nframes == 0) { /* 从 main 返回 → 停机 */
-                vm_free(fr->locals);
+                free_frame_locals(fr);
                 goto done;
             }
             Frame *prev = &frames[nframes - 1];
@@ -1468,7 +1600,7 @@ static int run(Program *prog) {
             uint32_t ret_pc = fr->ret_pc;
             /* 结果放回被调帧的参数起始位置(其 base),而非调用方的 base */
             size_t res_base = fr->base;
-            vm_free(fr->locals);
+            free_frame_locals(fr);
             sp = res_base;
             if (sp >= MAX_STACK) die(prog, fr, pc, "stack overflow on RET");
             stack[sp++] = rv;
@@ -1502,7 +1634,7 @@ static int run(Program *prog) {
         }
 
         case OP_HALT:
-            vm_free(fr->locals);
+            free_frame_locals(fr);
             goto done;
 
         default:
