@@ -93,6 +93,7 @@ class CompileUnit:
         self.const_index: dict = {}
         self.types: dict = {}           # 自定义类型名 -> [(字段名, 类型名)]
         self.type_order: list = []      # 类型声明顺序(MAKE_OBJ 用)
+        self.type_nodes: dict = {}      # 类型名 -> TypeDef 节点(报错定位用)
         self.func_ret_types: dict = {}  # 语言函数名 -> 返回类型标注(空串=未知)
         self.func_nodes: dict = {}      # 语言函数名 -> Func AST 节点(用于推断返回类型)
         self.lib_release: dict = {}     # 库路径 -> 该库的字符串释放函数名(约定式)
@@ -103,6 +104,38 @@ class CompileUnit:
             raise DexError(f"duplicate type '{name}'", node.line, node.col, "compiler")
         self.types[name] = list(fields)
         self.type_order.append(name)
+        self.type_nodes[name] = node
+
+    def check_recursive_types(self):
+        """拒绝「递归类型」(类型直接或间接包含自身)。
+
+        这是 P3(结构体值语义)的前提,也是让引用计数成为完备方案的关键:
+        值语义下 `a.v = a` 要成立,字段 v 的类型就必须等于 a 的类型,即类型递归。
+        因此排除递归类型后,环在类型层面**不可表达**,无需环收集器。
+        (Rust 出于同样的"无限大小"原因拒绝递归的按值类型。)"""
+        state = {}   # 0=未访问 1=在栈上 2=已完成
+
+        def visit(tname, path):
+            st = state.get(tname, 0)
+            if st == 2:
+                return
+            if st == 1:
+                chain = " -> ".join(path + [tname])
+                node = self.type_nodes.get(tname)
+                line, col = (node.line, node.col) if node else (0, 0)
+                raise DexError(
+                    f"recursive type is not allowed: {chain}\n"
+                    f"    a value type cannot contain itself (it would have infinite size); "
+                    f"hold the field as a separate variable instead",
+                    line, col, "compiler")
+            state[tname] = 1
+            for _fname, ftype in self.types.get(tname, []):
+                if ftype in self.types:
+                    visit(ftype, path + [tname])
+            state[tname] = 2
+
+        for tname in self.type_order:
+            visit(tname, [])
 
     def field_index(self, tname, fname, node=None):
         """返回类型 tname 中字段 fname 的索引;不存在则报错。"""
@@ -710,6 +743,7 @@ def compile_program(ast, source_path=None, include_dirs=None, rel_lib=False) -> 
     for s in ast.stmts:
         if isinstance(s, TypeDef):
             unit.add_type(s.name, s.fields, s)
+    unit.check_recursive_types()
 
     # 1) 顶层:处理库引入,收集函数声明(main 恒为 0 号,支持前向引用/递归)
     decls = []

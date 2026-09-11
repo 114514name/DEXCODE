@@ -7,6 +7,8 @@
 
   P0 统一堆入口   —— vm_alloc/vm_calloc/vm_free 收口所有 VM 堆分配(纯重构)
   P1 内存预算     —— DEXCODE_MAX_MEM_MB;超限时给出可诊断的错误而非静默涨到被 OOM 杀
+  P3 结构体值语义 —— 赋值/传参时深拷贝,配合"拒绝递归类型"使环在类型层面
+                      不可表达(不需要环收集器);这是 P4 引用计数得以完备的前提
   P2 FFI 所有权   —— 定义文件里 (string)->void 的函数被认作该库的释放函数,
                       VM 在复制原生返回的字符串后用它释放原生缓冲区;
                       未声明时给出编译期警告(该库须返回静态缓冲区)
@@ -279,11 +281,116 @@ def test_release_signature_detection():
     check("无 (string)->void 时不设释放函数", not none.lib_release, str(none.lib_release))
 
 
+
+
+# ============================================================
+# P3:结构体值语义
+# ============================================================
+
+VALUE_ASSIGN = """
+type P { x: int; }
+let a = P { x: 1 };
+let b = a;
+b.x = 99;
+print a.x;
+print b.x;
+"""
+
+NESTED_COPY = """
+type Inner { v: int; }
+type Outer { a: int; in: Inner; }
+let o1 = Outer { a: 1, in: Inner { v: 2 } };
+let o2 = o1;
+o2.in.v = 7;
+o2.a = 8;
+print o1.a;
+print o1.in.v;
+print o2.a;
+print o2.in.v;
+"""
+
+PASS_BY_VALUE = """
+type P { x: int; }
+func bump(p: P) { p.x = p.x + 100; return p.x; }
+let c = P { x: 1 };
+print bump(c);
+print c.x;
+"""
+
+MUTATE_OWN_FIELD = """
+type P { x: int; y: int; }
+let a = P { x: 1, y: 0 };
+a.x = 5;
+a.y = 7;
+print a.x;
+print a.y;
+"""
+
+
+def check_two_vms(name, src, expected):
+    """同一段源码同时跑 C VM 与 pyvm,要求两者一致且等于期望。"""
+    py = run_py(src)
+    check(f"{name}:pyvm 符合值语义", py == expected, f"got={py} want={expected}")
+    if has_vm():
+        out, err, rc = run_c(src)
+        cvm = out.strip().splitlines()
+        check(f"{name}:C VM 符合值语义", rc == 0 and cvm == expected,
+              f"rc={rc} got={cvm} want={expected} err={err[:120]}")
+        check(f"{name}:两 VM 一致", cvm == py, f"C={cvm} PY={py}")
+
+
+def test_struct_value_semantics():
+    print("P3 赋值是值拷贝(不再共享对象)")
+    check_two_vms("赋值", VALUE_ASSIGN, ["1", "99"])
+    check_two_vms("嵌套深拷贝", NESTED_COPY, ["1", "2", "8", "7"])
+    check_two_vms("传参为值", PASS_BY_VALUE, ["101", "1"])
+    # 就地修改自己的字段必须仍然生效(值语义不能把"改自己"也挡掉)
+    check_two_vms("修改自身字段", MUTATE_OWN_FIELD, ["5", "7"])
+
+
+def test_recursive_type_rejected():
+    print("P3 递归类型被拒绝(环在类型层面不可表达)")
+    cases = [
+        ("自引用", "type N { v: int; self: N; }\nprint 1;"),
+        ("互引用", "type A { b: B; }\ntype B { a: A; }\nprint 1;"),
+        ("三型成环", "type A { b: B; }\ntype B { c: C; }\ntype C { a: A; }\nprint 1;"),
+    ]
+    for label, src in cases:
+        try:
+            compile_src(src)
+            check(f"拒绝{label}", False, "未报错")
+        except DexError as e:
+            check(f"拒绝{label}", "recursive type" in str(e), str(e)[:140])
+
+    # 合法嵌套(非递归)必须仍然可用
+    ok = "type Inner { v: int; }\ntype Outer { a: int; in: Inner; }\nprint 1;"
+    try:
+        compile_src(ok)
+        check("合法嵌套类型仍可用", True)
+    except DexError as e:
+        check("合法嵌套类型仍可用", False, str(e)[:140])
+
+
+def test_struct_copy_rejects_object_into_scalar():
+    """值语义 + 类型校验共同排除 a.v = a 这类构造。"""
+    print("P3 自引用赋值被拒绝")
+    try:
+        compile_src("type N { v: int; }\nlet a = N { v: 0 };\na.v = a;\nprint a;")
+        check("a.v = a 被拒绝", False, "未报错")
+    except DexError as e:
+        check("a.v = a 被拒绝", "cannot assign" in str(e) or "recursive" in str(e),
+              str(e)[:140])
+
+
 if __name__ == "__main__":
     print("=== P0 统一堆入口 ===")
     test_allocator_is_single_entry()
     print("=== P1 内存预算 ===")
     test_budget()
+    print("=== P3 结构体值语义 ===")
+    test_struct_value_semantics()
+    test_recursive_type_rejected()
+    test_struct_copy_rejects_object_into_scalar()
     print("=== P2 FFI 所有权 ===")
     test_ffi_release_declared()
     test_ffi_release_many_calls()

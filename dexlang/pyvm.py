@@ -21,6 +21,20 @@ from .ir import (
 INT64_MASK = (1 << 64) - 1
 INT64_SIGN = 1 << 63
 
+# 结构体值语义(P3)的深度上限;环已由编译期"拒绝递归类型"排除,这里仅作防御
+MAX_OBJ_DEPTH = 64
+
+
+def copy_value(v, depth=0):
+    """结构体的值拷贝。与 C VM 的 copy_value 语义一致。
+
+    源码表面把结构体写成值,因此赋值/传参时必须拷贝,避免两个局部槽共享同一对象。
+    字符串与数字是不可变的,直接返回。"""
+    if not isinstance(v, dict) or depth >= MAX_OBJ_DEPTH:
+        return v
+    return {"type": v["type"],
+            "fields": [copy_value(x, depth + 1) for x in v["fields"]]}
+
 
 def wrap64(x):
     """把整型算术结果包装回有符号 64 位(与 C VM 的 int64 溢出一致)。"""
@@ -368,7 +382,7 @@ class PyVM:
                 self.stack.append(f.locals[operand.index])
                 self.pc += 1
             elif op == O.STORE:
-                f.locals[operand.index] = self.stack.pop()
+                f.locals[operand.index] = copy_value(self.stack.pop())
                 self.pc += 1
             elif op in (O.ADD, O.SUB, O.MUL, O.DIV, O.MOD, O.EQ, O.NE,
                         O.LT, O.LE, O.GT, O.GE):
@@ -421,7 +435,7 @@ class PyVM:
                 base = len(self.stack) - arity
                 loc = [None] * max(1, callee.nlocals)
                 for i in range(arity):
-                    loc[i] = self.stack[base + i]
+                    loc[i] = copy_value(self.stack[base + i])
                 del self.stack[base:]
                 self.frames.append(Frame(callee, fi, loc, base, self.pc + 1))
                 self.pc = 0
@@ -449,7 +463,7 @@ class PyVM:
                 base = len(self.stack) - argc
                 loc = [None] * max(1, callee.nlocals)
                 for i in range(argc):
-                    loc[i] = self.stack[base + i]
+                    loc[i] = copy_value(self.stack[base + i])
                 del self.stack[base:]
                 self.frames.append(Frame(callee, fi, loc, base, self.pc + 1))
                 self.pc = 0

@@ -634,11 +634,50 @@ static int value_truthy(Value v) {
     return 0;
 }
 
-/* 对象打印/比较的最大递归深度。
-   结构体是引用语义,字段可以被指向自身(a.v = a),形成环;若递归无上限,
-   打印或比较这种对象会耗尽 C 栈并崩溃(STATUS_STACK_OVERFLOW)。
-   编译器现在会在编译期拒绝这种赋值,但字节码仍可能来自其它工具,故运行期也兜底。 */
+/* 对象图的最大递归深度,用于打印/比较/值拷贝三处的防御。
+   环已由两道措施排除:
+     1) 编译期拒绝递归类型(见 compiler.py 的 check_recursive_types),因此
+        `a.v = a` 这类构造在类型层面就不成立;
+     2) 编译期校验字段赋值类型。
+   这里仍设上限,是因为字节码也可能来自其它工具或被手工构造。 */
 #define MAX_OBJ_DEPTH 64
+
+/* ---------------- 结构体值语义(P3) ----------------
+ *
+ * 源码表面本来就把结构体写成值(`Box{...}`、`b.f`,无取地址、无 null),
+ * 但 VM 原先按**引用**实现:let b = a 之后 b 与 a 共享同一对象,改 b.x 会改到 a.x。
+ * 那正是此前禁用回收的根因 —— 字段与局部槽可能指向同一块堆内存,按槽释放必然悬垂。
+ *
+ * 现在对齐为值语义:赋值(OP_STORE)时把结构体深拷贝一份。
+ * 配合「拒绝递归类型」,环在类型层面不可表达,因此不需要环收集器,
+ * 引用计数(P4)即可完备。
+ *
+ * 只有 OP_STORE 需要拷贝:
+ *   - 表达式求值产生的都是栈上的临时值,不构成别名;
+ *   - SET_FIELD 修改的是局部槽对象自身(用户期望就地修改)。 */
+static Value copy_value(const Program *prog, Value v, int depth);
+
+static Value copy_obj(const Program *prog, const Obj *src, int depth) {
+    Obj *o = (Obj *)vm_alloc(sizeof(Obj));
+    o->type_name = src->type_name;
+    o->nfields = src->nfields;
+    o->fields = src->nfields
+                    ? (Value *)vm_alloc(src->nfields * sizeof(Value))
+                    : NULL;
+    for (uint32_t i = 0; i < src->nfields; i++)
+        o->fields[i] = copy_value(prog, src->fields[i], depth + 1);
+    Value r = { V_OBJ, {0} };
+    r.as.o = o;
+    return r;
+}
+
+static Value copy_value(const Program *prog, Value v, int depth) {
+    /* 类型层面已排除递归,这里的上限只是防御手写字节码;
+       触顶时退化为共享(对象本身不释放,故不会悬垂)。 */
+    if (v.type != V_OBJ || depth >= MAX_OBJ_DEPTH) return v;
+    (void)prog;
+    return copy_obj(prog, (Obj *)v.as.o, depth);
+}
 
 /* 打印单个值(不带换行;对象字段递归打印) */
 static void print_value_d(const Program *prog, Value v, int depth) {
@@ -1000,7 +1039,8 @@ static int run(Program *prog) {
             uint32_t li = rd32(prog->code + pc + 1);
             if (li >= fr->nlocals) die(prog, fr, pc, "local index out of range");
             if (sp == 0) die(prog, fr, pc, "stack underflow");
-            fr->locals[li] = stack[--sp];
+            /* 结构体按值语义存储:拷贝一份,使局部槽不与他人共享对象 */
+            fr->locals[li] = copy_value(prog, stack[--sp], 0);
             pc += 5;
             break;
         }
@@ -1115,8 +1155,9 @@ static int run(Program *prog) {
             nframes++;
             Frame *nf = &frames[nframes];
             nf->locals = vm_calloc(callee->nlocals ? callee->nlocals : 1, sizeof(Value));
+            /* 结构体按值语义传参:形参拿到的是副本,函数内修改不影响调用方 */
             for (uint8_t i = 0; i < callee->arity; i++)
-                nf->locals[i] = stack[base + i];
+                nf->locals[i] = copy_value(prog, stack[base + i], 0);
             nf->nlocals = callee->nlocals;
             nf->base = base;
             nf->ret_pc = pc + 1;
@@ -1142,8 +1183,9 @@ static int run(Program *prog) {
             nframes++;
             Frame *nf = &frames[nframes];
             nf->locals = vm_calloc(callee->nlocals ? callee->nlocals : 1, sizeof(Value));
+            /* 结构体按值语义传参:形参拿到的是副本,函数内修改不影响调用方 */
             for (uint8_t i = 0; i < callee->arity; i++)
-                nf->locals[i] = stack[base + i];
+                nf->locals[i] = copy_value(prog, stack[base + i], 0);
             nf->nlocals = callee->nlocals;
             nf->base = base;
             nf->ret_pc = pc + 5;
