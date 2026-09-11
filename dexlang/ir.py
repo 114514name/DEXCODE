@@ -92,6 +92,7 @@ class LibInfo:
     path: str = ""
     is_static: bool = False       # True = 库字节内嵌在字节码中,运行时无需外部 DLL
     data: bytes = b""             # 内嵌的库文件字节(is_static 时有效)
+    release_name: str = ""        # 本库的字符串释放函数名(约定见 SPEC 4.5),空=无
 
 
 @dataclass

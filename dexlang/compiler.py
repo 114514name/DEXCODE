@@ -95,6 +95,7 @@ class CompileUnit:
         self.type_order: list = []      # 类型声明顺序(MAKE_OBJ 用)
         self.func_ret_types: dict = {}  # 语言函数名 -> 返回类型标注(空串=未知)
         self.func_nodes: dict = {}      # 语言函数名 -> Func AST 节点(用于推断返回类型)
+        self.lib_release: dict = {}     # 库路径 -> 该库的字符串释放函数名(约定式)
         self.module_funcs: list = []    # 语言模块(.dex)中收集的 Func 节点
 
     def add_type(self, name, fields, node):
@@ -161,6 +162,18 @@ class CompileUnit:
                     node.line, node.col, "compiler")
         for nd in def_file.natives:
             self.add_native(nd.name, lib, nd.param_types, nd.ret_type, node)
+
+        # 约定式释放函数:定义文件里形如 `extern func f(s: string) -> void;` 的函数
+        # 视为该库的字符串释放器。编译器会在调用本库「返回 string」的原生函数后
+        # 自动插入 f(返回值),因此原生库可以返回堆分配的字符串而不泄漏。
+        # 详见 docs/SPEC.md 4.5「字符串所有权」。
+        for nd in def_file.natives:
+            if nd.ret_type == O.NAT_VOID and nd.param_types == [O.NAT_STR]:
+                self.lib_release[lib.path] = nd.name
+                # 立刻记到库表上,使其进入字节码的 DXRL trailer。
+                # 必须在此处设置:to_program() 可能在任何函数体编译之前被调用。
+                lib.release_name = nd.name
+                break
 
     def load_lang_module(self, path, node, source_path, include_dirs, rel_lib=False):
         """include 一个 .dex 语言模块:合并其中的类型与函数声明。
@@ -632,10 +645,28 @@ class FuncCompiler:
                     self._check_native_literal(node.name, native, idx, a)
             for a in node.args:
                 self.expr(a)
-            self.emit(O.NCALL, NativeOperand(node.name))
+            self._emit_ncall(native, node)
             return
 
         raise DexError(f"undefined function '{node.name}'", node.line, node.col, "compiler")
+
+    def _emit_ncall(self, native, node):
+        """发射 NCALL;返回 string 且本库声明了释放函数时,登记到库表供 VM 释放。
+
+        释放**必须由 VM 执行**:原生返回的 const char* 是原始缓冲区指针,
+        只存在于 VM 自己的值栈上;编译器既看不到它,也无法用字节码表达它
+        (DUP 复制的是 VM 已 strdup 的副本,把它交给释放器会双重释放)。
+        因此这里只把「本库的释放函数」记进 LibInfo,由 VM 在复制完字符串后调用。"""
+        self.emit(O.NCALL, NativeOperand(native.name))
+        if native.ret_type != O.NAT_STR:
+            return
+        # 默认契约(见 docs/SPEC.md 4.5):原生返回的 const char* 视为**借用**,
+        # 由 VM 复制进自己的堆;不声明释放函数即表示该库返回的是静态/常驻缓冲区,
+        # VM 不会去释放它 —— 这是绝大多数现有库的形态,因此不产生任何警告。
+        #
+        # 只有显式声明了 (string)->void 释放函数的库才会走释放路径:
+        # release_name 已在 load_definition 阶段写入库表,由 VM 读取 DXRL 后调用。
+        _ = self.unit.lib_release.get(native.lib)
 
     def _call_builtin(self, node):
         """内置 call(name, args...):动态按名调用语言函数。"""

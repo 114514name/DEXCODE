@@ -183,4 +183,25 @@ def assemble(prog) -> bytes:
         + struct.pack("<I", len(code))
     )
     pool = b"".join(_encode_const(v) for v in consts)
-    return header + pool + b"".join(lib_table) + b"".join(native_table) + b"".join(func_table) + bytes(code)
+    body = (header + pool + b"".join(lib_table) + b"".join(native_table)
+            + b"".join(func_table) + bytes(code))
+
+    # 可选 trailer:DXRL + 条目数 + (lib_idx, release_native_idx) 对。
+    # 放在文件末尾,因而对不认识本节的旧版 VM 完全无害(它们只读 code_size 之前的内容);
+    # 也避免了改动函数表/库表的定长布局,保持旧字节码的原样可读。
+    trailer = b""
+    if any(lib.release_name for lib in libs):
+        entries = []
+        for i, lib in enumerate(libs):
+            if not lib.release_name:
+                continue
+            ri = native_index.get(lib.release_name)
+            if ri is None:
+                raise DexError(
+                    f"library '{lib.path}' declares release function "
+                    f"'{lib.release_name}' which is not among its natives",
+                    phase="assembler")
+            entries.append(struct.pack("<HH", i, ri))
+        trailer = (b"DXRL" + struct.pack("<H", len(entries)) + b"".join(entries))
+
+    return body + trailer

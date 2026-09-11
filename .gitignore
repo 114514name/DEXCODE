@@ -31,6 +31,7 @@ __pycache__/
 /_zigcache/
 /_zigcache2/
 /_exp_ok/
+/tests/_tmp_memmodel/
 /_whale_balance_tmp/
 /.pytest_cache/
 /.zig-cache/
@@ -75,3 +76,8 @@ _native_test*
 !libs/ui/libdexui.dll
 !libs/egui/libegui.dll
 !libs/gal/libdexxgal.dll
+
+# 测试用 fixture 库(由 tests/fixtures/libleaky.c 构建,提交以便直接跑测试)
+!tests/fixtures/libleaky.dll
+/tests/fixtures/*.pdb
+/tests/fixtures/*.lib

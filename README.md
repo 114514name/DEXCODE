@@ -66,7 +66,7 @@ DEXCODE/
                            #    变量由引擎存储(跨镜头);ctypes 复用 libdexxgal.dll 实时预览/运行)
   galide/                  # 🎮 旧版 GAL 编辑器(Scratch 式指令块,已停用)
   tools/legacy_galedit_c/  # 🎮 旧版 GAL 编辑器(C 纯 GDI 自绘,已封存备用)
-  tests/                   # 端到端测试(20 个文件 / 127 个测试函数 / 613 处断言)
+  tests/                   # 端到端测试(21 个文件 / 134 个测试函数 / 639 处断言)
   docs/quickstart.html     # 🚀 快速入门指南(新手首选,浏览器打开)
   docs/stdlib_guide.html   # 📚 标准库详解(33 个函数逐个讲解,含可运行示例)
   docs/ui_guide.html       # 🖥 WinAPI 与 UI 库教学(窗口/消息循环/事件)
@@ -211,6 +211,23 @@ print dex_hello();         // hello from dll
 - 编译器根据定义文件检查**参数个数**与**字面量类型**
 - 当前 FFI 支持参数/返回类型为 `int`/`float`/`string`(参数 ≤ 3,见 SPEC;含 `(string,string)`、`(string,int)`、`(string,int,int)` 组合)
 
+**字符串所有权(重要)**:原生函数返回的 `const char*` 是**借用** ——
+VM 会立即复制一份进自己的堆并使用副本,从不释放原生指针。因此库作者可以放心返回
+静态/常驻缓冲区,不必为返回值的内存负责。
+
+若某个库需要返回**堆分配**的字符串,可在自己的 `.dexdef` 里额外声明一个
+`(string) -> void` 的函数,它会被认作该库的释放函数,VM 在复制完返回值后
+用**原生原始指针**调用它,从而不泄漏:
+
+```
+refer "libfoo.dll";
+extern func foo_name(id: int) -> string;
+extern func foo_free(p: string) -> void;   # (string)->void = 本库的释放函数
+```
+
+详见 `docs/SPEC.md` 4.6 与回归测试 `tests/test_memmodel.py`。
+
+
 ## 标准库(纯 C 实现,零 Python)
 
 `libs/std/` 提供一套**完全由 C 编写**的标准库 `libdexstd.dll`,由 DexLang 通过 `include "std"` 使用:
@@ -320,8 +337,8 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 
 ## 测试
 
-共 **20 个测试文件 / 127 个测试函数 / 613 处断言**（`check(...)` 调用点；实际执行数
-随平台与是否构建 `vm.exe` 而变，本机实测 361 项通过、0 失败）。
+共 **21 个测试文件 / 134 个测试函数 / 639 处断言**（`check(...)` 调用点；实际执行数
+随平台与是否构建 `vm.exe` 而变，本机实测 388 项通过、0 失败）。
 
 ```bash
 python tests/test_toolchain.py   # 33 项:核心工具链 + C VM 执行 + 往返
@@ -333,6 +350,7 @@ python tests/test_pyvm.py        # 15 项:Python 调试 VM(断点/单步/调用�
 python tests/test_ide.py         # 49 项:DEXIDE 分析器 + GUI + IME 安全 + 编译工具 + 终端运行
 python tests/test_bluedit.py     # 185 项:GAL 蓝图模型/序列化/导出可编译
 python tests/test_robust.py      # 25 项:健壮性回归(畸形字节码/循环对象/类型校验/整型边界)
+python tests/test_memmodel.py    # 27 项:内存模型(P0 统一堆入口/P1 预算/P2 FFI 所有权)
 # 其余:test_call / test_module / test_img / test_ui / test_egui / test_gal /
 #       test_galide_py / test_designer / test_editor / test_nopydep / test_vm_versions
 ```
@@ -350,6 +368,10 @@ IDE 分析器(函数/调用图/原生库/补全/悬停/问题)与 GUI 调试联�
   `let t = mk(); let b = Box{name: t}; t = "x";` 之后字段与局部槽指向同一块内存，
   按槽释放会让字段悬垂。正确做法是引用计数或标记清扫，需枚举栈/局部槽/对象字段作为根。
   `tests/test_robust.py::test_string_flow_aliasing` 固化了这一约束。
+  **缓解**:VM 有内存预算机制 —— 设置环境变量 `DEXCODE_MAX_MEM_MB`(单位 MB,`0`=不限,默认不限)
+  后,用量超过上限会以明确错误退出,并指出"循环内字符串累加"这一最常见原因,
+  而不是静默涨到被系统 OOM 杀掉。分配已收口到 `vm_alloc`/`vm_calloc`,
+  因此这是将来引入回收策略的单一插入点。
 - **FFI 参数个数 ≤ 3**：没有 libffi，参数编组是手写的分支表，组合数按 4^N 增长。
   注意 `.dexdef` 里写超过 3 个参数**不会**在编译期报错，要到第一次 `NCALL` 才失败。
 - **`.dexbc` 视为可信输入**：字节码可以指定任意 DLL 路径与符号名并调用。VM 已做

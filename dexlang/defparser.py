@@ -53,6 +53,7 @@ class DefFile:
     lib_path: Optional[str] = None    # refer 指向的 DLL/so 路径(相对路径)
     is_static: bool = False           # refer static:库字节将内嵌进字节码(静态链接)
     natives: List[NativeDecl] = field(default_factory=list)
+    release: Optional[str] = None     # release <名>;原生返回字符串的释放函数(可选)
 
 
 def parse_sig(sig):
@@ -145,6 +146,16 @@ def parse_def(text, filename="<def>"):
             def_file.lib_path = lib
         elif t.kind == TokKind.EXTERN:
             def_file.natives.append(parse_native())
+        elif t.kind == TokKind.RELEASE:
+            # 可选:release <函数名>; —— 声明释放「原生返回的字符串缓冲区」的函数。
+            # 见本文件头部「字符串所有权」说明与 README「引入 DLL 原生库」。
+            advance()
+            name = expect(TokKind.IDENT, "release function name").lexeme
+            expect(TokKind.SEMI, "';'")
+            if def_file.release is not None:
+                raise DexError("duplicate 'release' in definition file",
+                               t.line, t.col, "def")
+            def_file.release = name
         else:
             raise DexError(f"unexpected token {t.lexeme!r} in definition file",
                            t.line, t.col, "def")

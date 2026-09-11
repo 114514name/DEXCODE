@@ -98,6 +98,15 @@ def render(prog):
         if li is None:
             raise DexError(f"native '{nf.name}' references unknown library '{nf.lib}'", phase="asm-text")
         lines.append(f".native {nf.name} {li} {nf.sig}")
+    nat_index = {nf.name: i for i, nf in enumerate(prog.natives)}
+    for lib in prog.libs:
+        if lib.release_name:
+            ri = nat_index.get(lib.release_name)
+            if ri is None:
+                raise DexError(
+                    f"library '{lib.path}' release function '{lib.release_name}' "
+                    f"is not a declared native", phase="asm-text")
+            lines.append(f".release {lib_index[lib.path]} {ri}")
     for f in prog.funcs:
         lines.append(f".func {f.name} {f.arity}")
         for insn in f.insns:
@@ -244,6 +253,24 @@ def parse(text):
             param_types, ret_type = parse_sig(parts[3])
             prog.natives.append(NativeFunc(
                 name=name, lib=prog.libs[li].path, param_types=param_types, ret_type=ret_type))
+            continue
+
+        if head == ".release":
+            # .release LIBIDX NATIVEIDX —— 该库的字符串释放函数(见 SPEC 4.6)
+            if len(parts) != 3:
+                raise DexError("expected '.release LIBIDX NATIVEIDX'", lineno, 1, "asm-text")
+            try:
+                li = int(parts[1]); ri = int(parts[2])
+            except ValueError:
+                raise DexError("invalid index in .release", lineno, 1, "asm-text")
+            if li >= len(prog.libs):
+                raise DexError(f".release references unknown library index {li}", lineno, 1, "asm-text")
+            if ri >= len(prog.natives):
+                raise DexError(f".release references unknown native index {ri}", lineno, 1, "asm-text")
+            rel_name = prog.natives[ri].name
+            if rel_name == "":
+                raise DexError(".release native has no name", lineno, 1, "asm-text")
+            prog.libs[li].release_name = rel_name
             continue
 
         if head == ".func":

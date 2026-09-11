@@ -122,6 +122,7 @@ def decode(data) -> AssemblyProgram:
     code = data[off:off + code_size]
     if len(code) < code_size:
         raise DexError("truncated code section", phase="disassembler")
+    off += code_size          # 代码段之后可能还有可选 trailer(见文件末尾)
 
     asm_funcs = []
     for f in funcs:
@@ -190,6 +191,20 @@ def decode(data) -> AssemblyProgram:
         asm_funcs.append(AsmFunc(
             name=f["name"], arity=f["arity"], nlocals=f["nlocals"], insns=insns,
         ))
+
+    # ---------- 可选 trailer:DXRL(库的字符串释放函数) ----------
+    # 位于代码段之后;旧字节码没有这一节,所以必须按"剩余字节 + 标记"来探测。
+    if off + 6 <= len(data) and data[off:off + 4] == b"DXRL":
+        n_rel = struct.unpack_from("<H", data, off + 4)[0]
+        p = off + 6
+        for _ in range(n_rel):
+            if p + 4 > len(data):
+                raise DexError("truncated release table", phase="disassembler")
+            lib_idx, rel_idx = struct.unpack_from("<HH", data, p)
+            p += 4
+            if lib_idx >= len(libs) or rel_idx >= len(natives):
+                raise DexError("bad release table entry", phase="disassembler")
+            libs[lib_idx].release_name = natives[rel_idx].name
 
     return AssemblyProgram(funcs=asm_funcs, natives=natives, libs=libs)
 

@@ -1,0 +1,6 @@
+﻿refer "libleaky.dll";
+extern func leaky_greet(who: string) -> string;
+extern func leaky_free(p: string) -> void;
+extern func leaky_live() -> int;
+extern func leaky_owned_frees() -> int;
+extern func leaky_foreign_frees() -> int;

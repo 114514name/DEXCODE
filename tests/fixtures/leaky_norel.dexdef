@@ -1,0 +1,7 @@
+# P2 对照定义:同一个 DLL,但故意不声明释放函数。
+# 编译器应给出警告且不注入释放,因此原生返回的缓冲区会泄漏 ——
+# 这是为了证明"泄漏确实存在",从而说明释放机制是必要的。
+refer "libleaky.dll";
+
+extern func leaky_greet(who: string) -> string;
+extern func leaky_live() -> int;

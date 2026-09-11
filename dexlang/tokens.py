@@ -50,6 +50,7 @@ class TokKind(Enum):
     INCLUDE = auto()  # include "库名";
     REFER = auto()    # refer "定义文件路径"; / refer "dll路径";
     EXTERN = auto()   # 定义文件:extern func ...
+    RELEASE = auto()  # 定义文件:release <释放函数>;
     TYPE = auto()     # type 自定义数据类型(struct)
     # 结束
     EOF = auto()
@@ -68,6 +69,7 @@ KEYWORDS = {
     "include": TokKind.INCLUDE,
     "refer": TokKind.REFER,
     "extern": TokKind.EXTERN,
+    "release": TokKind.RELEASE,
     "type": TokKind.TYPE,
 }
 

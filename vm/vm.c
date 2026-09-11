@@ -24,6 +24,95 @@
 #define GETPID getpid
 #endif
 
+/* ============================================================
+ * 统一堆入口(P0)与内存预算(P1)
+ *
+ * 背景:此前 21 处堆分配全部直接调 malloc/calloc。
+ *  - 没有单一入口,任何回收策略(引用计数/清扫)都无从插入;
+ *  - 也没有任何"用了多少内存"的可观测性,累加器模式的 O(n²) 增长
+ *    只能等进程被系统杀掉才发现。
+ *
+ * 本层做两件事:
+ *  1. 所有 VM 堆分配改走 vm_alloc/vm_calloc/vm_free,字节数进入计数器;
+ *  2. 超过预算时以明确错误退出,并指出最常见的原因。
+ *     预算由环境变量 DEXCODE_MAX_MEM_MB 指定,0=不限(默认)。
+ *
+ * 计数器只统计经过本层的分配,因此开销是一次整数加法,与 GC 无关。
+ * ============================================================ */
+#define VM_ALLOC_MAGIC 0x564D414Cu   /* 'VMAL' */
+
+static size_t g_mem_used = 0;        /* 当前存活的 VM 堆字节数 */
+static size_t g_mem_peak = 0;        /* 峰值(诊断用)       */
+static int64_t g_mem_budget = -1;    /* 字节;0 = 不限; -1 = 尚未解析 */
+static int g_mem_over = 0;           /* 是否已就超限报错(防重复) */
+
+static void pump_mem_budget(void) {
+    if (g_mem_budget >= 0) return;
+    g_mem_budget = 0;                /* 默认不限,保证不干扰既有程序 */
+    const char *s = getenv("DEXCODE_MAX_MEM_MB");
+    if (s && *s) {
+        long long mb = atoll(s);
+        if (mb > 0) {
+            /* 上限保护:避免 MB 换算在 size_t 上溢出 */
+            if (mb > (long long)(SIZE_MAX / (1024 * 1024)))
+                g_mem_budget = (int64_t)SIZE_MAX;
+            else
+                g_mem_budget = (int64_t)((unsigned long long)mb * 1024ULL * 1024ULL);
+        }
+    }
+}
+
+static void mem_note_oom(void) {
+    if (g_mem_over) return;
+    g_mem_over = 1;
+    fflush(stdout);
+    fprintf(stderr,
+        "\nruntime error: 内存用量超过预算上限 (%lld MB,当前已用 %lld MB)\n"
+        "\n"
+        "  最常见的两种原因:\n"
+        "    - 循环内字符串累加,例如  while ... { s = s + \"x\"; }\n"
+        "      每轮都会产生新字符串而旧值不会被回收,是 O(n^2) 增长;\n"
+        "    - 大循环里反复构造临时字符串用于 print / 拼接。\n"
+        "\n"
+        "  说明:当前 VM 不回收运行期产生的字符串与结构体(见 README「已知限制」),\n"
+        "        因此长时间运行的程序应避免在循环里无限累积字符串。\n"
+        "  调整上限:设置环境变量 DEXCODE_MAX_MEM_MB(0 = 不限制).\n",
+        (long long)(g_mem_budget / (1024 * 1024)),
+        (long long)(g_mem_used / (1024 * 1024)));
+    exit(1);
+}
+
+static void *vm_alloc(size_t n) {
+    pump_mem_budget();
+    if (n == 0) n = 1;
+    if (g_mem_budget > 0 && g_mem_used + n > (size_t)g_mem_budget) mem_note_oom();
+    unsigned char *raw = (unsigned char *)malloc(sizeof(size_t) + n);
+    if (!raw) {
+        fprintf(stderr, "runtime error: out of memory (requested %llu bytes)\n",
+                (unsigned long long)n);
+        exit(1);
+    }
+    *(size_t *)raw = n;
+    g_mem_used += n;
+    if (g_mem_used > g_mem_peak) g_mem_peak = g_mem_used;
+    return raw + sizeof(size_t);
+}
+
+static void *vm_calloc(size_t count, size_t size) {
+    size_t n = count * size;               /* 调用方保证不溢出 */
+    void *p = vm_alloc(n);
+    memset(p, 0, n);
+    return p;
+}
+
+static void vm_free(void *p) {
+    if (!p) return;
+    unsigned char *raw = (unsigned char *)p - sizeof(size_t);
+    size_t n = *(size_t *)raw;
+    if (n <= g_mem_used) g_mem_used -= n; else g_mem_used = 0;
+    free(raw);
+}
+
 /* ---------- 字节码格式常量(与 dexlang/opcodes.py 一致) ---------- */
 #define MAGIC0 'D'
 #define MAGIC1 'E'
@@ -102,6 +191,7 @@ typedef struct {
     int is_static;         /* 1 = 静态内嵌,运行时从临时文件加载 */
     char *temp_path;       /* 静态库解包出的临时文件路径(非静态为 NULL) */
     void *handle;          /* 已加载的库句柄,未加载为 NULL */
+    void *release_fn;      /* 本库的字符串释放函数 (string)->void,未声明为 NULL */
 } Lib;
 
 typedef struct {
@@ -138,6 +228,9 @@ typedef struct {
     uint32_t ret_pc;
     uint16_t func_idx;
 } Frame;
+
+static void die(const Program *prog, const Frame *fr, uint32_t pc,
+                const char *fmt, ...);
 
 /* ---------- 运行时错误 ---------- */
 static void die(const Program *prog, const Frame *fr, uint32_t pc,
@@ -227,12 +320,12 @@ static void free_program(Program *prog) {
     if (!prog) return;
     if (prog->consts) {
         for (size_t i = 0; i < prog->nconsts; i++) {
-            if (prog->consts[i].type == V_STR) free(prog->consts[i].as.p);
+            if (prog->consts[i].type == V_STR) vm_free(prog->consts[i].as.p);
         }
-        free(prog->consts);
+        vm_free(prog->consts);
     }
-    free(prog->names);
-    free(prog->funcs);
+    vm_free(prog->names);
+    vm_free(prog->funcs);
     if (prog->libs) {
         for (size_t i = 0; i < prog->nlibs; i++) {
             Lib *lib = &prog->libs[i];
@@ -250,15 +343,15 @@ static void free_program(Program *prog) {
                 }
             }
         }
-        free(prog->libs);
+        vm_free(prog->libs);
     }
-    free(prog->natives);
-    free(prog->code);
-    free(prog);
+    vm_free(prog->natives);
+    vm_free(prog->code);
+    vm_free(prog);
 }
 
 static Program *load_program(const uint8_t *data, size_t n) {
-    Program *prog = calloc(1, sizeof(Program));
+    Program *prog = vm_calloc(1, sizeof(Program));
     if (!prog) return NULL;
 
     if (n < HEADER_SIZE ||
@@ -283,8 +376,8 @@ static Program *load_program(const uint8_t *data, size_t n) {
 
     /* 常量池 */
     prog->nconsts = n_consts;
-    prog->consts = calloc(n_consts ? n_consts : 1, sizeof(Value));
-    prog->names = calloc(n_consts ? n_consts : 1, sizeof(char *));
+    prog->consts = vm_calloc(n_consts ? n_consts : 1, sizeof(Value));
+    prog->names = vm_calloc(n_consts ? n_consts : 1, sizeof(char *));
     if (!prog->consts || !prog->names) { free_program(prog); return NULL; }
 
     for (uint16_t i = 0; i < n_consts; i++) {
@@ -306,7 +399,7 @@ static Program *load_program(const uint8_t *data, size_t n) {
             if (off + 2 > n) { free_program(prog); return NULL; }
             uint16_t len = (uint16_t)(data[off] | (data[off + 1] << 8)); off += 2;
             if (off + len > n) { free_program(prog); return NULL; }
-            char *s = malloc((size_t)len + 1);
+            char *s = vm_alloc((size_t)len + 1);
             if (!s) { free_program(prog); return NULL; }
             memcpy(s, data + off, len);
             s[len] = '\0';
@@ -323,7 +416,7 @@ static Program *load_program(const uint8_t *data, size_t n) {
 
     /* 库表 */
     prog->nlibs = n_libs;
-    prog->libs = calloc(n_libs ? n_libs : 1, sizeof(Lib));
+    prog->libs = vm_calloc(n_libs ? n_libs : 1, sizeof(Lib));
     if (!prog->libs) { free_program(prog); return NULL; }
     for (uint16_t i = 0; i < n_libs; i++) {
         if (off + LIB_ENTRY_SIZE > n) {
@@ -367,7 +460,7 @@ static Program *load_program(const uint8_t *data, size_t n) {
 
     /* 原生函数表 */
     prog->nnatives = n_natives;
-    prog->natives = calloc(n_natives ? n_natives : 1, sizeof(Native));
+    prog->natives = vm_calloc(n_natives ? n_natives : 1, sizeof(Native));
     if (!prog->natives) { free_program(prog); return NULL; }
     for (uint16_t i = 0; i < n_natives; i++) {
         if (off + NATIVE_FIXED_SIZE > n) {
@@ -413,7 +506,7 @@ static Program *load_program(const uint8_t *data, size_t n) {
 
     /* 函数表 */
     prog->nfuncs = n_funcs;
-    prog->funcs = calloc(n_funcs ? n_funcs : 1, sizeof(Func));
+    prog->funcs = vm_calloc(n_funcs ? n_funcs : 1, sizeof(Func));
     if (!prog->funcs) { free_program(prog); return NULL; }
 
     for (uint16_t i = 0; i < n_funcs; i++) {
@@ -458,10 +551,44 @@ static Program *load_program(const uint8_t *data, size_t n) {
         free_program(prog);
         return NULL;
     }
-    prog->code = malloc(code_size ? code_size : 1);
+    prog->code = vm_alloc(code_size ? code_size : 1);
     if (!prog->code) { free_program(prog); return NULL; }
     memcpy(prog->code, data + off, code_size);
     prog->code_size = code_size;
+
+    /* ---------- 可选 trailer:DXRL(库的字符串释放函数) ----------
+       位于代码段之后,布局: "DXRL" | count(u16) | (lib_idx(u16), native_idx(u16)) * count
+       旧字节码没有这一节,故以标记探测;不认识本节的旧 VM 只读 code_size 之前的内容,
+       因此这是向后兼容的格式扩展,无需改动版本号或定长表布局。
+
+       为什么要放进字节码:原生函数返回的 const char* 原始缓冲区指针只存在于
+       VM 的值栈上,编译器无法用字节码表达"释放它"(DUP 复制的是 VM 已 strdup 的副本)。
+       约定与动机见 docs/SPEC.md 4.5。 */
+    {
+        size_t rel_off = off + code_size;
+        if (rel_off + 6 <= n &&
+            data[rel_off] == 'D' && data[rel_off + 1] == 'X' &&
+            data[rel_off + 2] == 'R' && data[rel_off + 3] == 'L') {
+            uint16_t n_rel = (uint16_t)(data[rel_off + 4] | (data[rel_off + 5] << 8));
+            size_t p = rel_off + 6;
+            for (uint16_t k = 0; k < n_rel; k++) {
+                if (p + 4 > n) {
+                    fprintf(stderr, "error: truncated release table\n");
+                    free_program(prog);
+                    return NULL;
+                }
+                uint16_t lib_idx = (uint16_t)(data[p] | (data[p + 1] << 8));
+                uint16_t nat_idx = (uint16_t)(data[p + 2] | (data[p + 3] << 8));
+                p += 4;
+                if (lib_idx >= n_libs || nat_idx >= n_natives) {
+                    fprintf(stderr, "error: bad release table entry\n");
+                    free_program(prog);
+                    return NULL;
+                }
+                prog->libs[lib_idx].release_fn = &prog->natives[nat_idx];
+            }
+        }
+    }
 
     /* 校验每个函数的代码区间与指令对齐。
        执行期的 pc 检查只看全局 code_size,若某个函数的 code_off/code_len 越界,
@@ -612,7 +739,7 @@ static Value value_concat(const Program *prog, const Frame *fr, uint32_t pc,
     } else die(prog, fr, pc, "cannot concatenate this value");
 
     size_t na = strlen(as), nb = strlen(bs);
-    char *out = (char *)malloc(na + nb + 1);
+    char *out = (char *)vm_alloc(na + nb + 1);
     if (!out) die(prog, fr, pc, "out of memory");
     memcpy(out, as, na);
     memcpy(out + na, bs, nb);
@@ -698,7 +825,7 @@ static Value value_binop(const Program *prog, const Frame *fr, uint32_t pc,
 static char *xstrdup(const char *s) {
     if (!s) s = "";
     size_t len = strlen(s);
-    char *p = malloc(len + 1);
+    char *p = vm_alloc(len + 1);
     if (!p) return NULL;
     memcpy(p, s, len + 1);
     return p;
@@ -809,7 +936,7 @@ static int run(Program *prog) {
     int trace = getenv("DEX_TRACE") != NULL;
 
     /* 主帧 */
-    frames[0].locals = calloc(mainf->nlocals ? mainf->nlocals : 1, sizeof(Value));
+    frames[0].locals = vm_calloc(mainf->nlocals ? mainf->nlocals : 1, sizeof(Value));
     frames[0].nlocals = mainf->nlocals;
     frames[0].base = 0;
     frames[0].ret_pc = 0;
@@ -987,7 +1114,7 @@ static int run(Program *prog) {
             size_t base = sp - (size_t)argc;
             nframes++;
             Frame *nf = &frames[nframes];
-            nf->locals = calloc(callee->nlocals ? callee->nlocals : 1, sizeof(Value));
+            nf->locals = vm_calloc(callee->nlocals ? callee->nlocals : 1, sizeof(Value));
             for (uint8_t i = 0; i < callee->arity; i++)
                 nf->locals[i] = stack[base + i];
             nf->nlocals = callee->nlocals;
@@ -1014,7 +1141,7 @@ static int run(Program *prog) {
             size_t base = sp - callee->arity;
             nframes++;
             Frame *nf = &frames[nframes];
-            nf->locals = calloc(callee->nlocals ? callee->nlocals : 1, sizeof(Value));
+            nf->locals = vm_calloc(callee->nlocals ? callee->nlocals : 1, sizeof(Value));
             for (uint8_t i = 0; i < callee->arity; i++)
                 nf->locals[i] = stack[base + i];
             nf->nlocals = callee->nlocals;
@@ -1215,7 +1342,19 @@ static int run(Program *prog) {
 
             Value r = { V_INT, {0} };
             if (na->ret_type == NAT_FLOAT) { r.type = V_FLOAT; r.as.f = rf; }
-            else if (na->ret_type == NAT_STR) { r.type = V_STR; r.as.p = xstrdup(rs); }
+            else if (na->ret_type == NAT_STR) {
+                r.type = V_STR;
+                r.as.p = xstrdup(rs);        /* VM 自己持有一份副本 */
+                /* 按 DXRL trailer 的约定释放原生侧缓冲区。
+                   传给它的是 rs(原生库的原始指针),不是 r.as.p,因此不会双重释放。 */
+                Native *rel_nat = (Native *)prog->libs[na->lib_idx].release_fn;
+                if (rel_nat) {
+                    if (native_resolve(prog, rel_nat)) {
+                        die(prog, fr, pc, "cannot resolve release function '%s'", rel_nat->name);
+                    }
+                    ((void (*)(const char *))rel_nat->fn)(rs);
+                }
+            }
             else { r.type = V_INT; r.as.i = ri; }
             if (sp >= MAX_STACK) die(prog, fr, pc, "stack overflow");
             stack[sp++] = r;
@@ -1232,11 +1371,11 @@ static int run(Program *prog) {
             const char *tname = prog->names[type_cidx];
             if (!tname) die(prog, fr, pc, "type constant is not a string");
             if (sp < nfields) die(prog, fr, pc, "stack underflow (object fields)");
-            Obj *o = (Obj *)malloc(sizeof(Obj));
+            Obj *o = (Obj *)vm_alloc(sizeof(Obj));
             if (!o) die(prog, fr, pc, "out of memory");
             o->type_name = tname;
             o->nfields = nfields;
-            o->fields = nfields ? (Value *)malloc(nfields * sizeof(Value)) : NULL;
+            o->fields = nfields ? (Value *)vm_alloc(nfields * sizeof(Value)) : NULL;
             if (nfields && !o->fields) die(prog, fr, pc, "out of memory");
             sp -= nfields;
             for (uint32_t i = 0; i < nfields; i++)
@@ -1279,7 +1418,7 @@ static int run(Program *prog) {
             if (sp == 0) die(prog, fr, pc, "stack underflow on RET");
             Value rv = stack[--sp];
             if (nframes == 0) { /* 从 main 返回 → 停机 */
-                free(fr->locals);
+                vm_free(fr->locals);
                 goto done;
             }
             Frame *prev = &frames[nframes - 1];
@@ -1287,7 +1426,7 @@ static int run(Program *prog) {
             uint32_t ret_pc = fr->ret_pc;
             /* 结果放回被调帧的参数起始位置(其 base),而非调用方的 base */
             size_t res_base = fr->base;
-            free(fr->locals);
+            vm_free(fr->locals);
             sp = res_base;
             if (sp >= MAX_STACK) die(prog, fr, pc, "stack overflow on RET");
             stack[sp++] = rv;
@@ -1321,7 +1460,7 @@ static int run(Program *prog) {
         }
 
         case OP_HALT:
-            free(fr->locals);
+            vm_free(fr->locals);
             goto done;
 
         default:
