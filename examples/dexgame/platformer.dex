@@ -1,0 +1,452 @@
+// examples/dexgame/platformer.dex — dexgame 的**完整可玩示例**(平台跳跃)
+//
+// 这是 M4 的验收示例:把引擎的各个模块串成一个真游戏 ——
+//   渲染(M1):精灵批渲染、相机、layer/order、文字 HUD(M4-c)
+//   场景(M2):实体 + 组件(transform/sprite/collider/body/tilemap)
+//   物理(M3):动态玩家(重力/跳跃/落地)、move-and-slide、瓦片碰撞、
+//             射线探坑、矩形查询找敌人/金币
+//   接口(M4):eng_run_frames 的 on_start/on_update/on_draw 回调、动作映射、
+//             实体名(eng_find)、音频(XAudio2)、文字、**合成输入**
+//
+// 玩法:←/A 左,→/D 右,空格/W/↑ 跳(手柄十字键 + A 也行);收集 3 枚金币;
+//       碰到敌人或掉进坑里会重生;走到右边的旗子通关。
+//       **不碰键鼠时游戏会自己玩**(自动演示),按 F1 切换 —— 这样无人值守也能验证。
+//
+// 运行:  python main.py run examples/dexgame/platformer.dex
+//
+// 关于"回调里看不到主程序的 let":DexLang **没有全局变量**,函数体里的名字只在函数内
+// 有效。所以本示例里的实体一律 eng_find("名字") 取,跨帧状态放组件字段(见 state 实体)。
+
+include "dexgame_fast";
+
+// ---------------------------------------------------------------- 常量
+// 这些常量只在本层(主程序)用;**回调里必须写数值字面量**(看不到这里的 let)。
+let COLS = 40;              // 40 格 × 17 行,瓦片 32px -> 1280 × 544 的世界
+let ROWS = 17;
+let TILE = 32.0;
+let WIN_W = 960;
+let WIN_H = 540;
+let MAX_FRAMES = 2400;      // ≈14 秒 @165Hz;跑完自动退出(便于自动化)
+
+// 图集格序(见 tests/fixtures/make_tiles.py)
+let T_GROUND = 0;
+let T_PLATFORM = 1;
+let T_WALL = 2;
+let T_BRICK = 3;
+let S_PLAYER = 4;
+let S_COIN = 5;
+let S_ENEMY = 6;
+let SHEET = "tests/fixtures/tiles.png";
+
+if eng_init("dexgame 平台跳跃示例", WIN_W, WIN_H, 1) != 0 {
+    print "eng_init 失败: " + eng_last_error();
+} else {
+    eng_bind_default_actions();
+    eng_set_clear_color(0xFF6E9BD1);                       // 天空色
+    print "引擎: " + eng_gpu_name();
+    print "音频可用: " + eng_audio_ok();
+
+    // ---- 用循环生成关卡:地板 + 三段平台 + 一个坑 + 右墙 ----
+    let csv = "";
+    let r = 0;
+    while (r < ROWS) {
+        let c = 0;
+        while (c < COLS) {
+            let v = -1;
+            if (r == ROWS - 1) { v = T_GROUND; }                              // 地板
+            if (r == ROWS - 1) { if (c > 17) { if (c < 20) { v = -1; } } }    // 一个 2 格宽的坑
+            if (r == 11) { if (c > 3) { if (c < 9) { v = T_PLATFORM; } } }    // 左平台
+            if (r == 8) { if (c > 13) { if (c < 19) { v = T_PLATFORM; } } }   // 中平台
+            if (r == 5) { if (c > 25) { if (c < 32) { v = T_PLATFORM; } } }   // 高平台
+            if (r > 11) { if (c == 22) { v = T_BRICK; } }                     // 小台阶
+            if (r > 8) { if (c == 23) { v = T_BRICK; } }
+            if (c == COLS - 1) { v = T_WALL; }                                // 右墙
+            csv = csv + v;
+            if (c < COLS - 1) { csv = csv + ","; }
+            c = c + 1;
+        }
+        csv = csv + "\n";
+        r = r + 1;
+    }
+
+    let map = eng_object_new();
+    eng_set_name(map, "map");
+    eng_attach(map, "transform");
+    eng_attach(map, "tilemap");
+    eng_set_s(map, "tilemap", "tex_path", SHEET);
+    eng_set_i(map, "tilemap", "atlas_tile", 16);
+    eng_set_i(map, "tilemap", "atlas_cols", 7);
+    eng_set_f(map, "tilemap", "tw", TILE);
+    eng_set_f(map, "tilemap", "th", TILE);
+    eng_set_i(map, "tilemap", "layer", 0);
+    if eng_tilemap_load_csv(map, csv) != 0 {
+        print "关卡加载失败: " + eng_last_error();
+    }
+    print "关卡: " + eng_tilemap_cols(map) + " × " + eng_tilemap_rows(map) + " 格";
+
+    // ---- 玩家:动态刚体,16x16 的碰撞盒(和贴图一样大)----
+    let player = eng_object_new();
+    eng_set_name(player, "player");
+    eng_attach(player, "transform");
+    eng_attach(player, "sprite");
+    eng_attach(player, "collider");
+    eng_attach(player, "body");
+    eng_set_s(player, "sprite", "tex_path", SHEET);
+    eng_set_f(player, "sprite", "sx", S_PLAYER * 16.0);
+    eng_set_f(player, "sprite", "sy", 0.0);
+    eng_set_f(player, "sprite", "sw", 16.0);
+    eng_set_f(player, "sprite", "sh", 16.0);
+    eng_set_f(player, "sprite", "px", 0.0);
+    eng_set_f(player, "sprite", "py", 0.0);
+    eng_set_f(player, "sprite", "layer", 10);
+    eng_set_f(player, "collider", "hw", 8.0);
+    eng_set_f(player, "collider", "hh", 8.0);
+    eng_set_f(player, "collider", "ox", 8.0);
+    eng_set_f(player, "collider", "oy", 8.0);
+    eng_set_i(player, "collider", "layer", 1);
+    eng_set_i(player, "body", "motion", 2);
+    eng_set_f(player, "body", "friction", 0.0);            // 水平速度自己管
+    eng_set_f(player, "body", "restitution", 0.0);
+    eng_set_f(player, "transform", "x", 64.0);
+    eng_set_f(player, "transform", "y", 200.0);
+
+    // ---- 3 枚金币:放在三段平台上方一跳够得着的地方 ----
+    let i = 0;
+    while (i < 3) {
+        let cx = 200.0 + i * 360.0;
+        let cy = 292.0 - i * 96.0;
+        let coin = eng_object_new();
+        eng_set_name(coin, "coin" + i);
+        eng_attach(coin, "transform");
+        eng_attach(coin, "sprite");
+        eng_attach(coin, "collider");
+        eng_set_s(coin, "sprite", "tex_path", SHEET);
+        eng_set_f(coin, "sprite", "sx", S_COIN * 16.0);
+        eng_set_f(coin, "sprite", "sy", 0.0);
+        eng_set_f(coin, "sprite", "sw", 16.0);
+        eng_set_f(coin, "sprite", "sh", 16.0);
+        eng_set_f(coin, "sprite", "px", 0.5);
+        eng_set_f(coin, "sprite", "py", 0.5);
+        eng_set_f(coin, "sprite", "layer", 8);
+        eng_set_i(coin, "collider", "kind", 1);            // 圆
+        eng_set_f(coin, "collider", "hw", 12.0);
+        eng_set_i(coin, "collider", "is_trigger", 1);
+        eng_set_i(coin, "collider", "layer", 2);           // L_COIN
+        eng_set_f(coin, "transform", "x", cx);
+        eng_set_f(coin, "transform", "y", cy);
+        i = i + 1;
+    }
+
+    // ---- 2 个巡逻的敌人:动态体(有重力,会自己落到地面)+ 触发体(不挡路)----
+    let e = 0;
+    while (e < 2) {
+        let foe = eng_object_new();
+        eng_set_name(foe, "enemy" + e);
+        eng_attach(foe, "transform");
+        eng_attach(foe, "sprite");
+        eng_attach(foe, "collider");
+        eng_attach(foe, "body");
+        eng_set_s(foe, "sprite", "tex_path", SHEET);
+        eng_set_f(foe, "sprite", "sx", S_ENEMY * 16.0);
+        eng_set_f(foe, "sprite", "sy", 0.0);
+        eng_set_f(foe, "sprite", "sw", 16.0);
+        eng_set_f(foe, "sprite", "sh", 16.0);
+        eng_set_f(foe, "sprite", "px", 0.0);
+        eng_set_f(foe, "sprite", "py", 0.0);
+        eng_set_f(foe, "sprite", "layer", 9);
+        eng_set_f(foe, "collider", "hw", 8.0);
+        eng_set_f(foe, "collider", "hh", 8.0);
+        eng_set_f(foe, "collider", "ox", 8.0);
+        eng_set_f(foe, "collider", "oy", 8.0);
+        eng_set_i(foe, "collider", "is_trigger", 1);
+        eng_set_i(foe, "collider", "layer", 4);            // L_ENEMY
+        eng_set_i(foe, "body", "motion", 2);               // dynamic:自己落到地面
+        eng_set_f(foe, "body", "friction", 0.0);
+        eng_set_f(foe, "body", "restitution", 0.0);
+        // 敌人放在坑的右边:出生点附近是安全区,先过坑再遇敌
+        if e == 0 {
+            eng_set_f(foe, "transform", "x", 800.0);
+            eng_set_f(foe, "body", "vx", 70.0);
+        } else {
+            eng_set_f(foe, "transform", "x", 1010.0);
+            eng_set_f(foe, "body", "vx", -50.0);
+        }
+        eng_set_f(foe, "transform", "y", 340.0);
+        e = e + 1;
+    }
+
+    // ---- 终点旗子(站在地板上)----
+    let goal = eng_object_new();
+    eng_set_name(goal, "goal");
+    eng_attach(goal, "transform");
+    eng_attach(goal, "sprite");
+    eng_attach(goal, "collider");
+    eng_set_s(goal, "sprite", "tex_path", SHEET);
+    eng_set_f(goal, "sprite", "sx", T_BRICK * 16.0);
+    eng_set_f(goal, "sprite", "sy", 0.0);
+    eng_set_f(goal, "sprite", "sw", 16.0);
+    eng_set_f(goal, "sprite", "sh", 16.0);
+    eng_set_f(goal, "sprite", "px", 0.0);
+    eng_set_f(goal, "sprite", "py", 0.0);
+    eng_set_f(goal, "sprite", "layer", 7);
+    eng_set_i(goal, "sprite", "tint", eng_rgba(255, 255, 120, 255));
+    // 终点离右墙远一点且做得高一些:否则玩家从上方飞过去,
+    // 落在墙边就再也碰不到它了(第一版真的这样)
+    eng_set_f(goal, "collider", "hw", 24.0);
+    eng_set_f(goal, "collider", "hh", 48.0);
+    eng_set_f(goal, "collider", "ox", 8.0);
+    eng_set_f(goal, "collider", "oy", 48.0);
+    eng_set_i(goal, "collider", "is_trigger", 1);
+    eng_set_i(goal, "collider", "layer", 8);               // L_GOAL
+    eng_set_f(goal, "transform", "x", 1130.0);
+    eng_set_f(goal, "transform", "y", 464.0);
+
+    // ---- 相机:相机 (x, y) = 显示在屏幕左上角的世界坐标 ----
+    let cam = eng_object_new();
+    eng_set_name(cam, "cam");
+    eng_attach(cam, "transform");
+    eng_attach(cam, "camera");
+    eng_set_i(cam, "camera", "active", 1);
+
+    // ---- 状态实体:语言没有全局变量,回调只能靠名字找它 ----
+    //      sprite 的 int 字段当状态格(layer=字体、order=金币、tint=死亡、
+    //      flip=自动演示、texture=土狼计时),body 的 int 字段放音效与通关标志。
+    let st = eng_object_new();
+    eng_set_name(st, "state");
+    eng_attach(st, "transform");
+    eng_attach(st, "sprite");
+    eng_attach(st, "body");
+    eng_set_i(st, "sprite", "layer", eng_font_load("Microsoft YaHei UI", 20.0));
+    eng_set_i(st, "sprite", "tint", 0);                 // 死亡计数从 0 开始(tint 默认 -1)
+    eng_set_i(st, "sprite", "order", 0);
+    eng_set_i(st, "body", "sleeping", eng_sound_load("tests/fixtures/jump.wav"));
+    eng_set_i(st, "body", "stepped", eng_sound_load("tests/fixtures/coin.wav"));
+    eng_set_i(st, "sprite", "flip", 1);                   // 默认开自动演示(F1 切换)
+    if eng_audio_ok() == 0 { eng_audio_set_master_volume(0.0); }
+
+    let t0 = eng_now_ms();
+    eng_run_frames("on_start", "on_update", "on_draw", MAX_FRAMES);
+
+    // ---------------------------------------------------------- 结算
+    let ms = eng_now_ms() - t0;
+    let s2 = eng_find("state");
+    print "—— 结算 ——";
+    print "金币: " + eng_get_i(s2, "sprite", "order") + " / 3";
+    print "死亡: " + eng_get_i(s2, "sprite", "tint") + " 次";
+    print "通关: " + eng_get_i(s2, "body", "flags");
+    print "实跑 " + eng_frame_index() + " 帧 / " + ms + " ms";
+    eng_shutdown();
+    print "done";
+}
+
+// ================================================================ 回调
+// 回调里看不到主程序的 let,所以:实体用 eng_find(名字)取,状态放组件字段里。
+
+func on_start() {
+    // 预热 HUD 要用的字形(第一帧就不会因为光栅化卡一下)
+    let st = eng_find("state");
+    let f = eng_get_i(st, "sprite", "layer");
+    eng_text_width(f, "金币 0123 / 3   死亡  次   自动演示(F1):开关   帧  小心:脚下是空的!");
+}
+
+func on_update(dt: float) {
+    let st = eng_find("state");
+    let player = eng_find("player");
+    let cam = eng_find("cam");
+    let goal = eng_find("goal");
+    let jump_snd = eng_get_i(st, "body", "sleeping");
+    let coin_snd = eng_get_i(st, "body", "stepped");
+
+    // F1 开关自动演示
+    if eng_key_pressed(112) == 1 {
+        if eng_get_i(st, "sprite", "flip") == 1 {
+            eng_set_i(st, "sprite", "flip", 0);
+        } else {
+            eng_set_i(st, "sprite", "flip", 1);
+        }
+    }
+
+    // 上一帧的合成输入已经清零了(见函数末尾),所以这里读到的是**真人输入**
+    let left = eng_action_down("left");
+    let right = eng_action_down("right");
+    let jump = eng_action_down("jump");
+    let jumping = eng_action_pressed("jump");
+    let any_key = 0;
+    if left == 1 { any_key = 1; }
+    if right == 1 { any_key = 1; }
+    if jump == 1 { any_key = 1; }
+
+    // 没人按键 + 自动演示开着 -> 用**合成输入**喂同一套动作(所以走的代码路径
+    // 与真人玩完全一样,这也是 IDE 以后做"脚本化试玩"的手段)
+    if any_key == 0 {
+        if eng_get_i(st, "sprite", "flip") == 1 {
+            eng_input_feed(39, 1);                                  // 一直按 →
+            // 跳起来以后还要**继续按住**:否则会触发“松手跳得矮”,
+            // 跳远不够就会掉进坑里(第一版就是这么掉进去的)
+            let want_jump = 0;
+            if auto_should_jump() == 1 { want_jump = 1; }
+            if eng_velocity_y(player) < -60.0 { want_jump = 1; }
+            if want_jump == 1 { eng_input_feed(32, 1); } else { eng_input_feed(32, 0); }
+            left = eng_action_down("left");
+            right = eng_action_down("right");
+            jump = eng_action_down("jump");
+            jumping = eng_action_pressed("jump");
+        }
+    }
+
+    // ---- 水平移动:直接设速度,位置由固定步长物理推进 ----
+    if left == 1 { eng_set_velocity(player, -190.0, eng_velocity_y(player)); }
+    if right == 1 { eng_set_velocity(player, 190.0, eng_velocity_y(player)); }
+    if left == 0 { if right == 0 { eng_set_velocity(player, 0.0, eng_velocity_y(player)); } }
+
+    // ---- 跳跃:落地才给跳 + 6 帧"土狼时间" + 松手跳得矮 ----
+    let coyote = eng_get_i(st, "sprite", "texture");
+    if eng_on_ground(player) == 1 {
+        coyote = 6;
+    } else {
+        if coyote > 0 { coyote = coyote - 1; }
+        eng_set_i(st, "sprite", "texture", coyote);
+    }
+    if eng_on_ground(player) == 1 { eng_set_i(st, "sprite", "texture", coyote); }
+    if jumping == 1 {
+        if coyote > 0 {
+            eng_set_velocity(player, eng_velocity_x(player), -520.0);
+            eng_set_i(st, "sprite", "texture", 0);
+            if eng_audio_ok() == 1 { eng_sound_play(jump_snd, 0, 0.5); }
+        }
+    }
+    if jump == 0 {
+        if eng_velocity_y(player) < -180.0 {
+            eng_set_velocity(player, eng_velocity_x(player), -180.0);
+        }
+    }
+
+    // ---- 金币:矩形查询玩家身上有没有 layer=2 的触发体 ----
+    let px = eng_world_x(player);
+    let py = eng_world_y(player);
+    let q = eng_query_rect(px - 12.0, py - 12.0, 24.0, 24.0, 2);
+    let hits = eng_query_count(q);
+    let k = 0;
+    while (k < hits) {
+        let c = eng_query_at(q, k);
+        if eng_object_alive(c) == 1 {
+            if eng_get_i(c, "collider", "layer") == 2 {
+                eng_set_i(c, "collider", "layer", 0);              // 不再被查询命中
+                eng_set_i(c, "sprite", "layer", 0);                // 不再绘制
+                eng_set_i(st, "sprite", "order", eng_get_i(st, "sprite", "order") + 1);
+                if eng_audio_ok() == 1 { eng_sound_play(coin_snd, 0, 0.45); }
+            }
+        }
+        k = k + 1;
+    }
+    eng_query_end(q);
+
+    // ---- 敌人:撞墙转身;碰到玩家就重生 ----
+    let e = 0;
+    while (e < 2) {
+        let foe = eng_find("enemy" + e);
+        if eng_object_alive(foe) == 1 {
+            if eng_on_wall(foe) == 1 {
+                eng_set_f(foe, "body", "vx", 0.0 - eng_velocity_x(foe));
+            }
+            if eng_overlap(player, foe) == 1 {
+                eng_set_f(player, "transform", "x", 64.0);
+                eng_set_f(player, "transform", "y", 200.0);
+                eng_set_velocity(player, 0.0, 0.0);
+                eng_set_i(st, "sprite", "tint", eng_get_i(st, "sprite", "tint") + 1);
+            }
+        }
+        e = e + 1;
+    }
+
+    // ---- 掉出世界也是死 ----
+    if py > 744.0 {
+        eng_set_f(player, "transform", "x", 64.0);
+        eng_set_f(player, "transform", "y", 200.0);
+        eng_set_velocity(player, 0.0, 0.0);
+        eng_set_i(st, "sprite", "tint", eng_get_i(st, "sprite", "tint") + 1);
+    }
+
+    // ---- 通关 ----
+    if eng_overlap(player, goal) == 1 {
+        if eng_get_i(st, "body", "flags") == 0 {
+            eng_set_i(st, "body", "flags", 1);
+            print "通关!金币 " + eng_get_i(st, "sprite", "order") + " / 3,死亡 "
+                  + eng_get_i(st, "sprite", "tint") + " 次";
+            eng_request_close();
+        }
+    }
+
+    // ---- 相机跟随(夹在世界范围内)----
+    let cam_x = px - 470.0;
+    if cam_x < 0.0 { cam_x = 0.0; }
+    if cam_x > 320.0 { cam_x = 320.0; }                  // 1280 - 960
+    let cam_y = py - 270.0;
+    if cam_y < 0.0 { cam_y = 0.0; }
+    if cam_y > 4.0 { cam_y = 4.0; }                      // 544 - 540
+    eng_set_f(cam, "camera", "x", cam_x);
+    eng_set_f(cam, "camera", "y", cam_y);
+
+    // 合成输入只在**本帧**有效:用完就清,下一帧开头读到的才是真人输入
+    eng_input_feed(39, 0);
+    eng_input_feed(32, 0);
+}
+
+func on_draw() {
+    let st = eng_find("state");
+    let f = eng_get_i(st, "sprite", "layer");
+    let player = eng_find("player");
+
+    eng_draw_scene();                                    // 瓦片地图 + 精灵(相机生效)
+
+    // HUD
+    eng_rect(0.0, 0.0, 430.0, 62.0, eng_rgba(0, 0, 0, 150));
+    eng_text(10.0, 6.0, f, "金币 " + eng_get_i(st, "sprite", "order") + " / 3", 0xFFFFFFFF);
+    eng_text(10.0, 32.0, f, "死亡 " + eng_get_i(st, "sprite", "tint") + " 次   自动演示(F1):"
+             + auto_text(), 0xFFE8E8E8);
+
+    // 小地图:玩家在世界里的位置
+    eng_rect(446.0, 12.0, 82.0, 10.0, eng_rgba(0, 0, 0, 120));
+    eng_rect(447.0 + eng_world_x(player) / 1280.0 * 80.0, 13.0, 3.0, 8.0, eng_rgba(255, 255, 90, 255));
+
+    // 脚下空不空(用的就是自动演示探坑的那条射线)
+    if eng_raycast(eng_world_x(player), eng_world_y(player) + 32.0, 0.0, 1.0, 420.0, 0, player) == 1 {
+        if eng_hit_t() > 120.0 {
+            eng_text(10.0, 58.0, f, "小心:脚下是空的!", 0xFFFF9090);
+        }
+    }
+}
+
+func auto_text() -> string {
+    let st = eng_find("state");
+    if eng_get_i(st, "sprite", "flip") == 1 { return "开"; }
+    return "关";
+}
+
+// 自动演示的"大脑":往右跑,遇到墙/坑/敌人/金币就跳。
+// 全部用引擎自己的能力判断(射线 + 矩形查询),顺便当这些接口的活文档。
+func auto_should_jump() -> int {
+    let player = eng_find("player");
+    let px = eng_world_x(player);
+    let py = eng_world_y(player);
+
+    if eng_on_ground(player) == 0 { return 0; }                    // 空中不重复跳
+    if eng_on_wall(player) == 1 { return 1; }                      // 撞墙了
+
+    // 前方 40px 往下探:看不到地面就是坑(第 7 个参数 = 忽略玩家自己)
+    if eng_raycast(px + 48.0, py, 0.0, 1.0, 110.0, 0, player) == 0 { return 1; }
+
+    // 前方有敌人?
+    let q = eng_query_rect(px + 16.0, py - 28.0, 104.0, 60.0, 4);
+    let n = eng_query_count(q);
+    eng_query_end(q);
+    if n > 0 { return 1; }
+
+    // 头上/前方有金币?
+    let q2 = eng_query_rect(px - 8.0, py - 96.0, 56.0, 96.0, 2);
+    let n2 = eng_query_count(q2);
+    eng_query_end(q2);
+    if n2 > 0 { return 1; }
+
+    return 0;
+}

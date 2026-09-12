@@ -50,6 +50,23 @@ def main():
     n = 2205
     write("silence8s.wav", wav_bytes(2, 22050, 8, [(128, 128)] * n))
 
+    # 跳跃:快速上滑的短音(220 -> 660Hz,0.09 秒)
+    rate, dur = 22050, 0.09
+    n = int(rate * dur)
+    frames = []
+    for i in range(n):
+        f = 220.0 + (660.0 - 220.0) * (i / n)
+        frames.append((int(0.22 * 32767 * math.sin(2 * math.pi * f * i / rate)),))
+    write("jump.wav", wav_bytes(1, rate, 16, frames))
+
+    # 金币:两个音高的短促“叮”(988Hz 然后 1319Hz,各 0.05 秒)
+    rate = 22050
+    frames = []
+    for f in (988.0, 1319.0):
+        for i in range(int(rate * 0.05)):
+            frames.append((int(0.20 * 32767 * math.sin(2 * math.pi * f * i / rate)),))
+    write("coin.wav", wav_bytes(1, rate, 16, frames))
+
     # 440Hz 正弦,16 位单声道 22050Hz,0.12 秒,振幅 25%(示例里能听到但不吵)
     rate, dur = 22050, 0.12
     frames = []
