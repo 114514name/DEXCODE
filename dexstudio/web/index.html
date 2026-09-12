@@ -70,6 +70,12 @@
     <div class="status" id="status">连接中…</div>
   </header>
 
+  <div class="recover" id="recover-bar" hidden>
+    <span id="recover-text">上次好像没有正常退出。</span>
+    <button id="btn-recover">恢复自动保存</button>
+    <button id="btn-recover-drop">丢弃</button>
+  </div>
+
   <main>
     <aside class="left">
       <section class="scene-only">
@@ -95,6 +101,14 @@
       <section class="scene-only">
         <h2>图层</h2>
         <ul class="tree layers" id="layers"></ul>
+      </section>
+      <section class="scene-only" id="res-sec">
+        <h2>资源 <span class="count" id="res-count">0</span>
+          <span class="mini"><button id="btn-res-import" class="link">导入…</button>
+          <button id="btn-res-refresh" class="link">刷新</button></span>
+        </h2>
+        <p class="hint">点图片=给选中实体设贴图 · 右键=删/改名</p>
+        <div class="reslist" id="res-list"></div>
       </section>
       <section class="grow graph-only">
         <h2>节点面板</h2>

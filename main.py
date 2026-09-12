@@ -327,7 +327,7 @@ def cmd_build_dexc(args):
     return 0
 
 
-DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c", "ds_graph.c", "ds_run.c"]
+DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c", "ds_graph.c", "ds_run.c", "ds_res.c"]
 DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_webview.c", "ds_main.c"]
 
 
@@ -374,12 +374,12 @@ def cmd_build_dexstudio(args):
     host_srcs = [os.path.join(h, s) for s in DEXSTUDIO_HOST_SOURCES]
     # 只链接系统库:WebView2Loader 的三个导出是**运行时** LoadLibrary 拿的,
     # 所以不需要它的导入库(与 dexgame 用 d3dcompiler/xaudio2 的做法一致)。
-    sys_libs = ["-luser32", "-lgdi32", "-lole32", "-luuid"]
+    sys_libs = ["-luser32", "-lgdi32", "-lole32", "-luuid", "-lcomdlg32"]
     # -Wl,--out-implib:zig cc -shared 会按**第一个输入文件**给导入库命名并扔在
     #   当前目录(这里会变成 ds_json.lib,污染工作树)。引到 gitignored 目录去。
     implib = ["-Wl,--out-implib=" + os.path.join(ROOT, "_zigtmp", "dexstudio.lib")]
     jobs = [
-        (tool(["-shared"] + implib, dll, model_srcs), dll),
+        (tool(["-shared"] + implib, dll, model_srcs) + sys_libs, dll),
         (tool([], exe, host_srcs) + sys_libs, exe),
         (tool(["-DDS_NO_CONSOLE", "-Wl,--subsystem,windows"], ncexe, host_srcs) + sys_libs,
          ncexe),

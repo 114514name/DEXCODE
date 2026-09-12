@@ -16,6 +16,7 @@
 #include "ds_json.h"
 #include "ds_graph.h"
 #include "ds_run.h"
+#include "ds_res.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -68,6 +69,7 @@ struct DsModel {
     Dsj *graph;            /* 逻辑图的 DOM(scripts/logic.json,B4) */
     void *proc;            /* 正在独立窗口运行的游戏进程(B5) */
     unsigned long proc_pid;
+    int autosave_seq;       /* 自动保存次数(B6;前端显示"已自动保存 N 次") */
     char *resp;
     size_t resp_cap;
     int has_id;            /* 请求里带了 id → 响应原样带回(前端靠它配对 Promise) */
@@ -429,19 +431,20 @@ static void undo_push(DsModel *m, UndoEntry *e)
     redo_clear(m);
 }
 
-/* 把一份快照写回:场景 JSON + 各外部文本文件(瓦片 CSV 写完让引擎重新加载) */
-static int restore_entry(DsModel *m, UndoEntry *e)
+/* 把"场景 JSON + 外部文本文件"写回:撤销恢复与自动保存恢复共用这一份。
+ * 外部文件(瓦片 CSV)写完要让引擎重新加载,逻辑图写完要让内存里的图重新读。 */
+int ds_scene_restore(DsModel *m, const char *scene_json, Dsj *files)
 {
     DexValue a[1];
     int i;
-    a[0] = V_s(e->scene ? e->scene : "{}");
+    a[0] = V_s(scene_json ? scene_json : "{}");
     if (m->eng.scene_load_json(a, 1) != 0) {
         seterr(m, "恢复场景失败:%s", ds_engine_last_error(&m->eng));
         return 0;
     }
-    for (i = 0; i < dsj_len(e->files); i++) {
-        const char *path = e->files->keys[i];
-        const char *text = dsj_at(e->files, i)->str;
+    for (i = 0; i < dsj_len(files); i++) {
+        const char *path = files->keys[i];
+        const char *text = dsj_at(files, i)->str;
         int64_t id;
         DexValue b[2];
         write_text(path, text);
@@ -472,6 +475,12 @@ static int restore_entry(DsModel *m, UndoEntry *e)
     ds_graph_reload(m);
     m->dirty = 1;
     return 1;
+}
+
+/* 把一份撤销快照写回 */
+static int restore_entry(DsModel *m, UndoEntry *e)
+{
+    return ds_scene_restore(m, e->scene, e->files);
 }
 
 /* 撤销/重做:把"当前"压到对面的栈,再从本栈弹出快照恢复 */
@@ -738,6 +747,8 @@ static Dsj *cmd_app_info(DsModel *m)
         dsj_set_num(v, "zoom", m->view_zoom);
         dsj_set(r, "view", v);
     }
+    dsj_set_bool(r, "recoverable", ds_res_recoverable(m));
+    dsj_set_int(r, "autosave_seq", m->autosave_seq);
     dsj_set_int(r, "view_w", m->eng.ok ? (long long)m->eng.width(none, 0) : 0);
     dsj_set_int(r, "view_h", m->eng.ok ? (long long)m->eng.height(none, 0) : 0);
     return r;
@@ -1529,6 +1540,13 @@ const char *ds_preview_dir(DsModel *m)
 }
 
 const char *ds_project_dir(DsModel *m) { return m->root; }
+const char *ds_model_scene_path(DsModel *m) { return m->scene; }
+void ds_model_mark_dirty(DsModel *m) { m->dirty = 1; }
+int ds_model_autosave_seq(DsModel *m) { return ++m->autosave_seq; }
+int ds_model_dirty(DsModel *m) { return m->dirty; }
+/* 给 ds_res.c 用的公开包装(内部那两份是 static) */
+char *ds_scene_snapshot(DsModel *m) { return scene_snapshot(m); }
+Dsj *ds_files_snapshot(DsModel *m) { return files_snapshot(m); }
 
 /* ------------------------------------------------ 给 ds_graph.c 的最小访问面 */
 
@@ -2295,6 +2313,8 @@ const char *ds_command(DsModel *m, const char *request)
     else if (!strcmp(cmd, "undo")) ret = c_undo(m, args);
     else if (!strcmp(cmd, "redo")) ret = c_redo(m, args);
     else if (!strncmp(cmd, "graph.", 6)) ret = ds_graph_command(m, cmd, args);
+    else if (!strncmp(cmd, "res.", 4) || !strncmp(cmd, "autosave.", 9)
+             || !strncmp(cmd, "recover.", 8)) ret = ds_res_command(m, cmd, args);
     else if (!strncmp(cmd, "build.", 6) || !strcmp(cmd, "project.scripts") || !strcmp(cmd, "file.read")) ret = ds_run_command(m, cmd, args);
     else {
         char msg[256];

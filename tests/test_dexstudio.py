@@ -922,6 +922,101 @@ def test_build_and_run(dll):
             m.close()
 
 
+def test_resources_and_autosave(dll):
+    """B6 的资源管理与自动保存/崩溃恢复。
+
+    注意:`res.pick` 会弹**模态**文件对话框,测试里只用 `dry:1` 那条路
+    (命令本身照常分发,只是不弹窗)—— 无人值守流程绝不能被对话框挂住。"""
+    print("[资源管理 / 自动保存 / 崩溃恢复]")
+    with tempdir("ds_res_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "r"})
+            check("新项目 res/ 是空的", m.ok("res.list")["count"] == 0)
+            check("res/ 目录被建出来了", os.path.isdir(os.path.join(tmp, "res")))
+
+            # 造一个假 PNG(内容不重要,只验证"复制进来/列出来/删掉")
+            src = os.path.join(tmp, "outside.png")
+            with open(src, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+            r = m.ok("res.import", {"src": src})
+            check("res.import 复制进 res/", r["name"] == "outside.png", r)
+            check("导入后文件真的在", os.path.exists(os.path.join(tmp, "res",
+                                                                "outside.png")))
+            e = m.err("res.import", {"src": src})
+            check("重名导入不覆盖并给原因", "已经有" in e, e)
+            e = m.err("res.import", {"src": os.path.join(tmp, "nope.png")})
+            check("导入不存在的文件给原因", "不存在" in e, e)
+
+            lst = m.ok("res.list")
+            check("res.list 报出名字/大小/类型",
+                  lst["count"] == 1 and lst["files"][0]["name"] == "outside.png"
+                  and lst["files"][0]["size"] > 0
+                  and lst["files"][0]["kind"] == "image", lst)
+            m.ok("res.rename", {"name": "outside.png", "to": "atlas.png"})
+            check("改名生效",
+                  m.ok("res.list")["files"][0]["name"] == "atlas.png")
+            e = m.err("res.rename", {"name": "atlas.png", "to": "atlas.png"})
+            check("改成已存在的名字给原因", "已经有" in e, e)
+            m.ok("res.delete", {"name": "atlas.png"})
+            check("删除生效", m.ok("res.list")["count"] == 0)
+            e = m.err("res.delete", {"name": "atlas.png"})
+            check("删不存在的资源给原因", "没有" in e, e)
+            e = m.err("res.delete", {"name": "../evil.txt"})
+            check("资源名不许带路径(防越界)", "不合法" in e, e)
+            p = m.ok("res.pick", {"dry": 1})
+            check("res.pick dry 模式不弹窗", p["picked"] is False and p["dry"] is True, p)
+
+            # --- 自动保存 ---
+            r = m.ok("autosave.tick")
+            check("没有改动时不写自动保存", r["saved"] is False, r)
+            m.ok("entity.add", {"name": "player"})
+            r = m.ok("autosave.tick")
+            check("有改动就写自动保存", r["saved"] is True and r["seq"] >= 1, r)
+            apath = os.path.join(tmp, ".dexstudio", "autosave.json")
+            check("自动保存文件在 .dexstudio/ 下", os.path.exists(apath), apath)
+            with open(apath, encoding="utf-8") as f:
+                bundle = json.load(f)
+            check("自动保存是整包(场景 + 外部文件)",
+                  bundle.get("scene_path", "").endswith("main.json")
+                  and "scene" in bundle and "files" in bundle, list(bundle.keys()))
+            check("包里的场景确实有那个实体", "player" in bundle["scene"],
+                  bundle["scene"][:80])
+
+            # --- 崩溃恢复:自动保存比场景文件新 ---
+            m.ok("entity.add", {"name": "enemy"})
+            m.ok("autosave.tick")
+            spath = os.path.join(tmp, "scenes", "main.json")
+            old = os.path.getmtime(spath)
+            os.utime(spath, (old - 120, old - 120))     # 假装场景是两分钟前存的
+            st = m.ok("recover.status")
+            check("认出有可恢复的自动保存", st["recoverable"] is True, st)
+            check("报告包里有几个外部文件", st["files"] >= 1, st)
+            check("app.info 也报可恢复",
+                  m.ok("app.info")["recoverable"] is True)
+            r = m.ok("recover.apply")
+            check("恢复成功", r["recovered"] is True, r)
+            names = [e["name"] for e in m.ok("entity.list")]
+            check("恢复后两个实体都在", "player" in names and "enemy" in names, names)
+            check("恢复后自动保存被清掉(不会反复提示)",
+                  m.ok("recover.status")["recoverable"] is False)
+            check("恢复出来的内容算未保存改动", m.ok("app.info")["dirty"] is True)
+            e = m.err("recover.apply")
+            check("没有可恢复内容时给原因", "没有可恢复" in e, e)
+
+            # --- 正常保存之后不该再提示恢复 ---
+            m.ok("entity.add", {"name": "third"})
+            m.ok("autosave.tick")
+            m.ok("project.save")
+            os.utime(spath, (old + 600, old + 600))     # 场景现在比自动保存新
+            check("正常保存后不再提示恢复",
+                  m.ok("recover.status")["recoverable"] is False)
+            r = m.ok("recover.discard")
+            check("丢弃自动保存返回成功", r["discarded"] is True, r)
+        finally:
+            m.close()
+
+
 def test_web_assets():
     """前端资源的静态检查:每个 .js 都要能被 JS 引擎解析。
 
@@ -1022,6 +1117,7 @@ def main():
     test_graph_codegen(dll)
     test_graph_behavior(dll)
     test_build_and_run(dll)
+    test_resources_and_autosave(dll)
     test_web_assets()
     test_cli()
     test_webview_chain()

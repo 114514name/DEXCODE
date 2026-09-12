@@ -101,6 +101,8 @@ const DS = {
   names: {},           // id → 名字(撤销后重新选中用)
   pendingPaint: [],    // 拖动刷子时攒下的格子(松手时一条命令提交)
   mode: 'scene',       // scene | graph | code(三个编辑器共用同一个窗口)
+  res: [],             // res/ 下的文件(B6 资源面板)
+  resSel: '',          // 资源面板里选中的文件
   quietLog: false,
   busy: false,         // 正在跑一批命令(拖拽中),抑制重复刷新
 };
@@ -136,6 +138,8 @@ async function refresh(opts) {
   renderTopbar();
   renderTree();
   renderLayers();
+  await refreshResources();
+  renderRecover();
   await renderInspector();
   await updatePalette();
   if (!o.noRender) await renderView();
@@ -186,6 +190,156 @@ async function renderView() {
 function afterEdit(msg) {
   if (msg) log('dim', msg);
   return refresh();
+}
+
+/* ------------------------------------------------------------ 恢复提示(B6) */
+
+/* 自动保存比场景新 = 上次没正常收尾(崩溃/强杀)。这时**不要**擅自恢复 ——
+ * 让用户选「恢复」还是「丢弃」,原因与时间都写在提示条上。 */
+function renderRecover() {
+  const bar = $('recover-bar');
+  const info = DS.info || {};
+  if (!info.recoverable) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  $('recover-text').textContent =
+    '上次似乎没有正常退出 —— 有一份比场景文件新的自动保存' +
+    (info.autosave_seq ? '(' + info.autosave_seq + ' 次自动保存)' : '') +
+    '。要恢复它吗?';
+}
+
+/* ------------------------------------------------------------ 资源面板(B6) */
+
+/* 图片/声音走**虚拟主机**显示与试听(宿主把项目根映射成 dexstudio-proj.local),
+ * 所以缩略图与试听都不经过消息通道。 */
+const resUrl = (name) => 'https://dexstudio-proj.local/res/' + encodeURIComponent(name);
+
+function humanSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+async function refreshResources() {
+  const box = $('res-list');
+  if (!box) return;
+  if (!DS.info || !DS.info.root) {
+    DS.res = [];
+    box.innerHTML = '<div class="hint">未打开项目</div>';
+    $('res-count').textContent = '0';
+    return;
+  }
+  try {
+    const r = await ds('res.list');
+    DS.res = r.files || [];
+  } catch (e) {
+    DS.res = [];
+    log('er', 'res.list: ' + e.message);
+  }
+  $('res-count').textContent = DS.res.length;
+  box.innerHTML = '';
+  if (!DS.res.length) {
+    box.innerHTML = '<div class="hint">res/ 还是空的 —— 点「导入…」</div>';
+    return;
+  }
+  DS.res.forEach((f) => {
+    const d = document.createElement('div');
+    d.className = 'res ' + f.kind + (f.name === DS.resSel ? ' sel' : '');
+    d.title = f.name + ' · ' + humanSize(f.size) + ' · ' + f.kind;
+    if (f.kind === 'image') {
+      d.innerHTML = '<img src="' + resUrl(f.name) + '" alt="">' +
+        '<div class="nm">' + esc(f.name) + '</div>' +
+        '<div class="kb">' + humanSize(f.size) + '</div>';
+    } else {
+      d.innerHTML = '<div class="ph">' + (f.kind === 'audio' ? '♪' : '▤') + '</div>' +
+        '<div class="nm">' + esc(f.name) + '</div>' +
+        '<div class="kb">' + humanSize(f.size) + '</div>';
+    }
+    d.onclick = () => applyRes(f);
+    d.oncontextmenu = (ev) => {
+      ev.preventDefault();
+      resMenu(f);
+    };
+    box.appendChild(d);
+  });
+}
+
+/* 点资源:图片→给选中实体的 sprite.tex_path;声音→试听一下 */
+async function applyRes(f) {
+  DS.resSel = f.name;
+  refreshResources();
+  if (f.kind === 'audio') {
+    try {
+      const a = new Audio(resUrl(f.name));
+      a.volume = 0.6;
+      a.play().then(() => log('dim', '试听 ' + f.name))
+              .catch((e) => log('er', '试听失败:' + e.message));
+    } catch (e) { log('er', '试听失败:' + e.message); }
+    return;
+  }
+  if (f.kind !== 'image') {
+    log('dim', f.name + ':' + humanSize(f.size));
+    return;
+  }
+  if (!DS.sel.length) {
+    log('warn', '先在层级树里选一个实体,再把 ' + f.name + ' 设成它的贴图');
+    return;
+  }
+  const id = DS.sel[DS.sel.length - 1];
+  const e = byId(id);
+  if (!e) return;
+  try {
+    if ((e.comps || []).indexOf('sprite') < 0) {
+      await call('comp.add', { id, comp: 'sprite' }, '挂 sprite');
+    }
+    await call('comp.set', { id, comp: 'sprite', field: 'tex_path',
+                             value: 'res/' + f.name }, '设置贴图');
+    log('dim', f.name + ' → ' + (e.name || id) + ' 的贴图');
+    await refresh();
+  } catch (err) { /* 原因已显示 */ }
+}
+
+/* 右键资源:删掉 / 改名 */
+async function resMenu(f) {
+  const what = prompt('资源 «' + f.name + '»:\n输入新名字 = 改名(留空 = 删除)', '');
+  if (what === null) return;
+  try {
+    if (what.trim()) {
+      await call('res.rename', { name: f.name, to: what.trim() }, '资源改名');
+    } else {
+      if (!confirm('删掉 res/' + f.name + '?')) return;
+      await call('res.delete', { name: f.name }, '删除资源');
+    }
+    await refreshResources();
+  } catch (e) { /* 原因已显示 */ }
+}
+
+async function importRes() {
+  if (!DS.info || !DS.info.root) {
+    log('warn', '先新建/打开一个项目');
+    return;
+  }
+  try {
+    const picked = await ds('res.pick');
+    if (!picked.picked) return;
+    const r = await call('res.import', { src: picked.path }, '导入资源');
+    log('dim', '已导入 res/' + r.name + '(' + humanSize(r.size) + ')');
+    await refreshResources();
+  } catch (e) { /* 原因已显示 */ }
+}
+
+/* 自动保存的节拍:策略在 C(存什么/存哪儿/什么时候算脏),这里只负责"按时敲一下" */
+function startAutosave() {
+  setInterval(async () => {
+    const info = DS.info || {};
+    if (!info.root || !info.dirty) return;
+    try {
+      const r = await ds('autosave.tick');
+      if (r.saved) log('dim', '已自动保存(第 ' + r.seq + ' 次)');
+    } catch (e) { /* 忽略:自动保存失败不该打断编辑 */ }
+  }, 30000);
 }
 
 /* ------------------------------------------------------------ 选中 */
@@ -616,6 +770,22 @@ function wire() {
     Viewport.drawOverlay();
   };
   $('btn-selfcheck').onclick = selfcheck;
+  $('btn-res-import').onclick = importRes;
+  $('btn-res-refresh').onclick = () => refreshResources();
+  $('btn-recover').onclick = async () => {
+    try {
+      await call('recover.apply', {}, '恢复自动保存');
+      DS.sel = [];
+      await refresh();
+      log('dim', '已从上一次的自动保存恢复(记得保存)');
+    } catch (e) { /* 已提示 */ }
+  };
+  $('btn-recover-drop').onclick = async () => {
+    try {
+      await call('recover.discard', {}, '丢弃自动保存');
+      renderRecover();
+    } catch (e) { /* 已提示 */ }
+  };
   $('mode-scene').onclick = () => setMode('scene');
   $('mode-graph').onclick = () => setMode('graph');
   $('mode-code').onclick = () => setMode('code');
@@ -897,6 +1067,51 @@ window.__ds_selftest = async function () {
     }
     await setMode('scene');
     t('收尾回到场景模式', !document.body.classList.contains('mode-code'));
+
+    /* --- 资源面板 + 恢复提示(B6) --- */
+    t('左栏有资源面板', !!document.getElementById('res-sec'));
+    t('资源面板有导入/刷新按钮',
+      !!document.getElementById('btn-res-import')
+      && !!document.getElementById('btn-res-refresh'));
+    await refreshResources();
+    const rcount = parseInt(document.getElementById('res-count').textContent, 10);
+    t('资源计数与 res.list 一致', rcount === DS.res.length,
+      rcount + ' vs ' + DS.res.length);
+    if (DS.info && DS.info.root) {
+      const rl = await ds('res.list');
+      t('界面里的 res.list 可用', typeof rl.count === 'number', rl.count);
+      const tick = await ds('autosave.tick');
+      t('界面里能敲自动保存节拍', typeof tick.saved === 'boolean', tick);
+      t('自动保存的节拍已经挂上(30 秒一次)', startAutosave.toString().indexOf('30000') > 0);
+      /* 资源缩略图/试听都靠 dexstudio-proj.local 这个虚拟主机 —— 真的 fetch 一次,
+       * 证明"项目根映射出去了"(与视口用 preview 主机是同一套机制)。 */
+      try {
+        const resp = await fetch('https://dexstudio-proj.local/project.json');
+        const txt = await resp.text();
+        t('项目根映射出去了(资源缩略图靠它)',
+          resp.ok && txt.indexOf('"name"') >= 0, resp.status);
+      } catch (e) {
+        t('项目根映射出去了(资源缩略图靠它)', false, String(e));
+      }
+    } else {
+      out.skip.push('没有打开项目:跳过 res.list/autosave 的界面检查');
+    }
+    /* 恢复提示:合成一个"可恢复"状态验渲染与按钮(不去造假项目文件) */
+    const keepInfo = DS.info;
+    DS.info = Object.assign({}, keepInfo, { recoverable: true, autosave_seq: 3 });
+    renderRecover();
+    t('有可恢复的自动保存时弹出提示条',
+      !document.getElementById('recover-bar').hidden
+      && document.getElementById('recover-text').textContent.indexOf('自动保存') >= 0,
+      document.getElementById('recover-text').textContent);
+    DS.info = Object.assign({}, keepInfo, { recoverable: false });
+    renderRecover();
+    t('没有可恢复内容时提示条收起',
+      document.getElementById('recover-bar').hidden);
+    DS.info = keepInfo;
+    t('恢复提示的两个按钮都在',
+      !!document.getElementById('btn-recover')
+      && !!document.getElementById('btn-recover-drop'));
   } catch (e) {
     out.fail.push('自检中断:' + (e && e.message));
   }
@@ -923,6 +1138,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   wire();
   wireKeys();
+  startAutosave();
   setTool('select');
   setMode('scene');
   try {

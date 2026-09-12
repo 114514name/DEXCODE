@@ -248,3 +248,28 @@ pre.code .cl.flash { animation: codeflash .6s ease-in-out 2; }
 .log.build .diag.jump { cursor: pointer; text-decoration: underline dotted; }
 .log.build .diag.jump:hover { color: var(--accent); }
 .log.build .raw { color: var(--fg-dim); white-space: pre-wrap; margin-top: 4px; }
+
+/* ---------- 资源面板 + 恢复提示(B6) ---------- */
+.reslist {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px; overflow-y: auto; max-height: 190px; padding-top: 2px;
+}
+.reslist .res {
+  background: #16161f; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px; cursor: pointer; text-align: center; overflow: hidden;
+}
+.reslist .res:hover { border-color: var(--accent); }
+.reslist .res.sel { border-color: var(--accent2); }
+.reslist .res img { width: 100%; height: 48px; object-fit: contain;
+                    image-rendering: pixelated; display: block; }
+.reslist .res .nm { font-size: 10px; color: var(--fg-dim);
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reslist .res .kb { font-size: 9.5px; color: #6c7086; }
+.reslist .res.other img, .reslist .res.audio img { display: none; }
+.reslist .res .ph { height: 48px; line-height: 48px; font-size: 18px; color: #6c7086; }
+.recover {
+  display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+  background: #4a3a1e; border-bottom: 1px solid var(--warn); color: var(--warn);
+  font-size: 12.5px; flex: none;
+}
+.recover button { background: #5a4826; border-color: var(--warn); color: #ffe8c0; }

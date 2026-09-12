@@ -82,5 +82,16 @@ int ds_graph_generate_to_file(DsModel *m, char *out_path, unsigned pathsz,
                               char *err, unsigned errsz);
 /* 编译/运行(实现在 ds_run.c) */
 Dsj *ds_run_command(DsModel *m, const char *cmd, Dsj *args);
+/* 资源与自动保存(实现在 ds_res.c) */
+Dsj *ds_res_command(DsModel *m, const char *cmd, Dsj *args);
+int ds_res_recoverable(DsModel *m);
+/* 场景快照 / 外部文件快照 / 按快照恢复(撤销与自动保存共用) */
+char *ds_scene_snapshot(DsModel *m);
+Dsj *ds_files_snapshot(DsModel *m);
+int ds_scene_restore(DsModel *m, const char *scene_json, Dsj *files);
+const char *ds_model_scene_path(DsModel *m);
+void ds_model_mark_dirty(DsModel *m);
+int ds_model_autosave_seq(DsModel *m);
+int ds_model_dirty(DsModel *m);
 
 #endif /* DS_MODEL_H */
