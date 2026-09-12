@@ -25,6 +25,13 @@ LIB_ENTRY_SIZE = 7   # path_idx(2) + flags(1) + data_len(4);内嵌数据另加 d
 LIB_STATIC = 0x01    # 库字节内嵌在字节码中(静态链接)
 NATIVE_FIXED_SIZE = 6
 
+# 原生函数「参数个数」的编译期上限。
+# 注意与 vm/vm.c 的 MAX_NATIVE_ARGS(=8)区分:后者只是 param_types 数组的存储上限,
+# 由 VM 在**加载期**校验;而 NCALL 的实际参数编组只覆盖 arity 0..3
+# (见 vm.c 末尾的 `unsupported native arity %u (max 3)`),即 4..8 能加载却永远调不通。
+# 因此超过本上限的签名必须在编译期就拒绝,而不是拖到第一次 NCALL。
+MAX_NATIVE_ARITY = 3
+
 # 常量池标签
 TAG_INT = 0
 TAG_FLOAT = 1

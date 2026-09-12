@@ -83,6 +83,60 @@ def test_def_parser():
         check("非法签名报错", True)
 
 
+# ---------- 原生 arity 上限(编译期强制)----------
+def test_native_arity_limit():
+    """arity > MAX_NATIVE_ARITY 必须在解析期被拒绝,而不是拖到运行时第一次 NCALL。
+
+    VM 的 NCALL 参数编组只覆盖 arity 0..3(vm.c: `unsupported native arity (max 3)`),
+    而加载期只拒绝 arity > 8(param_types 数组容量)。所以 4..8 曾是「能编译能加载、
+    一调用才炸」的缝隙 —— 本测试锁住前端封堵。
+    """
+    print("[native arity limit]")
+    from dexlang import opcodes as O
+    check("上限常量为 3", O.MAX_NATIVE_ARITY == 3, O.MAX_NATIVE_ARITY)
+
+    # 1) .dexdef 声明
+    ok3 = parse_def('refer "x.dll";\n'
+                    'extern func f(a: int, b: int, c: int) -> int;\n', "<t>")
+    check("arity=3 仍被接受", ok3.natives[0].arity == 3)
+    ok0 = parse_def('refer "x.dll";\nextern func g() -> int;\n', "<t>")
+    check("arity=0 仍被接受", ok0.natives[0].arity == 0)
+    try:
+        parse_def('refer "x.dll";\n'
+                  'extern func big(a: int, b: int, c: int, d: int) -> int;\n', "<t>")
+        check("arity=4 的 .dexdef 被拒绝", False, "未报错")
+    except DexError as e:
+        check("arity=4 的 .dexdef 被拒绝", "at most 3" in str(e), str(e))
+
+    # 2) 签名串(汇编文本 .native 行也走这里)
+    try:
+        parse_sig("iiii:i")
+        check("arity=4 的签名被拒绝", False, "未报错")
+    except DexError as e:
+        check("arity=4 的签名被拒绝", "at most 3" in str(e), str(e))
+    check("arity=3 的签名仍被接受", parse_sig("iii:i") == ([1, 1, 1], 1))
+    check("arity=0 的签名仍被接受", parse_sig(":v") == ([], 0))
+
+    # 3) 端到端:真实 include 一个越界 arity 的 .dexdef → 编译期就失败
+    bad = os.path.join(LIBS, "_badarity.dexdef")
+    with open(bad, "w", encoding="utf-8") as f:
+        f.write('refer "libdexmath.dll";\n'
+                'extern func dex_big(a: int, b: int, c: int, d: int) -> int;\n')
+    try:
+        check("include 越界 arity 库在编译期报错",
+              compile_error('include "_badarity";\nprint dex_big(1, 2, 3, 4);\n', "at most 3"))
+    finally:
+        if os.path.exists(bad):
+            os.remove(bad)
+
+    # 4) 汇编文本路径
+    try:
+        parse_asm_text('.lib "x.dll"\n.native big 0 iiii:i\n.func main 0\n  HALT\n')
+        check("汇编文本 .native 越界被拒绝", False, "未报错")
+    except DexError as e:
+        check("汇编文本 .native 越界被拒绝", "at most 3" in str(e), str(e))
+
+
 # ---------- include/refer 编译 ----------
 def test_include():
     print("[include/refer compile]")
@@ -217,6 +271,7 @@ def test_chinese_output():
 def main():
     print("DEXCODE include/refer 原生库测试")
     test_def_parser()
+    test_native_arity_limit()
     test_include()
     test_errors()
     test_vm_native()

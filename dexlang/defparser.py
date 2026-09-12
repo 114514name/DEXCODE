@@ -70,6 +70,11 @@ def parse_sig(sig):
     rc = O.TYPE_TO_CODE.get(ret)
     if rc is None:
         raise DexError(f"invalid return type {ret!r} in signature {sig!r}", phase="def")
+    if len(pt) > O.MAX_NATIVE_ARITY:
+        raise DexError(
+            f"native signature {sig!r} has {len(pt)} parameter(s); "
+            f"at most {O.MAX_NATIVE_ARITY} are supported",
+            phase="def")
     return pt, rc
 
 
@@ -107,7 +112,8 @@ def parse_def(text, filename="<def>"):
         # 形如: extern func name(a: int, b: float) -> string;
         expect(TokKind.EXTERN, "'extern'")
         expect(TokKind.FUNC, "'func'")
-        name = expect(TokKind.IDENT, "function name").lexeme
+        name_tok = expect(TokKind.IDENT, "function name")
+        name = name_tok.lexeme
         expect(TokKind.LPAREN, "'('")
         param_types = []
 
@@ -128,6 +134,13 @@ def parse_def(text, filename="<def>"):
         expect(TokKind.ARROW, "'->'")
         ret_type = parse_type()
         expect(TokKind.SEMI, "';'")
+        # arity 上限:编译期拦截,否则要拖到运行时第一次 NCALL 才报错
+        # (见 opcodes.MAX_NATIVE_ARITY 与 docs/SPEC.md 4.5)
+        if len(param_types) > O.MAX_NATIVE_ARITY:
+            raise DexError(
+                f"native function '{name}' has {len(param_types)} parameter(s); "
+                f"at most {O.MAX_NATIVE_ARITY} are supported",
+                name_tok.line, name_tok.col, "def")
         return NativeDecl(name=name, param_types=param_types, ret_type=ret_type)
 
     def_file = DefFile()

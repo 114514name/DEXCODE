@@ -84,13 +84,16 @@ extern func dex_hello() -> string;
   提取 DLL 到临时文件再加载,程序自带库,无需外部 DLL 文件(见第 5 节库表)
 - 编译器据此注册原生函数(名字、arity、参数/返回类型)并可做静态检查
 - 签名串约定:`ii:i` = 参数类型串 + `:` + 返回类型(`i`=int `f`=float `s`=string `v`=void)
-- **FFI 限制**:参数类型 `int/float/string`,参数个数 ≤ 3;返回 `int/float/string/void`;
-  支持的签名组合见 `vm/vm.c` 的 `native_sig_supported`(不支持的组合在运行时明确报错)。
-  除常见组合外,还支持 `(string,string)`、`(string,int)`、`(string,int,int)` 与
-  `(int/float→string)`(标准库所需)。
-  **注意**:编译期不校验 arity ≤ 3(`defparser.py` 与 `compiler.py` 都不检查),
-  超过 3 个参数的 `.dexdef` 会通过编译与汇编,直到第一次 `NCALL` 才报
-  `unsupported native arity`。
+- **FFI 限制**:参数类型 `int/float/string`,参数个数 ≤ 3(**编译期强制**,见下);返回
+  `int/float/string/void`;支持的签名组合见 `vm/vm.c` 的 `native_sig_supported`
+  (不支持的组合在运行时明确报错)。除常见组合外,还支持 `(string,string)`、
+  `(string,int)`、`(string,int,int)` 与 `(int/float→string)`(标准库所需)。
+- **arity 上限的强制点**:`dexlang/opcodes.py` 的 `MAX_NATIVE_ARITY = 3` 是唯一上限来源。
+  `defparser.parse_def()`(`.dexdef`)与 `parse_sig()`(汇编文本的 `.native` 行)都在解析期
+  拒绝超过 3 个参数的签名,报 `at most 3 are supported`。
+  手写或篡改的 `.dexbc` 绕过前端,故 VM 仍保留两道运行期兜底:加载期拒绝
+  `arity > MAX_NATIVE_ARGS`(=8,`param_types` 数组容量),调用期拒绝 arity 4..8,
+  报 `unsupported native arity`。
 - **标准库**:`libs/std/` 提供纯 C 实现的 `libdexstd.dll`(math/string/io/time/
   random/system 共 33 个函数,见 `std.dexdef`)。使用 `refer static` 可静态内嵌进
   `.dexbc`,运行时只依赖 C 虚拟机,无需 Python 或外部 DLL
