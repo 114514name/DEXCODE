@@ -40,7 +40,7 @@ def skip(name, why):
     print(f"  SKIP  {name}  ({why})")
 
 
-EDITOR = os.path.join(ROOT, "tools", "galedit.exe")
+EDITOR = os.path.join(ROOT, "tools", "legacy_galedit_c", "galedit.exe")
 
 
 def find_window(cls, title):
@@ -183,10 +183,10 @@ def test_scene_file_roundtrip():
                            cwd=ROOT, capture_output=True, timeout=30)
         text3 = open(out_path, encoding="utf-8").read()
         check("旧格式可转换导出", r.returncode == 0 and "gal_speaker(\"旧人\")" in text3)
-        # 从 tools 目录启动(模拟用户双击 exe),CLI 导出仍成功(不依赖启动目录)
+        # 从 exe 所在目录启动(模拟用户双击 exe),CLI 导出仍成功(不依赖启动目录)
         out2 = os.path.join(ROOT, "_rt_out2.dex")
         r = subprocess.run([EDITOR, "-open", sc_path, "-write", out2],
-                           cwd=os.path.join(ROOT, "tools"), capture_output=True, timeout=30)
+                           cwd=os.path.dirname(EDITOR), capture_output=True, timeout=30)
         check("任意目录启动可导出", r.returncode == 0 and os.path.exists(out2))
     finally:
         for p in (sc_path, frag_path, out_path, bc_path,

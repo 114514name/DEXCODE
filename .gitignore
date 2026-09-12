@@ -76,6 +76,9 @@ _native_test*
 !libs/ui/libdexui.dll
 !libs/egui/libegui.dll
 !libs/gal/libdexxgal.dll
+# 旧版 C 自绘 GAL 编辑器:tests/test_editor.py 驱动它做 .galscene 往返,
+# 缺少构建脚本(仅有 tools/legacy_galedit_c/galedit.cpp),故连同 exe 一起入库。
+!tools/legacy_galedit_c/galedit.exe
 
 # 测试用 fixture 库(由 tests/fixtures/libleaky.c 构建,提交以便直接跑测试)
 !tests/fixtures/libleaky.dll
