@@ -48,6 +48,7 @@
     <div class="modes">
       <button id="mode-scene" class="tab on" title="场景编辑器 (F1)">场景</button>
       <button id="mode-graph" class="tab" title="逻辑图编辑器 (F2)">逻辑</button>
+      <button id="mode-code" class="tab" title="代码页签 (F3)">代码</button>
     </div>
     <div class="top-actions">
       <button id="btn-new" title="新建项目">新建项目</button>
@@ -61,6 +62,10 @@
       <span class="sep"></span>
       <button id="btn-undo" title="撤销 (Ctrl+Z)">撤销</button>
       <button id="btn-redo" title="重做 (Ctrl+Y)">重做</button>
+      <span class="sep"></span>
+      <button id="btn-compile" title="保存 + 生成逻辑图 + 编译 (Ctrl+B)">编译</button>
+      <button id="btn-run" title="编译并开一个独立游戏窗口 (F5)">运行</button>
+      <button id="btn-stop" title="停掉游戏窗口">停止</button>
     </div>
     <div class="status" id="status">连接中…</div>
   </header>
@@ -144,17 +149,35 @@
       <div class="graph-wrap graph-only">
         <canvas id="graph"></canvas>
       </div>
+      <div class="code-bar code-only">
+        <span class="group">
+          <select id="code-file" title="scripts/*.dex"></select>
+          <button id="btn-code-reload">重新载入</button>
+        </span>
+        <span class="sep"></span>
+        <span class="group">
+          <button id="btn-code-compile">编译</button>
+          <button id="btn-code-run">运行</button>
+          <button id="btn-code-stop">停止</button>
+        </span>
+        <span class="viewinfo" id="code-info"></span>
+      </div>
+      <div class="code-wrap code-only">
+        <pre id="code" class="code"></pre>
+      </div>
       <div class="panel out">
         <div class="tabs">
           <button class="tab on" data-tab="log">输出</button>
           <button class="tab" data-tab="self">自检</button>
           <button class="tab" data-tab="sel">选中</button>
+          <button class="tab" data-tab="build">编译</button>
           <span class="mini"><button id="btn-selfcheck" class="link">跑一遍自检</button>
           <button id="btn-clear-log" class="link">清空</button></span>
         </div>
         <div class="log" id="log"></div>
         <div class="log selfcheck" id="selfcheck" hidden></div>
         <div class="log" id="selinfo" hidden></div>
+        <div class="log build" id="buildout" hidden></div>
       </div>
     </section>
 
@@ -199,6 +222,8 @@
   <script src="app.js"></script>
   <script src="scene.js"></script>
   <script src="viewport.js"></script>
+  <script src="highlight.js"></script>
   <script src="graph.js"></script>
+  <script src="code.js"></script>
 </body>
 </html>

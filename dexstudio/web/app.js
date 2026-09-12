@@ -100,7 +100,7 @@ const DS = {
   seq: 0,
   names: {},           // id → 名字(撤销后重新选中用)
   pendingPaint: [],    // 拖动刷子时攒下的格子(松手时一条命令提交)
-  mode: 'scene',       // scene | graph(两个编辑器共用同一个窗口)
+  mode: 'scene',       // scene | graph | code(三个编辑器共用同一个窗口)
   quietLog: false,
   busy: false,         // 正在跑一批命令(拖拽中),抑制重复刷新
 };
@@ -285,10 +285,12 @@ async function nudge(dx, dy) {
  * CSS 靠 body 上的 mode-* 类决定显示哪一半(见 style.css 的 .scene-only/.graph-only)。
  * 注意:**切过去之后要 resize**,否则画布是在 display:none 状态下建出来的(B 系列陷阱)。 */
 async function setMode(mode) {
-  DS.mode = mode === 'graph' ? 'graph' : 'scene';
+  DS.mode = (mode === 'graph' || mode === 'code') ? mode : 'scene';
   document.body.classList.toggle('mode-graph', DS.mode === 'graph');
+  document.body.classList.toggle('mode-code', DS.mode === 'code');
   $('mode-scene').classList.toggle('on', DS.mode === 'scene');
   $('mode-graph').classList.toggle('on', DS.mode === 'graph');
+  $('mode-code').classList.toggle('on', DS.mode === 'code');
   if (DS.mode === 'graph') {
     showTab('log');
     if (typeof Graph !== 'undefined') {
@@ -298,6 +300,9 @@ async function setMode(mode) {
       Graph.renderInspector();
       Graph.draw();
     }
+  } else if (DS.mode === 'code') {
+    showTab('build');
+    if (typeof Code !== 'undefined') await Code.refreshFiles();
   } else if (typeof Viewport !== 'undefined') {
     Viewport.resize();
     Viewport.drawOverlay();
@@ -307,7 +312,7 @@ async function setMode(mode) {
 /* ------------------------------------------------------------ 输出面板页签 */
 
 function showTab(which) {
-  const map = { log: 'log', self: 'selfcheck', sel: 'selinfo' };
+  const map = { log: 'log', self: 'selfcheck', sel: 'selinfo', build: 'buildout' };
   Object.keys(map).forEach((k) => { $(map[k]).hidden = (k !== which); });
   document.querySelectorAll('.tabs .tab').forEach((b) => {
     b.classList.toggle('on', b.dataset.tab === which);
@@ -466,6 +471,9 @@ function wireKeys() {
     if (typing) return;
     if (ev.key === 'F1') { ev.preventDefault(); setMode('scene'); return; }
     if (ev.key === 'F2') { ev.preventDefault(); setMode('graph'); return; }
+    if (ev.key === 'F3') { ev.preventDefault(); setMode('code'); return; }
+    if (ev.key === 'F5') { ev.preventDefault(); Code.run(); return; }
+    if (ctrl && ev.key.toLowerCase() === 'b') { ev.preventDefault(); Code.compile(); return; }
     if (DS.mode === 'graph' && (ev.key === 'Delete' || ev.key === 'Backspace')) {
       ev.preventDefault();
       Graph.removeSelected();
@@ -610,6 +618,10 @@ function wire() {
   $('btn-selfcheck').onclick = selfcheck;
   $('mode-scene').onclick = () => setMode('scene');
   $('mode-graph').onclick = () => setMode('graph');
+  $('mode-code').onclick = () => setMode('code');
+  $('btn-compile').onclick = () => Code.compile();
+  $('btn-run').onclick = () => Code.run();
+  $('btn-stop').onclick = () => Code.stop();
   $('btn-graph-save').onclick = () => Graph.save();
   $('btn-graph-gen').onclick = () => Graph.generate();
   $('btn-graph-del').onclick = () => Graph.removeSelected();
@@ -832,6 +844,59 @@ window.__ds_selftest = async function () {
       Graph.stats().nodes === n0 && Graph.stats().links === l0, Graph.stats().nodes);
     await setMode('scene');
     t('切回场景模式', !document.body.classList.contains('mode-graph'));
+
+    /* --- 代码页签:自写高亮 / 文件列表 / 编译输出与错误跳转 --- */
+    t('高亮器认关键字与字符串',
+      (() => {
+        const ls = Highlight.lines('let x = 1; # 注释\nprint "s"; foo(1);');
+        return ls[0].indexOf('tok-kw') >= 0 && ls[0].indexOf('tok-cmt') >= 0
+          && ls[1].indexOf('tok-str') >= 0 && ls[1].indexOf('tok-fn') >= 0;
+      })(), Highlight.lines('let x = 1;').join('').slice(0, 120));
+    t('高亮器不把注释里的引号当字符串',
+      Highlight.lines('let a = 1; # "x"\nprint a;')[0].indexOf('tok-str') < 0);
+    t('高亮器逐行编号', Highlight.lines('a\nb\nc').length === 3);
+    await setMode('code');
+    t('切到代码模式', document.body.classList.contains('mode-code'));
+    const cwrap = document.querySelector('.code-wrap');
+    t('代码面板可见且有尺寸',
+      !!cwrap && cwrap.clientWidth > 0 && cwrap.clientHeight > 0,
+      cwrap ? cwrap.clientWidth + '×' + cwrap.clientHeight : 'none');
+    /* 编译输出:用一份**合成诊断**验渲染与点击跳转(不去改用户的项目) */
+    Code.renderBuild({
+      ok: false, code: 1, errors: 1, warnings: 1, bytecode_exists: false,
+      bytecode: 'x.dexbc',
+      diag: [
+        { level: 'error', phase: 'parser', file: 'C:\\p\\scripts\\bad.dex',
+          line: 3, col: 1, msg: "expected '}' before end of file" },
+        { level: 'warning', phase: 'compiler', file: 'C:\\p\\scripts\\bad.dex',
+          line: 5, col: 5, msg: 'unreachable statement' },
+      ],
+      out: '汇编(IR): …',
+    });
+    t('编译输出列出诊断(可点)', document.querySelectorAll('#buildout .jump').length === 2,
+      document.querySelectorAll('#buildout .jump').length);
+    t('错误/警告分色',
+      document.querySelectorAll('#buildout .diag.err').length === 2
+      && document.querySelectorAll('#buildout .diag.warn').length === 1);
+    t('诊断里带上行列号',
+      (document.querySelector('#buildout .jump') || {}).textContent.indexOf('3:1') >= 0,
+      (document.querySelector('#buildout .jump') || {}).textContent);
+    document.querySelector('#buildout .jump').click();
+    await new Promise((r) => setTimeout(r, 60));
+    t('点诊断会切到代码模式', document.body.classList.contains('mode-code'));
+    if (DS.info && DS.info.root) {
+      const r = await Code.compile();
+      t('界面里能一键编译', !!r && r.ok === true, r && r.out);
+      t('编译成功时输出里有字节码行', !!r && r.out.indexOf('字节码') >= 0, r && r.out);
+      t('代码页签列出了脚本', Code.files.length >= 1, Code.files);
+      t('代码页签渲染了高亮的源码',
+        document.querySelectorAll('#code .ln').length > 0
+        && !!document.querySelector('#code .tok-kw'), Code.current);
+    } else {
+      out.skip.push('没有打开项目:跳过界面里的 build.compile 检查');
+    }
+    await setMode('scene');
+    t('收尾回到场景模式', !document.body.classList.contains('mode-code'));
   } catch (e) {
     out.fail.push('自检中断:' + (e && e.message));
   }

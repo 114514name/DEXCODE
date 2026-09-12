@@ -15,8 +15,10 @@
 """
 
 import ctypes
+import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -829,6 +831,130 @@ def test_graph_behavior(dll):
             m.close()
 
 
+def test_build_and_run(dll):
+    """B5 的模型层:一键编译(诊断带行列)、独立运行 + 停止、读源码。"""
+    print("[编译 / 运行 / 输出与错误定位]")
+    vm = os.path.join(ROOT, "vm", "vm.exe" if os.name == "nt" else "vm")
+    if not os.path.exists(DEXC):
+        skip("B5 编译/运行", "dexc.exe 未构建")
+        return
+    with tempdir("ds_build_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "b"})
+            scripts = m.ok("project.scripts")
+            check("project.scripts 列出 main.dex 与 logic.dex",
+                  "main.dex" in scripts and "logic.dex" in scripts, scripts)
+            src = m.ok("file.read", {"path": "scripts/main.dex"})["text"]
+            check("file.read 读到源码", "include \"dexgame\"" in src, src[:80])
+            e = m.err("file.read", {"path": "scripts/nope.dex"})
+            check("读不到的文件带原因", "读不到" in e, e)
+
+            r = m.ok("build.compile")
+            check("一键编译新项目成功", r["ok"] and r["code"] == 0, r["out"][:200])
+            check("编译产物存在", r["bytecode_exists"], r["bytecode"])
+            check("编译输出里有字节码行", "字节码" in r["out"], r["out"][:120])
+            check("编译顺手生成了逻辑图", r["graph_generated"] is True, r)
+
+            # 语法错:诊断必须带 phase/行/列/消息
+            bad = os.path.join(tmp, "scripts", "bad.dex")
+            with open(bad, "w", encoding="utf-8", newline="\n") as f:
+                f.write("func f() {\n    print 1;\n")
+            r = m.ok("build.compile", {"path": "scripts/bad.dex"})
+            check("坏源码编译失败", not r["ok"] and r["code"] != 0, r)
+            check("失败时没有留下字节码", not r["bytecode_exists"], r["bytecode"])
+            check("诊断有 1 条 error", r["errors"] == 1 and len(r["diag"]) == 1, r["diag"])
+            d0 = r["diag"][0]
+            check("诊断带阶段/行/列",
+                  d0["level"] == "error" and d0["phase"] == "parser"
+                  and d0["line"] == 3 and d0["col"] == 1, d0)
+            check("诊断带可读消息", "expected" in d0["msg"], d0)
+            check("诊断指向出错的脚本", d0["file"].endswith("bad.dex"), d0)
+
+            # 警告:编译成功但带 warning
+            warn = os.path.join(tmp, "scripts", "warn.dex")
+            with open(warn, "w", encoding="utf-8", newline="\n") as f:
+                f.write("func f() {\n    return 1;\n    print 2;\n}\nprint f();\n")
+            r = m.ok("build.compile", {"path": "scripts/warn.dex"})
+            check("有警告仍然编译成功", r["ok"] and r["warnings"] == 1, r)
+            check("警告的行列与消息对",
+                  r["diag"][0]["level"] == "warning" and r["diag"][0]["line"] == 3
+                  and "unreachable" in r["diag"][0]["msg"], r["diag"])
+
+            # 同步运行(把输出收回来)
+            hello = os.path.join(tmp, "scripts", "hello.dex")
+            with open(hello, "w", encoding="utf-8", newline="\n") as f:
+                f.write('print "hello dexc";\n')
+            m.ok("build.compile", {"path": "scripts/hello.dex"})
+            if not os.path.exists(vm):
+                skip("同步运行", "vm.exe 未构建")
+            else:
+                r = m.ok("build.run", {"path": "scripts/hello.dexbc", "wait": 1})
+                check("同步运行拿到输出与退出码",
+                      r["code"] == 0 and "hello dexc" in r["out"], r)
+                check("运行用的不是无控制台版本", r["exe"].endswith("vm.exe"), r["exe"])
+
+                # 独立窗口运行 + 停止(用一个死循环脚本,免得真开窗口)
+                loop = os.path.join(tmp, "scripts", "loop.dex")
+                with open(loop, "w", encoding="utf-8", newline="\n") as f:
+                    f.write("let i = 0;\nwhile 1 { i = i + 1; }\n")
+                m.ok("build.compile", {"path": "scripts/loop.dex"})
+                r = m.ok("build.run", {"path": "scripts/loop.dexbc", "detach": 1})
+                check("独立运行返回 pid", r["running"] and r["pid"] > 0, r)
+                check("独立运行用无控制台 VM(只有一个游戏窗口)",
+                      "vmnc.exe" in r["exe"], r["exe"])
+                st = m.ok("build.status")
+                check("status 报告在运行", st["running"] and st["pid"] == r["pid"], st)
+                check("stop 停掉进程", m.ok("build.stop")["stopped"] is True)
+                st = m.ok("build.status")
+                check("stop 之后不再运行", st["running"] is False, st)
+
+                m.ok("build.compile", {"path": "scripts/hello.dex"})
+                r = m.ok("build.run", {"path": "scripts/hello.dexbc", "detach": 1})
+                check("可以再起一个", r["running"] and r["pid"] > 0, r)
+                m.ok("build.stop")
+
+            e = m.err("build.run", {"path": "scripts/nope.dexbc"})
+            check("运行不存在的字节码带原因", "找不到字节码" in e, e)
+            e = m.err("build.compile", {"path": "scripts/nope.dex"})
+            check("编译不存在的脚本带原因", "找不到脚本" in e, e)
+        finally:
+            m.close()
+
+
+def test_web_assets():
+    """前端资源的静态检查:每个 .js 都要能被 JS 引擎解析。
+
+    为什么值得单独测:注释里出现 `*/` 会把块注释提前关掉(仓库里在 C 上也踩过同款),
+    症状是"页面白屏 + 一条看不懂的 SyntaxError"。有 node 就逐个 `--check`,
+    没有 node 就退化成"括号/引号粗查 + 文件非空"。"""
+    print("[前端资源(--check / 基本健全性)]")
+    node = shutil.which("node")
+    files = sorted(glob.glob(os.path.join(ROOT, "dexstudio", "web", "*.js")))
+    check("前端有 JS 文件", len(files) >= 5, [os.path.basename(f) for f in files])
+    if node:
+        for f in files:
+            r = subprocess.run([node, "--check", f], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+            check(f"node --check {os.path.basename(f)}", r.returncode == 0,
+                  (r.stdout or "") + (r.stderr or ""))
+    else:
+        skip("node --check 前端 JS", "没有 node")
+    for f in files:
+        with open(f, encoding="utf-8") as fp:
+            src = fp.read()
+        check(f"{os.path.basename(f)} 非空且有导出", len(src) > 500,
+              len(src))
+    # index.html 的 script 标签都能在 web/ 下找到对应文件
+    with open(os.path.join(ROOT, "dexstudio", "web", "index.html"), encoding="utf-8") as fp:
+        html = fp.read()
+    for name in ("app.js", "scene.js", "viewport.js", "graph.js", "highlight.js",
+                 "code.js"):
+        check(f"index.html 引用了 {name}", f'src="{name}"' in html)
+        check(f"{name} 存在", os.path.exists(os.path.join(ROOT, "dexstudio", "web",
+                                                         name)))
+
+
 def test_cli():
     print("[宿主 CLI(不开窗口)]")
     if not os.path.exists(EXE):
@@ -895,6 +1021,8 @@ def main():
     test_graph_model(dll)
     test_graph_codegen(dll)
     test_graph_behavior(dll)
+    test_build_and_run(dll)
+    test_web_assets()
     test_cli()
     test_webview_chain()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败" + (f", {SKIP} 跳过" if SKIP else ""))

@@ -327,7 +327,7 @@ def cmd_build_dexc(args):
     return 0
 
 
-DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c", "ds_graph.c"]
+DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c", "ds_graph.c", "ds_run.c"]
 DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_webview.c", "ds_main.c"]
 
 

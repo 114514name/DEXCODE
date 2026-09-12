@@ -44,7 +44,6 @@ const char *ds_preview_dir(DsModel *m);
 
 /* 当前项目的根目录(没有项目时为空串) */
 const char *ds_project_dir(DsModel *m);
-
 /* ---------------------------------------------------------------- 供 ds_graph.c 用
  * 逻辑图放在单独一个编译单元(ds_graph.c)里,所以这里给它最小的访问面:
  * 图的 DOM、项目根目录、带原因的失败、以及"一次编辑"的撤销包装。 */
@@ -59,6 +58,29 @@ int ds_mkdir(const char *path);
 int ds_write_text(const char *path, const char *text);
 char *ds_read_text(const char *path, size_t *out_len);
 
+/* ---------------------------------------------------------------- 给 ds_run.c 用
+ * 编译/运行要拼路径、读源码、写错误信息、以及保存"正在运行的游戏进程"。 */
+char *ds_strdup(const char *s);
+char *ds_path_join(const char *a, const char *b);
+char *ds_path_replace_ext(const char *path, const char *newext);
+char *ds_file_read_text(const char *path, size_t *out_len);
+char *ds_model_errbuf(DsModel *m);          /* 错误信息缓冲区(至少 512 字节) */
+size_t ds_model_errbuf_size(void);
+const char *ds_model_exe_dir(DsModel *m);
+void **ds_model_proc_slot(DsModel *m);      /* HANDLE * 的地址(没有进程时为 NULL) */
+unsigned long *ds_model_pid_slot(DsModel *m);
+
 const char *ds_version(void);
+
+/* 逻辑图(实现在 ds_graph.c) */
+void ds_graph_reload(DsModel *m);
+const char *ds_graph_json(DsModel *m);
+int ds_graph_save(DsModel *m);
+char *ds_graph_generate(DsModel *m, char *err, unsigned errsz);
+Dsj *ds_graph_command(DsModel *m, const char *cmd, Dsj *args);
+int ds_graph_generate_to_file(DsModel *m, char *out_path, unsigned pathsz,
+                              char *err, unsigned errsz);
+/* 编译/运行(实现在 ds_run.c) */
+Dsj *ds_run_command(DsModel *m, const char *cmd, Dsj *args);
 
 #endif /* DS_MODEL_H */

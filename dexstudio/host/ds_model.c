@@ -15,6 +15,7 @@
 #include "ds_engine.h"
 #include "ds_json.h"
 #include "ds_graph.h"
+#include "ds_run.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -65,6 +66,8 @@ struct DsModel {
     int render_seq;        /* 每次渲染 +1,前端用它做 ?t= 破缓存 */
     Dsj *clipboard;        /* 实体剪贴板(entity.copy/paste),数组 */
     Dsj *graph;            /* 逻辑图的 DOM(scripts/logic.json,B4) */
+    void *proc;            /* 正在独立窗口运行的游戏进程(B5) */
+    unsigned long proc_pid;
     char *resp;
     size_t resp_cap;
     int has_id;            /* 请求里带了 id → 响应原样带回(前端靠它配对 Promise) */
@@ -186,6 +189,35 @@ static int write_text(const char *path, const char *text)
 int ds_mkdir(const char *path) { return ensure_dir(path); }
 int ds_write_text(const char *path, const char *text) { return write_text(path, text); }
 char *ds_read_text(const char *path, size_t *out_len) { return read_text(path, out_len); }
+char *ds_strdup(const char *s) { return xs(s ? s : ""); }
+char *ds_path_join(const char *a, const char *b) { return pjoin(a ? a : ".", b ? b : ""); }
+char *ds_file_read_text(const char *path, size_t *out_len) { return read_text(path, out_len); }
+
+/* "x.dex" + ".dexbc" → "x.dexbc"(把最后一个扩展名换掉) */
+char *ds_path_replace_ext(const char *path, const char *newext)
+{
+    const char *dot, *slash, *slash2;
+    size_t n;
+    char *out;
+    if (!path) return NULL;
+    slash = strrchr(path, '\\');
+    slash2 = strrchr(path, '/');
+    if (slash2 && (!slash || slash2 > slash)) slash = slash2;
+    dot = strrchr(path, '.');
+    if (dot && slash && dot < slash) dot = NULL;   /* 点在目录里,不算扩展名 */
+    n = dot ? (size_t)(dot - path) : strlen(path);
+    out = xm(n + strlen(newext ? newext : "") + 1);
+    memcpy(out, path, n);
+    out[n] = 0;
+    strcat(out, newext ? newext : "");
+    return out;
+}
+
+char *ds_model_errbuf(DsModel *m) { return m->err; }
+size_t ds_model_errbuf_size(void) { return sizeof(((DsModel *)0)->err); }
+const char *ds_model_exe_dir(DsModel *m) { return m->exe_dir; }
+void **ds_model_proc_slot(DsModel *m) { return &m->proc; }
+unsigned long *ds_model_pid_slot(DsModel *m) { return &m->proc_pid; }
 
 /* 文件存在(不是目录)*/
 static int file_exists(const char *path) { return path_exists(path); }
@@ -2263,6 +2295,7 @@ const char *ds_command(DsModel *m, const char *request)
     else if (!strcmp(cmd, "undo")) ret = c_undo(m, args);
     else if (!strcmp(cmd, "redo")) ret = c_redo(m, args);
     else if (!strncmp(cmd, "graph.", 6)) ret = ds_graph_command(m, cmd, args);
+    else if (!strncmp(cmd, "build.", 6) || !strcmp(cmd, "project.scripts") || !strcmp(cmd, "file.read")) ret = ds_run_command(m, cmd, args);
     else {
         char msg[256];
         snprintf(msg, sizeof msg, "未知命令 '%s'", cmd);
@@ -2317,6 +2350,7 @@ void ds_model_destroy(DsModel *m)
     if (m->project) dsj_free(m->project);
     if (m->clipboard) dsj_free(m->clipboard);
     if (m->graph) dsj_free(m->graph);
+    ds_run_kill(m);
     if (m->eng.ok) ds_engine_unload(&m->eng);
     free(m->resp);
     free(m);

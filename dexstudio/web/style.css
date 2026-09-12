@@ -202,3 +202,49 @@ ul.layers li .meta { font-size: 11px; }
 .palette-wrap .cell { position: absolute; border: 1px solid rgba(255,255,255,.14); }
 .palette-wrap .cell:hover { border-color: var(--accent); background: rgba(137,180,250,.18); }
 .palette-wrap .cell.on { border-color: var(--accent2); background: rgba(249,226,175,.25); }
+
+/* ---------- 代码页签(B5) ---------- */
+.code-only { display: none; }
+body.mode-code .scene-only,
+body.mode-code .graph-only { display: none; }
+body.mode-code .code-only { display: flex; }
+.code-bar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  flex: none; flex-wrap: wrap;
+}
+.code-bar .sep { width: 1px; height: 18px; background: var(--border); }
+.code-bar .group { display: flex; align-items: center; gap: 4px; }
+.code-bar .viewinfo { margin-left: auto; color: var(--fg-dim); font-size: 11px; }
+.code-wrap { flex: 1; min-height: 0; overflow: auto; background: #16161f; }
+pre.code {
+  margin: 0; padding: 6px 0;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px;
+  line-height: 1.5; white-space: pre; tab-size: 4;
+}
+pre.code .cl { display: block; padding: 0 12px 0 0; }
+pre.code .cl:hover { background: rgba(137,180,250,.07); }
+pre.code .ln {
+  display: inline-block; width: 3.2em; text-align: right; padding-right: 10px;
+  color: #585b70; user-select: none;
+}
+pre.code .cl.cline { background: rgba(243,139,168,.16); }
+pre.code .cl.cline-warn { background: rgba(249,226,175,.14); }
+pre.code .cl.flash { animation: codeflash .6s ease-in-out 2; }
+@keyframes codeflash { 50% { background: rgba(137,180,250,.35); } }
+.tok-cmt { color: #6c7086; font-style: italic; }
+.tok-str { color: #a6e3a1; }
+.tok-num { color: #fab387; }
+.tok-kw  { color: #cba6f7; }
+.tok-ty  { color: #f9e2af; }
+.tok-fn  { color: #89b4fa; }
+.tok-op  { color: #94e2d5; }
+.tok-id  { color: var(--fg); }
+.log.build { font-family: Consolas, monospace; }
+.log.build .diag { padding: 2px 0; }
+.log.build .diag.ok { color: var(--ok); }
+.log.build .diag.err { color: var(--err); }
+.log.build .diag.warn { color: var(--warn); }
+.log.build .diag.jump { cursor: pointer; text-decoration: underline dotted; }
+.log.build .diag.jump:hover { color: var(--accent); }
+.log.build .raw { color: var(--fg-dim); white-space: pre-wrap; margin-top: 4px; }
