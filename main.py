@@ -328,7 +328,66 @@ def cmd_build_dexc(args):
 
 
 DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c", "ds_graph.c", "ds_run.c", "ds_res.c"]
-DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_webview.c", "ds_main.c"]
+DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_embed.c", "ds_webview.c",
+                                               "ds_main.c"]
+
+
+DEXSTUDIO_PACKAGE_FILES = ["dexstudio.exe", "WebView2Loader.dll"]
+DEXSTUDIO_PACKAGE_README = """DexStudio —— DexLang 的可视化 IDE
+=====================================
+
+双击 dexstudio.exe 就能用。这个目录里只需要:
+
+  dexstudio.exe         IDE 本体(**前端 HTML/CSS/JS 已经内嵌进 exe**)
+  WebView2Loader.dll    WebView2 加载器(微软的,必须单独放)
+  libdexgame.dll        游戏引擎:视口预览与「运行」都要它
+
+需要系统装有 WebView2 Runtime(Win10/11 自带;没有的话装一次
+https://developer.microsoft.com/microsoft-edge/webview2/ )。
+
+第一次打开时 IDE 会把内嵌的前端资源解包到 %LOCALAPPDATA%\\DexStudio\\web-<哈希>;
+换了新版本会自动换目录,不会读旧文件。
+
+用法:
+  dexstudio.exe                        开 IDE
+  dexstudio.exe --project <目录>       直接打开一个项目
+  dexstudio.exe --command '{"cmd":"app.info"}'   无窗口跑一条模型命令
+  dexstudio.exe --selftest             无窗口自测(14 项)
+  dexstudio.exe --wv-selftest          离屏验证整条链 + 页面自测(58 项)
+  dexstudio.exe --web <目录>           用磁盘上的前端资源(开发用)
+
+发布说明见仓库 docs/DEXGAME_DESIGN.md §9.7。
+"""
+
+
+def cmd_package_dexstudio(args):
+    """把 DexStudio 打成一个**可以直接发出去的目录**(B7)。
+
+    前端资源已经内嵌进 exe,所以这里只要拷三个文件 —— 干净目录里双击就能用。
+    """
+    out = args.out or os.path.join(ROOT, "dist", "DexStudio")
+    host = os.path.join(ROOT, "dexstudio", "host")
+    need = [os.path.join(host, f) for f in DEXSTUDIO_PACKAGE_FILES]
+    need.append(os.path.join(ROOT, "libs", "dexgame", "libdexgame.dll"))
+    for p in need:
+        if not os.path.exists(p):
+            print(f"缺少文件: {p}(先跑 python main.py build-dexstudio / build_libs.bat)",
+                  file=sys.stderr)
+            return 1
+    os.makedirs(out, exist_ok=True)
+    for p in need:
+        shutil.copy2(p, os.path.join(out, os.path.basename(p)))
+    with open(os.path.join(out, "README.txt"), "w", encoding="utf-8",
+              newline="\r\n") as f:
+        f.write(DEXSTUDIO_PACKAGE_README)
+    # 校验:里面**不能**有 web/ 目录(否则就不是"单 exe"形态了)
+    if os.path.isdir(os.path.join(out, "web")):
+        print("警告:输出目录里有 web/,请删掉再试", file=sys.stderr)
+        return 1
+    print(f"已打包到 {out}")
+    for f in sorted(os.listdir(out)):
+        print("  " + f)
+    return 0
 
 
 def cmd_build_dexstudio(args):
@@ -344,6 +403,11 @@ def cmd_build_dexstudio(args):
     wv = os.path.join(h, "third_party", "webview2")
     wv_inc = os.path.join(wv, "include")
     wv_dll = os.path.join(wv, "x64", "WebView2Loader.dll")
+    # 前端资源内嵌进 exe(B7):先生成 ds_embed.c,发布形态就不需要 web/ 目录
+    rc = subprocess.call([sys.executable, os.path.join(ROOT, "tools", "embed_web.py")])
+    if rc != 0:
+        print("生成内嵌前端资源失败", file=sys.stderr)
+        return 1
     for p in [os.path.join(h, s) for s in DEXSTUDIO_HOST_SOURCES] + [wv_inc, wv_dll]:
         if not os.path.exists(p):
             print(f"缺少文件: {p}", file=sys.stderr)
@@ -479,7 +543,11 @@ def main(argv=None):
     p = sub.add_parser("build-dexc", help="编译纯 C 工具链 tools/dexc/dexc.exe")
     p.set_defaults(func=cmd_build_dexc)
 
-    p = sub.add_parser("build-dexstudio", help="编译 DexStudio(可视化 IDE)")
+    p = sub.add_parser("package-dexstudio", help="打包 DexStudio(可直接发布的目录)")
+    p.add_argument("--out", default="", help="输出目录(默认 dist/DexStudio)")
+    p.set_defaults(func=cmd_package_dexstudio)
+
+    p = sub.add_parser("build-dexstudio", help="构建 DexStudio(IDE)")
     p.set_defaults(func=cmd_build_dexstudio)
 
     p = sub.add_parser("roundtrip", help="字节码 → 汇编 → 字节码 往返校验")

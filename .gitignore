@@ -100,3 +100,6 @@ _native_test*
 !tests/fixtures/libabiarr.dll
 /tests/fixtures/*.pdb
 /tests/fixtures/*.lib
+
+# DexStudio 打包输出(python main.py package-dexstudio)
+dist/

@@ -93,5 +93,9 @@ const char *ds_model_scene_path(DsModel *m);
 void ds_model_mark_dirty(DsModel *m);
 int ds_model_autosave_seq(DsModel *m);
 int ds_model_dirty(DsModel *m);
+/* 可写的缓存目录(优先 %LOCALAPPDATA%,回退 %TEMP%,最后 exe 同目录)。
+ * 没有项目时的预览图、CLI 自测的临时项目都放这儿 —— 发布形态下 exe 旁边
+ * 可能根本没有可写的同级目录,不能拿 exe_dir/../.. 当默认。 */
+const char *ds_temp_dir(void);
 
 #endif /* DS_MODEL_H */

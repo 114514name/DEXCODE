@@ -13,6 +13,7 @@
  * ==========================================================================*/
 #define _CRT_SECURE_NO_WARNINGS
 #include "ds_model.h"
+#include "ds_embed.h"
 #include "ds_webview.h"
 
 #include <stdio.h>
@@ -38,6 +39,56 @@ static void find_exe_dir(void)
 }
 
 /* 前端目录:--web 指定 → exe 同级 web\ → 开发布局 ../../dexstudio/web */
+/* 逐级建目录(a\b\c 这种) */
+static void make_dirs(const char *path)
+{
+    char tmp[MAX_PATH * 3];
+    size_t i;
+    snprintf(tmp, sizeof tmp, "%s", path);
+    for (i = 1; tmp[i]; i++) {
+        if (tmp[i] == '\\' || tmp[i] == '/') {
+            char c = tmp[i];
+            tmp[i] = 0;
+            CreateDirectoryA(tmp, NULL);
+            tmp[i] = c;
+        }
+    }
+    CreateDirectoryA(tmp, NULL);
+}
+
+/* 把内嵌的前端资源解包到一个缓存目录并返回它。
+ * 缓存位置优先 LOCALAPPDATA(受限环境回退 TEMP,最后回退 exe 同目录)。 */
+static int extract_embedded_web(char *out, size_t outsz)
+{
+    char dir[MAX_PATH * 3];
+    const char *base = getenv("LOCALAPPDATA");
+    int i, n = ds_embed_count(), need = 0;
+    if (!base || !*base) base = getenv("TEMP");
+    if (!base || !*base) base = (const char *)g_exe_dir;
+    snprintf(dir, sizeof dir, "%s\\DexStudio\\web-%s", base, ds_embed_hash());
+    /* 齐全就不用重写(每个文件都在) */
+    for (i = 0; i < n; i++) {
+        char p[MAX_PATH * 3];
+        snprintf(p, sizeof p, "%s\\%s", dir, ds_embed_at(i)->name);
+        if (GetFileAttributesA(p) == INVALID_FILE_ATTRIBUTES) { need = 1; break; }
+    }
+    if (need) {
+        make_dirs(dir);
+        for (i = 0; i < n; i++) {
+            const DsAsset *a = ds_embed_at(i);
+            char p[MAX_PATH * 3];
+            FILE *f;
+            snprintf(p, sizeof p, "%s\\%s", dir, a->name);
+            f = fopen(p, "wb");
+            if (!f) return 0;
+            fwrite(a->data, 1, a->size, f);
+            fclose(f);
+        }
+    }
+    snprintf(out, outsz, "%s", dir);
+    return 1;
+}
+
 static int find_web_dir(const char *override, char *out, size_t outsz)
 {
     char cand[MAX_PATH * 3];
@@ -55,7 +106,9 @@ static int find_web_dir(const char *override, char *out, size_t outsz)
         snprintf(out, outsz, "%s", cand);
         return 1;
     }
-    return 0;
+    /* 发布形态:exe 旁边没有 web/ —— 用**内嵌**的那份,解包到缓存目录再用。
+     * 缓存目录带内容哈希,所以换了前端资源会自动换目录(不会读到旧文件)。 */
+    return extract_embedded_web(out, outsz);
 }
 
 /* 把字符串安全地塞进 JSON(路径里有反斜杠时,不转义就会得到
@@ -121,7 +174,9 @@ static int cmd_selftest(void)
     const char *r;
 
     printf("DexStudio 自测(无窗口)\n");
-    snprintf(tmp, sizeof tmp, "%s\\..\\..\\_zigtmp\\ds_selftest", g_exe_dir);
+    /* 临时项目放缓存目录:%LOCALAPPDATA%\\DexStudio\\selftest(B7 的发布形态
+     * 下 exe 旁边没有可写的 ..\\..\\_zigtmp)。 */
+    snprintf(tmp, sizeof tmp, "%s\\selftest", ds_temp_dir());
     RemoveDirectoryA(tmp);
 
     printf("[引擎与模型]\n");
@@ -130,7 +185,7 @@ static int cmd_selftest(void)
     check("app.info 返回 ok", r && strstr(r, "\"ok\":true"), r);
 
     printf("[新建项目]\n");
-    snprintf(tmp, sizeof tmp, "%s\\..\\..\\_zigtmp\\ds_selftest", g_exe_dir);
+    snprintf(tmp, sizeof tmp, "%s\\selftest", ds_temp_dir());
     json_escape(tmp, esc, sizeof esc);
     snprintf(req, sizeof req,
              "{\"cmd\":\"project.new\",\"args\":{\"dir\":\"%s\",\"name\":\"selftest\"}}",

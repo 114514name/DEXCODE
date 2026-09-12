@@ -1017,6 +1017,45 @@ def test_resources_and_autosave(dll):
             m.close()
 
 
+def test_packaged_exe():
+    """B7:发布形态 —— **exe 旁边没有 web/ 目录**也要能用。
+
+    做法与真实发布一致:把 exe + WebView2Loader.dll + libdexgame.dll 拷到一个干净目录,
+    然后在那里跑 `--wv-selftest`(它会等前端 ui.ready 并跑页面自测)。
+    前端资源此时只能来自 exe 里内嵌的那份,所以这一项过了就说明"单 exe 可用"。"""
+    print("[发布形态(内嵌前端资源,旁边没有 web/)]")
+    if not os.path.exists(EXE):
+        skip("发布形态", "dexstudio.exe 未构建")
+        return
+    loader = os.path.join(HOST, "WebView2Loader.dll")
+    engine = os.path.join(LIBS, "dexgame", "libdexgame.dll")
+    if not (os.path.exists(loader) and os.path.exists(engine)):
+        skip("发布形态", "WebView2Loader.dll / libdexgame.dll 未构建")
+        return
+    with tempdir("ds_pkg_") as tmp:
+        out = os.path.join(tmp, "DexStudio")
+        os.makedirs(out, exist_ok=True)
+        for p in (EXE, loader, engine):
+            shutil.copy2(p, os.path.join(out, os.path.basename(p)))
+        check("干净目录里只有三个文件",
+              sorted(os.listdir(out)) == ["WebView2Loader.dll", "dexstudio.exe",
+                                          "libdexgame.dll"], os.listdir(out))
+        check("干净目录里没有 web/", not os.path.isdir(os.path.join(out, "web")))
+        r = subprocess.run([os.path.join(out, "dexstudio.exe"), "--selftest"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", cwd=out, timeout=120)
+        check("发布目录里 --selftest 全过", r.returncode == 0
+              and "0 失败" in (r.stdout or ""), (r.stdout or "")[-300:])
+        r = subprocess.run([os.path.join(out, "dexstudio.exe"), "--wv-selftest"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", cwd=out, timeout=180)
+        out_txt = r.stdout or ""
+        check("发布目录里能起窗口 + 加载内嵌前端", r.returncode == 0, out_txt[-400:])
+        check("发布目录里页面自测也全过", "0 项失败" in out_txt, out_txt[-400:])
+        if r.returncode != 0:
+            skip("发布形态的页面自测项数", (r.stderr or "")[-120:])
+
+
 def test_web_assets():
     """前端资源的静态检查:每个 .js 都要能被 JS 引擎解析。
 
@@ -1119,6 +1158,7 @@ def main():
     test_build_and_run(dll)
     test_resources_and_autosave(dll)
     test_web_assets()
+    test_packaged_exe()
     test_cli()
     test_webview_chain()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败" + (f", {SKIP} 跳过" if SKIP else ""))

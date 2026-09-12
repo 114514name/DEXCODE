@@ -1531,16 +1531,30 @@ const char *ds_preview_dir(DsModel *m)
 {
     static char dir[1400];
     if (m->root[0]) snprintf(dir, sizeof dir, "%s\\.dexstudio", m->root);
-    else if (m->exe_dir[0])
-        snprintf(dir, sizeof dir, "%s\\..\\..\\_zigtmp\\ds_preview", m->exe_dir);
-    else
-        snprintf(dir, sizeof dir, ".dexstudio");
+    else snprintf(dir, sizeof dir, "%s\\preview", ds_temp_dir());
     ensure_dir(dir);
     return dir;
 }
 
 const char *ds_project_dir(DsModel *m) { return m->root; }
 const char *ds_model_scene_path(DsModel *m) { return m->scene; }
+
+/* 可写的缓存目录(见 ds_model.h)。进程内缓存一次。 */
+const char *ds_temp_dir(void)
+{
+    static char dir[1400];
+    static int done = 0;
+    if (!done) {
+        const char *base = getenv("LOCALAPPDATA");
+        if (!base || !*base) base = getenv("TEMP");
+        if (!base || !*base) base = getenv("TMP");
+        if (!base || !*base) base = ".";
+        snprintf(dir, sizeof dir, "%s\\DexStudio", base);
+        ensure_dir(dir);
+        done = 1;
+    }
+    return dir;
+}
 void ds_model_mark_dirty(DsModel *m) { m->dirty = 1; }
 int ds_model_autosave_seq(DsModel *m) { return ++m->autosave_seq; }
 int ds_model_dirty(DsModel *m) { return m->dirty; }
