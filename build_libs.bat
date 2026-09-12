@@ -70,11 +70,18 @@ echo [6/7] libs\gal\libdexxgal.dll
 "%ZIG%" cc %COMMON% -lgdi32 -luser32 -lwinmm -lmsimg32 -o libs\gal\libdexxgal.dll libs\gal\libdexxgal.c || exit /b 1
 
 REM dexgame = modular 2D game engine (M1: D3D11 renderer).
-REM NOTE: no d3dcompiler import library is needed -- shaders are compiled at
-REM runtime by loading d3dcompiler_47.dll (a Windows system DLL) via LoadLibrary.
-REM (zig ships d3d11/dxgi/dwrite import libs but NOT d3dcompiler; see dg_draw.c)
+REM NOTE 1: no d3dcompiler import library is needed -- shaders are compiled at
+REM   runtime by loading d3dcompiler_47.dll (a Windows system DLL) via LoadLibrary.
+REM   (zig ships d3d11/dxgi/dwrite import libs but NOT d3dcompiler; see dg_draw.c)
+REM NOTE 2: -Wl,--out-implib is required here. lld emits an import library for a
+REM   -shared link and names it after the FIRST input file, so a multi-file build
+REM   would drop "dg_gfx.lib" into the CURRENT DIRECTORY. The 6 single-file libs
+REM   get "lib<name>.lib" next to their DLL instead (and those .lib files are
+REM   committed); dexgame does not need an import library at all, so send it to
+REM   the gitignored _zigtmp\ instead of polluting the tree.
 echo [7/7] libs\dexgame\libdexgame.dll
 "%ZIG%" cc %COMMON% -I libs\dexgame -ld3d11 -ldxgi -luser32 -lgdi32 -lole32 -luuid -lwinmm ^
+  -Wl,--out-implib=_zigtmp\dexgame.lib ^
   -o libs\dexgame\libdexgame.dll ^
   libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_api.c || exit /b 1
 

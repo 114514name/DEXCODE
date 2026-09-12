@@ -98,6 +98,13 @@ python main.py build-vm     # 构建 vm.exe / vmnc.exe / galrun.exe
 build_libs.bat              # 构建 7 个原生库 DLL(需要 ziglang)
 ```
 
+**可复现性:VM 的二进制度可复现,库的 DLL 不可复现。** 实测:
+- `main.py build-vm` 重编出的三个 exe 与仓库里已提交的**逐字节一致** ——
+  所以 VM 的二进制 diff 只在 `vm.c` 真改动时才出现。
+- `build_libs.bat` 重编出的 DLL **每次都不同**(PE `TimeDateStamp` 每次变,
+  加 `SOURCE_DATE_EPOCH` 也无效),所以重建库文件必然产生二进制 diff;
+  这与改动是否相关无关,不要去追。
+
 ### 当前内存行为(不读 MEMORY_DESIGN 容易误判)
 
 - **不回收**运行期产生的字符串(拼接结果、原生字符串返回)→ 长驻程序内存只增不减。
@@ -197,6 +204,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **库往 stdout 打印**(M1) | 引擎初始化时 `printf` 一行 GPU 信息,结果把游戏的输出污染了 —— `test_dexgame.py` 的按行断言全部错位(5 项失败),而 DLL 本身完全正常 | **库不写 stdout**。改成按需查询(`eng_gpu_name()`/`eng_vram_mb()`)。写任何库时都该这样:输出是调用方的地盘 |
 | **图集边缘渗漏**(M1) | 单纹素源用 `u0..u1` 覆盖整个纹素时,线性过滤会掺进邻居(实测纯绿变成 `0xff04ff04`) | 半纹素内缩:单纹素源直接用**纹素中心**(退化区间 `u0==u1`),即 `u=(x+0.5)/W`。`test_dexgame.py::test_atlas_png` 锁住这个约定 —— 将来做图集助手时要在库里自动完成内缩 |
 | 引擎宿主进程的 DPI 只能设一次 | `SetProcessDpiAwarenessContext` 必须在**创建任何窗口之前**调用,且清单设过就再设会失败 | `dg_gfx_init_window` 里尽早调用并**忽略失败**(E_ACCESSDENIED 不算错);客户区尺寸要用 `AdjustWindowRectExForDpi` 算,否则 150% 缩放下会偏小 |
+| **`zig cc -shared` 会往当前目录丢 import library**(M1) | lld 为 `-shared` 链接生成导入库,且**按第一个输入文件命名**:多文件的 dexgame 于是把 `dg_gfx.lib` 扔在了**仓库根**(单文件的 6 个库则是 `libs/*/lib<名>.lib`,已入库)。它不被 gitignore 覆盖,污染工作树 | 传 `-Wl,--out-implib=_zigtmp\dexgame.lib` 把它引到 gitignored 目录(`build_libs.bat` 已这么做)。我们运行时用 LoadLibrary,不需要导入库 |
+| **DLL 重建不可复现,exe 可以**(M1) | 连续两次 `build_libs.bat` 编出的 DLL 哈希不同:PE `TimeDateStamp` 每次都变,设 `SOURCE_DATE_EPOCH` 也无效(实测)。而 `build-vm` 的三个 exe 逐字节可复现 | 重建库文件后出现二进制 diff 是**正常的**,与代码改动无关;判断"某次改动是否影响二进制"只能靠 exe 那边。见 §2 构建小节 |
 
 ---
 
