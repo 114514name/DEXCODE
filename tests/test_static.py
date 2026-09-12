@@ -152,6 +152,73 @@ def test_pyvm_static():
     check("pyvm 静态库运行", err is None and out == ["5", "120"], repr(out) + repr(err))
 
 
+# ---------- dexgame:静态内嵌(M4-d)----------
+DG_DLL = os.path.join(LIBS, "dexgame", "libdexgame.dll")
+
+
+def test_dexgame_static():
+    """游戏引擎的静态变体:把 400KB+ 的 libdexgame.dll 内嵌进字节码,
+    外部 DLL 改名后仍能跑(并且离屏像素断言仍然成立)。"""
+    print("[dexgame static]")
+    if not os.path.exists(DG_DLL):
+        print("  SKIP  (未构建 libdexgame.dll)")
+        return
+    unit = compile_ok('''include "dexgame_static";
+eng_init_offscreen(32, 32);
+eng_set_clear_color(0xFF000000);
+eng_frame_begin();
+eng_rect(4.0, 4.0, 8.0, 8.0, 0xFFFF0000);
+eng_frame_end();
+print eng_pixel(8, 8);
+print eng_version();
+eng_shutdown();
+''')
+    check("注册了 1 个库", len(unit.libs) == 1, len(unit.libs))
+    lib = unit.libs[0]
+    check("dexgame 静态标记", lib.is_static is True)
+    dll_size = os.path.getsize(DG_DLL)
+    check("**内嵌了整个引擎 DLL 字节**",
+          len(lib.data) == dll_size, (len(lib.data), dll_size))
+    check("eng_* 原生函数可用",
+          "eng_init_offscreen" in [n.name for n in unit.natives])
+
+    bc = assemble(unit.to_program())
+    check("字节码体积包含内嵌 DLL", len(bc) > dll_size, len(bc))
+
+    vm = os.path.join(ROOT, "vm", "vm.exe" if os.name == "nt" else "vm")
+    if not os.path.exists(vm):
+        print("  SKIP  (未构建 vm.exe)")
+        return
+    tmp = os.path.join(ROOT, "_static_dg.dexbc")
+    with open(tmp, "wb") as f:
+        f.write(bc)
+    hidden = DG_DLL + ".hidden"
+    moved = False
+    if os.path.exists(hidden):
+        os.remove(hidden)
+    if os.path.exists(DG_DLL):
+        os.rename(DG_DLL, hidden)
+        moved = True
+    try:
+        try:
+            r = subprocess.run([vm, tmp], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=60)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    finally:
+        if moved:
+            os.rename(hidden, DG_DLL)
+    lines = [l for l in r.stdout.splitlines() if l]
+    check("**外部 DLL 移走后引擎仍能跑**",
+          r.returncode == 0 and len(lines) >= 2, repr(r.stdout) + repr(r.stderr))
+    if lines:
+        check("离屏渲染像素断言仍成立(红)",
+              lines[0] == str(0xFFFF0000), lines[:2])
+    if len(lines) > 1:
+        check("引擎版本号可读", lines[1] == "2", lines[:2])
+
+
 def main():
     print("DEXCODE 静态链接测试")
     test_def_parser()
@@ -159,6 +226,7 @@ def main():
     test_roundtrip()
     test_vm_without_dll()
     test_pyvm_static()
+    test_dexgame_static()
     if os.path.exists(TMP_SRC):
         os.remove(TMP_SRC)
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")

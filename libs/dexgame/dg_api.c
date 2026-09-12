@@ -39,6 +39,7 @@ int64_t eng_init(const DexValue *a, int n) {
     dg_phys_init();
     dg_input_init();
     dg_audio_init();
+    dg_text_init();
     g_frame_index = 0;
     return 0;
 }
@@ -53,6 +54,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
     dg_phys_init();
     dg_input_init();
     dg_audio_init();
+    dg_text_init();
     g_frame_index = 0;
     return 0;
 }
@@ -62,6 +64,7 @@ int64_t eng_shutdown(const DexValue *a, int n) {
     dg_clear_error();
     dg_input_shutdown();
     dg_audio_shutdown();
+    dg_text_shutdown();
     dg_phys_shutdown();
     dg_scene_shutdown();
     dg_draw_shutdown();
@@ -936,6 +939,56 @@ int64_t eng_audio_stop_all(const DexValue *a, int n) {
     (void)a; (void)n;
     dg_clear_error();
     return dg_audio_stop_all();
+}
+
+/* ============================================================
+   文字(M4-c):DirectWrite + 字形图集
+   ============================================================ */
+int64_t eng_text_ok(const DexValue *a, int n) { (void)a; (void)n; return dg_text_ok() ? 1 : 0; }
+int64_t eng_text_glyph_count(const DexValue *a, int n) { (void)a; (void)n; return dg_text_glyph_count(); }
+int64_t eng_text_font_count(const DexValue *a, int n) { (void)a; (void)n; return dg_text_font_count(); }
+
+int64_t eng_font_load(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_font_load needs (family, size)"); return -1; }
+    return dg_text_font_load(dv_str(&a[0]), (float)dv_float(&a[1]));
+}
+int64_t eng_font_free(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_font_free needs a font id"); return -1; }
+    return dg_text_font_free((int32_t)dv_int(&a[0]));
+}
+double eng_font_line_height(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_text_line_height((int32_t)dv_int_or(a, n, 0, 0));
+}
+double eng_font_ascent(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_text_ascent((int32_t)dv_int_or(a, n, 0, 0));
+}
+const char *eng_font_family(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_text_family((int32_t)dv_int_or(a, n, 0, 0));
+}
+double eng_font_size(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_text_size((int32_t)dv_int_or(a, n, 0, 0));
+}
+double eng_text_width(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_text_width needs (font, text)"); return 0.0; }
+    return dg_text_measure_w((int32_t)dv_int(&a[0]), dv_str(&a[1]));
+}
+double eng_text_height(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_text_height needs (font, text)"); return 0.0; }
+    return dg_text_measure_h((int32_t)dv_int(&a[0]), dv_str(&a[1]));
+}
+int64_t eng_text(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 5) { dg_error("eng_text needs (x, y, font, text, color)"); return -1; }
+    return dg_text_draw((int32_t)dv_int(&a[2]), (float)dv_float(&a[0]), (float)dv_float(&a[1]),
+                        dv_str(&a[3]), (uint32_t)dv_int(&a[4]));
 }
 
 /* ---------- 颜色辅助 ----------

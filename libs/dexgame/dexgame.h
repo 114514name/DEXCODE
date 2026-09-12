@@ -185,6 +185,7 @@ void dg_gfx_frame_pace(int target_fps);
 /* ---------- dg_draw.c ---------- */
 
 int  dg_draw_init(void);             /* 编译着色器 + 建管线状态。返回 0 成功 */
+int  dg_draw_ready(void);            /* 1 = 管线已就绪(文字光栅化前要问一句)*/
 void dg_draw_shutdown(void);
 void dg_draw_frame_begin(void);      /* 重置批次 + 设默认状态 */
 void dg_draw_frame_end(void);        /* 提交剩余批次(必须在 Present 前调用)*/
@@ -195,6 +196,8 @@ int  dg_tex_load_file(const char *path);
 int  dg_tex_load_cached(const char *path);
 void dg_tex_cache_clear(void);
 int  dg_tex_create_rgba(int w, int h, const uint8_t *rgba);  /* 便于测试与程序化生成 */
+/* 局部更新(字形图集用);rgba = w*h*4,0xAARRGGBB 字节序 */
+int  dg_tex_update_rgba(int id, int x, int y, int w, int h, const uint8_t *rgba);
 int  dg_tex_free(int id);
 int  dg_tex_valid(int id);
 int  dg_tex_width(int id);
@@ -411,6 +414,25 @@ int32_t dg_audio_playing_count(void);
 int32_t dg_audio_stop_all(void);
 int32_t dg_audio_set_master_volume(float volume);
 float   dg_audio_master_volume(void);
+
+/* ---------- dg_text.c(M4-c:文字:DirectWrite + 字形图集)---------- */
+void   dg_text_init(void);
+void   dg_text_shutdown(void);
+int    dg_text_ok(void);                 /* DirectWrite 工厂是否可用 */
+int    dg_text_glyph_count(void);        /* 已光栅化的字形数(自省/测试)*/
+int    dg_text_font_count(void);
+
+int32_t dg_text_font_load(const char *family, float size);   /* 同家族+同字号复用 */
+int32_t dg_text_font_free(int32_t font);
+double  dg_text_line_height(int32_t font);
+double  dg_text_ascent(int32_t font);
+const char *dg_text_family(int32_t font);
+double  dg_text_size(int32_t font);
+
+double  dg_text_measure_w(int32_t font, const char *text);   /* `\n` 取最宽一行 */
+double  dg_text_measure_h(int32_t font, const char *text);   /* 行数 × 行高 */
+/* 画字符串;整数像素定位。返回画出的字形数(空串 = 0,失败 = -1)。 */
+int32_t dg_text_draw(int32_t font, float x, float y, const char *text, uint32_t color);
 
 /* ---------- 屏幕 ↔ 世界(dg_scene.c;鼠标坐标换算要用) ---------- */
 int32_t dg_scene_active_camera(float *x, float *y, float *zoom);

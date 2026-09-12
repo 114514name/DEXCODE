@@ -235,6 +235,23 @@ extern func eng_voice_sound(voice: int) -> int;
 extern func eng_audio_playing_count() -> int;
 extern func eng_audio_stop_all() -> int;
 
+# ---- 文字(M4-c,DirectWrite + 字形图集)----
+# 字号是**像素**高度(逻辑像素)。同一家族+同字号复用同一个字体句柄。
+# 度量按字形缓存(不会每帧重新排版);`\n` 支持,测量取最宽一行。
+# 一期不做换行/对齐/富文本。中文可以显示(走系统字体集合与 CJK 回退)。
+extern func eng_text_ok() -> int;
+extern func eng_text_glyph_count() -> int;
+extern func eng_text_font_count() -> int;
+extern func eng_font_load(family: string, size: float) -> int;
+extern func eng_font_free(font: int) -> int;
+extern func eng_font_line_height(font: int) -> float;
+extern func eng_font_ascent(font: int) -> float;
+extern func eng_font_family(font: int) -> string;
+extern func eng_font_size(font: int) -> float;
+extern func eng_text_width(font: int, text: string) -> float;
+extern func eng_text_height(font: int, text: string) -> float;
+extern func eng_text(x: float, y: float, font: int, text: string, color: int) -> int;
+
 # ---- 颜色辅助 ----
 # DexLang 没有位移运算,无法自行从 r/g/b/a 拼出 0xAARRGGBB,故提供此函数。
 extern func eng_rgba(r: int, g: int, b: int, a: int) -> int;

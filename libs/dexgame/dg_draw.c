@@ -187,6 +187,26 @@ int dg_tex_create_rgba(int w, int h, const uint8_t *rgba) {
     return dg_tex_upload(w, h, rgba, "create_rgba");
 }
 
+/* 局部更新纹理(字形图集要往大纹理的小矩形里写字形位图)。
+   rgba 是 w*h*4 字节(0xAARRGGBB 字节序 B,G,R,A)。越界报错带原因。 */
+int dg_tex_update_rgba(int id, int x, int y, int w, int h, const uint8_t *rgba) {
+    int i;
+    if (dg_tex_slot(id, &i)) { dg_error("invalid texture handle %d", id); return -1; }
+    if (w <= 0 || h <= 0) { dg_error("update rect %dx%d is empty", w, h); return -1; }
+    if (x < 0 || y < 0 || x + w > g_texs[i].width || y + h > g_texs[i].height) {
+        dg_error("update rect (%d,%d %dx%d) is outside texture %dx%d",
+                 x, y, w, h, g_texs[i].width, g_texs[i].height);
+        return -1;
+    }
+    if (!g_ctx || !g_texs[i].tex) { dg_error("no D3D device/texture for update"); return -1; }
+    D3D11_BOX box;
+    box.left = (UINT)x; box.top = (UINT)y; box.front = 0;
+    box.right = (UINT)(x + w); box.bottom = (UINT)(y + h); box.back = 1;
+    g_ctx->lpVtbl->UpdateSubresource(g_ctx, (ID3D11Resource *)g_texs[i].tex, 0, &box,
+                                     rgba, (UINT)(w * 4), 0);
+    return 0;
+}
+
 int dg_tex_free(int id) {
     int i;
     if (dg_tex_slot(id, &i)) { dg_error("invalid texture handle %d", id); return -1; }
@@ -262,6 +282,8 @@ void dg_tex_cache_clear(void) { g_tex_cache_n = 0; }
 
 /* ---------- 管线对象 ---------- */
 static int g_draw_ready = 0;
+
+int dg_draw_ready(void) { return g_draw_ready; }
 static ID3D11VertexShader      *g_vs = NULL;
 static ID3D11PixelShader       *g_ps = NULL;
 static ID3D11InputLayout       *g_il = NULL;

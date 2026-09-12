@@ -80,12 +80,12 @@ REM   get "lib<name>.lib" next to their DLL instead (and those .lib files are
 REM   committed); dexgame does not need an import library at all, so send it to
 REM   the gitignored _zigtmp\ instead of polluting the tree.
 echo [7/7] libs\dexgame\libdexgame.dll
-"%ZIG%" cc %COMMON% -I libs\dexgame -ld3d11 -ldxgi -luser32 -lgdi32 -lole32 -luuid -lwinmm ^
+"%ZIG%" cc %COMMON% -I libs\dexgame -ld3d11 -ldxgi -ldwrite -luser32 -lgdi32 -lole32 -luuid -lwinmm ^
   -Wl,--out-implib=_zigtmp\dexgame.lib ^
   -o libs\dexgame\libdexgame.dll ^
   libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_scene.c ^
   libs\dexgame\dg_json.c libs\dexgame\dg_phys.c libs\dexgame\dg_input.c ^
-  libs\dexgame\dg_audio.c ^
+  libs\dexgame\dg_audio.c libs\dexgame\dg_text.c ^
   libs\dexgame\dg_api.c || exit /b 1
 
 echo.
