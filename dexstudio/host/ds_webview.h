@@ -26,6 +26,12 @@ int ds_wv_navigate_folder(DsWebView *wv, const char *folder, const char *host,
                           const char *page);
 /* 直接朝 JS 推一条消息(宿主主动通知,如"项目已打开")。 */
 int ds_wv_post(DsWebView *wv, const char *json);
+/* 把**额外**的本地目录映射到 `https://<host>/`(如 dexstudio-preview.local →
+ * 渲染预览目录、dexstudio-proj.local → 项目根)。前端就能用 `<img src>` 直接
+ * 显示引擎渲染出的 BMP 与项目里的贴图,而不是把像素塞进 JSON。
+ * 可以在导航前后任意调用:同一个 host 再调用一次就是**改指向**(打开项目后
+ * 预览目录会从 _zigtmp 变成 <root>/.dexstudio)。 */
+int ds_wv_map_folder(DsWebView *wv, const char *folder, const char *host);
 /* 在页面里跑一段 JS,结果经 on_message 以 `{"cmd":"ui.eval","args":{"result":…}}`
  * 的形式回来(ExecuteScript 本身是异步的)。诊断与测试用:能问出"桥在不在"、
  * "页面到底是哪一个"。 */

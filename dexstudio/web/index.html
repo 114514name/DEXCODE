@@ -1,7 +1,9 @@
 <!DOCTYPE html>
-<!-- DexStudio 前端外壳(B2:宿主骨架 + 消息通道)。
-     这一版只做"能开、能连、能看到模型状态":项目/场景的少量操作 + 组件清单自省 +
-     消息日志。B3 起在同样的通道上长出场景编辑器(视口/层级树/属性面板/瓦片刷子)。 -->
+<!-- DexStudio 前端外壳(B3:场景编辑器)。
+     布局:顶栏 / 左(项目·场景·层级树·图层)/ 中(视口)/ 右(属性面板·瓦片调色板·输出)。
+     前端只做**视图与交互**:一切状态改动都经 ds_command(json) → json 送到 C 模型层。
+     视口里的画面是引擎离屏渲染出来的 BMP(dexstudio-preview.local),
+     用 <canvas> 画出来之后,网格/选中框/瓦片格都画在同一个坐标系里。 -->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -44,13 +46,17 @@
   <header class="topbar">
     <div class="brand">DexStudio <span class="ver" id="version">…</span></div>
     <div class="top-actions">
-      <button id="btn-new">新建项目</button>
-      <button id="btn-open">打开项目</button>
-      <button id="btn-save">保存</button>
+      <button id="btn-new" title="新建项目">新建项目</button>
+      <button id="btn-open" title="打开已有项目">打开项目</button>
+      <button id="btn-save" title="保存场景与项目 (Ctrl+S)">保存</button>
+      <button id="btn-reload" title="丢弃改动,从文件重载场景">重载</button>
       <span class="sep"></span>
-      <button id="btn-add">添加实体</button>
-      <button id="btn-undo">撤销</button>
-      <button id="btn-redo">重做</button>
+      <button id="btn-add" title="添加一个空实体">+ 实体</button>
+      <button id="btn-dup" title="复制选中实体 (Ctrl+D)">复制</button>
+      <button id="btn-del" title="删除选中实体 (Delete)">删除</button>
+      <span class="sep"></span>
+      <button id="btn-undo" title="撤销 (Ctrl+Z)">撤销</button>
+      <button id="btn-redo" title="重做 (Ctrl+Y)">重做</button>
     </div>
     <div class="status" id="status">连接中…</div>
   </header>
@@ -58,42 +64,111 @@
   <main>
     <aside class="left">
       <section>
-        <h2>场景</h2>
-        <div class="row">
-          <input id="scene-name" value="main" size="10">
-          <button id="btn-scene-new">新建场景</button>
-        </div>
-        <div class="row">
-          <button id="btn-scene-save">保存场景</button>
-          <button id="btn-scene-json">看 JSON</button>
-        </div>
+        <h2>项目 / 场景</h2>
         <p class="hint" id="scene-path">未打开项目</p>
+        <div class="row">
+          <input id="scene-name" value="main" size="8" title="场景名">
+          <button id="btn-scene-new">新建</button>
+          <button id="btn-scene-list">列表</button>
+        </div>
+        <div class="row">
+          <button id="btn-scene-json">看场景 JSON</button>
+        </div>
+      </section>
+      <section class="grow">
+        <h2>层级 <span class="count" id="obj-count">0</span>
+          <span class="mini"><button id="btn-sel-all" class="link">全选</button>
+          <button id="btn-sel-none" class="link">清空</button></span>
+        </h2>
+        <input id="tree-filter" placeholder="过滤名字…" class="wide">
+        <ul class="tree" id="tree"></ul>
       </section>
       <section>
-        <h2>实体 <span class="count" id="obj-count">0</span></h2>
-        <ul class="tree" id="entity-list"></ul>
+        <h2>图层</h2>
+        <ul class="tree layers" id="layers"></ul>
       </section>
     </aside>
 
     <section class="center">
-      <div class="cards" id="cards"></div>
-      <div class="panel">
-        <h2>组件自省(属性面板的数据源)</h2>
-        <div id="schema" class="schema">引擎未连接</div>
+      <div class="viewport-bar">
+        <span class="group">
+          <button id="tool-select" class="tab on" title="选择 / 框选 / 拖动移动 (1)">选择</button>
+          <button id="tool-brush" class="tab" title="瓦片刷子 (2,需选中带 tilemap 的实体)">瓦片刷</button>
+        </span>
+        <span class="sep"></span>
+        <span class="group">
+          <button id="btn-zoom-out" title="缩小 (-)">−</button>
+          <button id="btn-zoom-in" title="放大 (+)">＋</button>
+          <button id="btn-zoom-1" title="1:1">1:1</button>
+          <button id="btn-fit" title="回到原点 / 适应 (F)">适应</button>
+        </span>
+        <span class="sep"></span>
+        <span class="group">
+          <label class="chk"><input type="checkbox" id="chk-grid" checked> 网格</label>
+          <input id="grid-size" type="number" value="16" min="1" max="256" step="1" class="tiny" title="网格大小(世界单位)">
+          <label class="chk"><input type="checkbox" id="chk-snap" checked> 吸附</label>
+        </span>
+        <span class="sep"></span>
+        <span class="group" id="brush-tools" hidden>
+          <label class="chk"><input type="checkbox" id="chk-paint-drag" checked> 拖动连续画</label>
+          <label class="chk"><input type="checkbox" id="chk-erase"> 橡皮(或右键)</label>
+        </span>
+        <span class="viewinfo" id="viewinfo"></span>
       </div>
-      <div class="panel">
-        <h2>连通性自检</h2>
-        <button id="btn-selfcheck">跑一遍</button>
-        <div id="selfcheck" class="selfcheck"></div>
+      <div class="viewport" id="viewport">
+        <canvas id="view"></canvas>
+        <div class="vp-hint" id="vp-hint">没有打开项目 —— 先「新建项目」</div>
+      </div>
+      <div class="panel out">
+        <div class="tabs">
+          <button class="tab on" data-tab="log">输出</button>
+          <button class="tab" data-tab="self">自检</button>
+          <button class="tab" data-tab="sel">选中</button>
+          <span class="mini"><button id="btn-selfcheck" class="link">跑一遍自检</button>
+          <button id="btn-clear-log" class="link">清空</button></span>
+        </div>
+        <div class="log" id="log"></div>
+        <div class="log selfcheck" id="selfcheck" hidden></div>
+        <div class="log" id="selinfo" hidden></div>
       </div>
     </section>
 
     <aside class="right">
-      <h2>消息日志</h2>
-      <div class="log" id="log"></div>
+      <section class="grow">
+        <h2>属性 <span class="count" id="sel-name">未选中</span></h2>
+        <div class="row" id="ent-ops" hidden>
+          <input id="ent-name" size="10" title="实体名">
+          <button id="btn-rename">改名</button>
+        </div>
+        <div class="row" id="comp-add-row" hidden>
+          <select id="comp-add-sel"></select>
+          <button id="btn-comp-add">挂组件</button>
+        </div>
+        <div id="inspector" class="inspector">
+          <p class="hint">在层级树或视口里点一个实体。</p>
+        </div>
+      </section>
+      <section id="palette-sec" hidden>
+        <h2>瓦片调色板 <span class="count" id="palette-info"></span></h2>
+        <div class="palette-wrap"><img id="palette" alt="图集"></div>
+        <div class="row">
+          <button id="btn-tile-empty" class="on">空 (-1)</button>
+          <span class="hint" id="tile-pick">未选图块</span>
+        </div>
+        <div class="row">
+          <label class="chk">图集列数 <input id="atlas-cols" type="number" min="1" max="64" class="tiny"></label>
+          <label class="chk">首块 <input id="atlas-first" type="number" min="0" max="255" class="tiny"></label>
+        </div>
+        <div class="row">
+          <button id="btn-tile-apply">应用图集设置</button>
+          <button id="btn-tile-clear">整图清空</button>
+        </div>
+      </section>
     </aside>
   </main>
 
   <script src="app.js"></script>
+  <script src="scene.js"></script>
+  <script src="viewport.js"></script>
 </body>
 </html>

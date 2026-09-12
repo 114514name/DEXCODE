@@ -43,6 +43,8 @@ extern func eng_now_ms() -> int;
 extern func eng_width() -> int;
 extern func eng_height() -> int;
 extern func eng_set_clear_color(color: int) -> int;
+# IDE 视口预览:临时覆盖相机(不写进场景)。on=0 恢复用场景里的相机。
+extern func eng_set_view(on: int, x: float, y: float, zoom: float) -> int;
 extern func eng_set_vsync(on: int) -> int;
 extern func eng_set_target_fps(fps: int) -> int;
 

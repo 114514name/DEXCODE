@@ -502,11 +502,13 @@ int32_t dg_set_s(uint32_t obj, const char *comp, const char *field, const char *
     if (k == DG_C_SPRITE && strcmp(f->name, "tex_path") == 0) {
         DgSprite *s = (DgSprite *)c;
         s->texture = s->tex_path[0] ? dg_tex_load_cached(s->tex_path) : -1;
-        if (s->texture < 0) return -1;     /* 路径错了要立刻报,不能等渲染时才失败 */
+        /* 路径错了要立刻报,不能等渲染时才失败;但**清空**(设为 "")不是错误 ——
+           那正是"把贴图摘掉"的做法,当成失败会让属性面板显示假的错误。 */
+        if (s->tex_path[0] && s->texture < 0) return -1;
     } else if (k == DG_C_TILEMAP && strcmp(f->name, "tex_path") == 0) {
         DgTilemap *t = (DgTilemap *)c;
         t->texture = t->tex_path[0] ? dg_tex_load_cached(t->tex_path) : -1;
-        if (t->texture < 0) return -1;
+        if (t->tex_path[0] && t->texture < 0) return -1;
     } else if (k == DG_C_TILEMAP && strcmp(f->name, "path") == 0) {
         /* 直接给数据文件路径:立刻装网格,别等到渲染/碰撞才发现路径是错的 */
         if (v && v[0] && dg_tilemap_load_path((DgTilemap *)c, v)) return -1;
@@ -1262,11 +1264,39 @@ int32_t dg_tilemap_draw(uint32_t obj, const float *view) {
     return dg_tilemap_each_in(obj, view[0], view[1], view[2], view[3], 0, &ctx, dg_tile_emit);
 }
 
-/* 活动相机(第一个 active 的 camera 组件)。返回 0 = 没有相机(即 世界 == 屏幕)。*/
+/* ---------- IDE 的编辑器视图覆盖(产品 B 的视口预览用) ----------
+ * 视口要能自由平移/缩放,但不该为此去改用户场景里的相机实体(那会写进场景 JSON,
+ * 也会污染撤销历史)。设了覆盖之后,渲染与"屏幕→世界"都用它。 */
+static int   g_view_override = 0;
+static float g_view_x = 0.0f, g_view_y = 0.0f, g_view_zoom = 1.0f;
+
+void dg_scene_set_view_override(int on, float x, float y, float zoom) {
+    g_view_override = on ? 1 : 0;
+    g_view_x = x;
+    g_view_y = y;
+    g_view_zoom = (zoom > 0.0f) ? zoom : 1.0f;
+}
+
+int dg_scene_view_override(float *x, float *y, float *zoom) {
+    if (!g_view_override) return 0;
+    if (x) *x = g_view_x;
+    if (y) *y = g_view_y;
+    if (zoom) *zoom = g_view_zoom;
+    return 1;
+}
+
+/* 活动相机(第一个 active 的 camera 组件)。返回 0 = 没有相机(即 世界 == 屏幕)。
+ * IDE 设了视图覆盖时优先用覆盖值。 */
 int32_t dg_scene_active_camera(float *x, float *y, float *zoom) {
     if (x) *x = 0.0f;
     if (y) *y = 0.0f;
     if (zoom) *zoom = 1.0f;
+    if (g_view_override) {
+        if (x) *x = g_view_x;
+        if (y) *y = g_view_y;
+        if (zoom) *zoom = g_view_zoom;
+        return 1;
+    }
     for (int32_t i = 1; i <= DG_MAX_OBJECTS; i++) {
         if (!g_ents[i].live) continue;
         const uint32_t id = (g_ents[i].gen << 16) | (uint32_t)i;

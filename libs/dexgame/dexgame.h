@@ -438,6 +438,9 @@ int32_t dg_text_draw(int32_t font, float x, float y, const char *text, uint32_t 
 
 /* ---------- 屏幕 ↔ 世界(dg_scene.c;鼠标坐标换算要用) ---------- */
 int32_t dg_scene_active_camera(float *x, float *y, float *zoom);
+/* 编辑器视图覆盖(IDE 视口平移/缩放;见 dg_scene.c 的说明) */
+void    dg_scene_set_view_override(int on, float x, float y, float zoom);
+int     dg_scene_view_override(float *x, float *y, float *zoom);
 void    dg_scene_screen_to_world(float sx, float sy, float *wx, float *wy);
 
 #endif /* DEXGAME_H */

@@ -183,9 +183,31 @@ typedef struct {
 static int g_ui_ready;
 static char g_ui_ready_info[512];
 static char g_ui_msg_log[1024];
+/* 界面自测(页面里的 window.__ds_selftest)回传的原始 JSON。
+ * 页面那一层(渲染图/层级树/属性面板/瓦片刷子)只有它自己能验,所以让页面
+ * 把结果发回来,宿主只做断言 —— 不需要人看屏幕。 */
+static char g_ui_self[16384];
+static int g_ui_self_on = 0;
+static int g_wv_fail = 0;
+
+static int json_int_field(const char *json, const char *key, int dflt)
+{
+    char pat[64];
+    const char *p;
+    snprintf(pat, sizeof pat, "\"%s\":", key);
+    p = strstr(json, pat);
+    return p ? atoi(p + strlen(pat)) : dflt;
+}
+
+static int ui_self_fails(void) { return json_int_field(g_ui_self, "fails", -1); }
+static int ui_self_passes(void) { return json_int_field(g_ui_self, "pass_count", -1); }
+static const char *ui_self_msg(void) { return g_ui_self; }
+static int ui_self_done(void) { return g_ui_self_on; }
 
 static const char *on_js_message(void *user, const char *json)
 {
+    Host *host = (Host *)user;
+    const char *resp;
     if (json && *json) {
         char *p = g_ui_msg_log + strlen(g_ui_msg_log);
         size_t left = sizeof g_ui_msg_log - (size_t)(p - g_ui_msg_log);
@@ -195,7 +217,21 @@ static const char *on_js_message(void *user, const char *json)
         g_ui_ready = 1;
         snprintf(g_ui_ready_info, sizeof g_ui_ready_info, "%s", json);
     }
-    return ds_command((DsModel *)user, json);
+    if (json && strstr(json, "\"ui.selftest\"")) {
+        snprintf(g_ui_self, sizeof g_ui_self, "%s", json);
+        g_ui_self_on = 1;
+        return "{\"ok\":true,\"result\":{\"ack\":\"ui.selftest\"}}";
+    }
+    resp = ds_command(host->model, json);
+    /* 每次命令后刷新虚拟主机映射:打开/新建项目会换掉预览目录与项目根。
+     * 映射是幂等的(同一个 host 再设一次就是改指向),所以不必判断命令名。 */
+    if (host->wv && resp && !strstr(resp, "\"ok\":false")) {
+        const char *prev = ds_project_dir(host->model);
+        if (prev && *prev) ds_wv_map_folder(host->wv, prev, "dexstudio-proj.local");
+        ds_wv_map_folder(host->wv, ds_preview_dir(host->model),
+                         "dexstudio-preview.local");
+    }
+    return resp;
 }
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -285,11 +321,18 @@ static int run_window(const char *project, const char *web_override, int wv_self
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
-    host->wv = ds_wv_create(hwnd, on_js_message, host->model);
+    host->wv = ds_wv_create(hwnd, on_js_message, host);
     if (!host->wv) {
         fprintf(stderr, "dexstudio: 创建 WebView2 失败:%s\n", ds_wv_error(NULL));
         /* 仍然开窗(用户能看到窗口),但明确报错 */
     } else {
+        /* 预览目录与项目根先登记映射,再走 apply_navigation 一起生效 */
+        {
+            const char *pd = ds_project_dir(host->model);
+            if (pd && *pd) ds_wv_map_folder(host->wv, pd, "dexstudio-proj.local");
+            ds_wv_map_folder(host->wv, ds_preview_dir(host->model),
+                             "dexstudio-preview.local");
+        }
         ds_wv_navigate_folder(host->wv, host->web_dir, "dexstudio.local", "index.html");
         ds_wv_set_bounds(host->wv, 0, 0, rc.right - rc.left, rc.bottom - rc.top);
     }
@@ -330,6 +373,30 @@ static int run_window(const char *project, const char *web_override, int wv_self
         if (g_ui_ready) {
             printf("  PASS  前端已就绪(窗口 + 本地页面 + JS→C→JS 往返)\n");
             printf("        请求:%s\n", g_ui_ready_info);
+            /* 让页面把自己那一层也验一遍(渲染图/层级树/属性面板/瓦片刷子),
+             * 结果由页面用 ui.selftest 消息发回来 —— 不需要人看屏幕。 */
+            if (ds_wv_eval(host->wv,
+                           "window.__ds_selftest ? window.__ds_selftest() : 'no-selftest'")) {
+                DWORD t1 = GetTickCount();
+                while (!ui_self_done() && GetTickCount() - t1 < 20000) {
+                    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+                        if (msg.message == WM_QUIT) break;
+                        TranslateMessage(&msg);
+                        DispatchMessageA(&msg);
+                    }
+                    Sleep(10);
+                }
+            }
+            if (ui_self_done()) {
+                int fails = ui_self_fails();
+                printf("%s  界面自测:%d 项通过,%d 项失败\n",
+                       fails ? "  FAIL" : "  PASS", ui_self_passes(), fails);
+                printf("        %s\n", ui_self_msg());
+                if (fails) g_wv_fail = 1;
+            } else {
+                printf("  FAIL  界面自测没有回消息(前端 __ds_selftest 没跑或抛异常)\n");
+                g_wv_fail = 1;
+            }
         } else {
             const char *e = host->wv ? ds_wv_error(host->wv) : "未创建 WebView2";
             const char *info = ds_command(host->model, "{\"cmd\":\"app.info\"}");
@@ -344,7 +411,7 @@ static int run_window(const char *project, const char *web_override, int wv_self
         if (host->wv) ds_wv_destroy(host->wv);
         ds_model_destroy(host->model);
         free(host);
-        return g_ui_ready ? 0 : 1;
+        return (g_ui_ready && !g_wv_fail) ? 0 : 1;
     }
     if (host->wv) ds_wv_destroy(host->wv);
     ds_model_destroy(host->model);

@@ -103,6 +103,8 @@ const char *ds_wv_runtime_version(char *err, unsigned errsz)
 
 /* ------------------------------------------------------------ 对象 */
 
+#define DS_WV_MAX_MAP 4
+
 struct DsWebView {
     void *parent;
     DsWebMessageFn on_message;
@@ -119,6 +121,9 @@ struct DsWebView {
     char pending_host[128];
     char pending_page[256];
     int has_pending;
+    /* 额外映射(预览目录 / 项目根)。导航前后来回调用都允许,同 host 覆盖。 */
+    struct { char host[128]; char folder[2048]; } map[DS_WV_MAX_MAP];
+    int n_map;
 };
 
 /* 诊断开关:DEXSTUDIO_WV_TRACE=1 时把 WebView2 各阶段打到 stderr。
@@ -408,34 +413,52 @@ static void do_navigate(DsWebView *wv, const char *url)
     free(w);
 }
 
+/* 把一个目录映射到 https://<host>/。要求 webview 已就绪。 */
+static int map_one(DsWebView *wv, const char *host, const char *folder)
+{
+    wchar_t wfolder[2048], whost[256];
+    ICoreWebView2_3 *wv3 = NULL;
+    HRESULT hr;
+    if (!wv->webview) return 0;
+    if (!MultiByteToWideChar(CP_UTF8, 0, folder, -1, wfolder, 2048)) return 0;
+    if (!MultiByteToWideChar(CP_UTF8, 0, host, -1, whost, 256)) return 0;
+    if (FAILED(wv->webview->lpVtbl->QueryInterface(
+            wv->webview, &IID_ICoreWebView2_3, (void **)&wv3)) || !wv3) {
+        snprintf(wv->err, sizeof wv->err,
+                 "当前 WebView2 运行时太旧(缺 ICoreWebView2_3,无法映射本地目录)");
+        return 0;
+    }
+    hr = wv3->lpVtbl->SetVirtualHostNameToFolderMapping(
+        wv3, whost, wfolder, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+    wv3->lpVtbl->Release(wv3);
+    if (FAILED(hr)) {
+        snprintf(wv->err, sizeof wv->err, "映射目录失败(hr=0x%08lx):%s → %s",
+                 (unsigned long)hr, host, folder);
+        return 0;
+    }
+    return 1;
+}
+
+static void apply_extra_maps(DsWebView *wv)
+{
+    int i;
+    for (i = 0; i < wv->n_map; i++) {
+        if (!wv->map[i].folder[0]) continue;
+        map_one(wv, wv->map[i].host, wv->map[i].folder);
+    }
+}
+
 /* 映射 + 导航。必须在**控制器就绪之后**做:SetVirtualHostNameToFolderMapping
  * 要经由 ICoreWebView2_3,而 webview 是控制器就绪时才拿得到的。 */
 static int apply_navigation(DsWebView *wv)
 {
-    wchar_t wfolder[2048], whost[256], url[2400];
+    wchar_t whost[256], url[2400];
     if (!wv->webview || !wv->has_pending) return 0;
-    MultiByteToWideChar(CP_UTF8, 0, wv->pending_folder, -1, wfolder, 2048);
     MultiByteToWideChar(CP_UTF8, 0, wv->pending_host, -1, whost, 256);
     _snwprintf(url, 2400, L"https://%ls/%hs", whost, wv->pending_page);
-    {
-        ICoreWebView2_3 *wv3 = NULL;
-        if (SUCCEEDED(wv->webview->lpVtbl->QueryInterface(
-                wv->webview, &IID_ICoreWebView2_3, (void **)&wv3)) && wv3) {
-            HRESULT hr = wv3->lpVtbl->SetVirtualHostNameToFolderMapping(
-                wv3, whost, wfolder, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
-            wv3->lpVtbl->Release(wv3);
-            if (FAILED(hr)) {
-                snprintf(wv->err, sizeof wv->err,
-                         "映射前端目录失败(hr=0x%08lx):%s", (unsigned long)hr,
-                         wv->pending_folder);
-                return 0;
-            }
-        } else {
-            snprintf(wv->err, sizeof wv->err,
-                     "当前 WebView2 运行时太旧(缺 ICoreWebView2_3,无法映射本地目录)");
-            return 0;
-        }
-    }
+    if (wv->pending_folder[0] && !map_one(wv, wv->pending_host, wv->pending_folder))
+        return 0;
+    apply_extra_maps(wv);
     {
         char url8[2400];
         WideCharToMultiByte(CP_UTF8, 0, url, -1, url8, sizeof url8, NULL, NULL);
@@ -443,6 +466,34 @@ static int apply_navigation(DsWebView *wv)
         do_navigate(wv, url8);
     }
     return 1;
+}
+
+int ds_wv_map_folder(DsWebView *wv, const char *folder, const char *host)
+{
+    int i;
+    if (!wv || !host || !*host) return 0;
+    for (i = 0; i < wv->n_map; i++) {
+        if (!strcmp(wv->map[i].host, host)) {
+            snprintf(wv->map[i].folder, sizeof wv->map[i].folder, "%s",
+                     folder ? folder : "");
+            break;
+        }
+    }
+    if (i == wv->n_map) {
+        if (wv->n_map >= DS_WV_MAX_MAP) {
+            snprintf(wv->err, sizeof wv->err, "虚拟主机映射数量超过上限(%d)",
+                     DS_WV_MAX_MAP);
+            return 0;
+        }
+        snprintf(wv->map[i].host, sizeof wv->map[i].host, "%s", host);
+        snprintf(wv->map[i].folder, sizeof wv->map[i].folder, "%s",
+                 folder ? folder : "");
+        wv->n_map++;
+    }
+    WVTR("映射 %s → %s\n", host, folder ? folder : "");
+    if (!wv->webview) return 1;    /* 还没就绪:apply_navigation 时会一起映射 */
+    if (!folder || !*folder) return 1;
+    return map_one(wv, host, folder);
 }
 
 static HRESULT STDMETHODCALLTYPE EnvHandler_Invoke(

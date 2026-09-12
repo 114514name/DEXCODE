@@ -284,6 +284,16 @@ int64_t eng_object_id_at(const DexValue *a, int n) {
     return (int64_t)dg_object_id_at((int32_t)dv_int_or(a, n, 0, 0));
 }
 
+/* IDE 的编辑器视图(视口平移/缩放)。on=0 恢复"用场景里的相机"。
+ * 游戏代码不需要它;它存在的理由是"不为了预览去改用户的相机实体"。 */
+int64_t eng_set_view(const DexValue *a, int n) {
+    dg_scene_set_view_override((int)dv_int_or(a, n, 0, 0),
+                               (float)dv_float_or(a, n, 1, 0.0),
+                               (float)dv_float_or(a, n, 2, 0.0),
+                               (float)dv_float_or(a, n, 3, 1.0));
+    return 0;
+}
+
 /* 实体名:语言没有全局变量,回调函数只能靠名字找实体。也是 IDE 场景树要的东西。 */
 int64_t eng_set_name(const DexValue *a, int n) {
     dg_clear_error();

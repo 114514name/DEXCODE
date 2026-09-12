@@ -35,6 +35,14 @@ const char *ds_state(DsModel *m);
 /* 支持的组件名清单(自省自引擎;引擎不可用时返回空) */
 const char *ds_components_json(DsModel *m);
 
+/* 渲染预览落盘的目录(保证已创建)。前端用虚拟主机 dexstudio-preview.local
+ * 映射到它,于是 `<img src=".../preview.bmp?t=N">` 就能显示离屏渲染结果。
+ * 返回的是模型内部缓冲,下次调用前有效。 */
+const char *ds_preview_dir(DsModel *m);
+
+/* 当前项目的根目录(没有项目时为空串) */
+const char *ds_project_dir(DsModel *m);
+
 const char *ds_version(void);
 
 #endif /* DS_MODEL_H */

@@ -42,6 +42,11 @@ typedef struct {
     DsFnS scene_json;
     /* 渲染(离屏;B3 的视口预览用) */
     DsFnI frame_begin, frame_end, draw_scene, pixel, save_bmp, set_clear_color;
+    DsFnI width, height, set_view;
+    DsFnI tex_width, tex_height;
+    /* 瓦片地图(编辑器的刷子直接改 CSV 再让引擎重新加载) */
+    DsFnI tilemap_load_csv, tilemap_load_file, tilemap_save_csv;
+    DsFnI tilemap_tile, tilemap_cols, tilemap_rows;
     DsFnF world_x, world_y;
     DsFnS last_error;
     DsFnI clear_error;

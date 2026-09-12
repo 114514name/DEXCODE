@@ -348,6 +348,221 @@ def test_scene_json(dll):
             m.close()
 
 
+def bmp_size(path):
+    """读 BMP 头拿宽高(24/32 位 BMP 的宽高是 int32 @18/@22)。"""
+    with open(path, "rb") as f:
+        head = f.read(26)
+    if len(head) < 26 or head[:2] != b"BM":
+        return None
+    w = int.from_bytes(head[18:22], "little", signed=True)
+    h = int.from_bytes(head[22:26], "little", signed=True)
+    return (w, abs(h))
+
+
+def test_viewport(dll):
+    """B3 的视口:视图覆盖、离屏渲染落盘、世界包围盒(scene.outline)。"""
+    print("[视口:view.set / scene.render / scene.outline]")
+    with tempdir("ds_view_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "v"})
+            info = m.ok("app.info")
+            check("app.info 带视口尺寸", info["view_w"] > 0 and info["view_h"] > 0,
+                  f"{info['view_w']}x{info['view_h']}")
+            check("app.info 带视图状态", isinstance(info.get("view"), dict), info.get("view"))
+            check("app.info 带预览目录", "preview" in (info.get("preview_dir") or "").lower()
+                  or os.path.isdir(info.get("preview_dir") or ""), info.get("preview_dir"))
+            r = m.ok("view.set", {"x": 10, "y": 20, "zoom": 2})
+            check("view.set 回显", r["x"] == 10 and r["y"] == 20 and r["zoom"] == 2
+                  and r["on"] is True, r)
+            check("app.info 记住视图",
+                  m.ok("app.info")["view"]["zoom"] == 2, m.ok("app.info")["view"])
+            r = m.ok("view.set", {"zoom": 0})
+            check("zoom<=0 被夹到 1", r["zoom"] == 1, r)
+            m.ok("view.set", {"on": False})
+            check("view.set on=0 关掉覆盖", m.ok("app.info")["view"]["on"] is False)
+
+            eid = m.ok("entity.add", {"name": "hero"})["id"]
+            r = m.ok("scene.render")
+            check("scene.render 返回 url/seq/尺寸",
+                  r["url"].startswith("https://") and r["seq"] >= 1
+                  and r["w"] == info["view_w"] and r["h"] == info["view_h"], r)
+            check("scene.render 落盘存在", os.path.exists(r["path"]), r["path"])
+            check("落盘的是尺寸正确的 BMP",
+                  bmp_size(r["path"]) == (info["view_w"], info["view_h"]),
+                  bmp_size(r["path"]))
+            check("渲染序号递增", m.ok("scene.render")["seq"] == r["seq"] + 1)
+            m.ok("view.set", {"x": -100, "y": -100, "zoom": 0.5})
+            r2 = m.ok("scene.render")
+            check("换视图后仍能渲染", r2["seq"] == r["seq"] + 2, r2["seq"])
+
+            o = m.ok("scene.outline")
+            check("outline 是一个实体", len(o) == 1 and o[0]["id"] == eid, o)
+            b = o[0]
+            check("outline 自带包围盒(无组件时 16×16)",
+                  b["w"] == 16 and b["h"] == 16, b)
+            check("outline 的世界坐标与实体一致", b["wx"] == 0 and b["wy"] == 0, b)
+            m.ok("comp.add", {"id": eid, "comp": "collider"})
+            m.ok("comp.set", {"id": eid, "comp": "collider", "field": "hw", "value": 20})
+            m.ok("comp.set", {"id": eid, "comp": "collider", "field": "hh", "value": 10})
+            m.ok("entity.set_pos", {"id": eid, "x": 100, "y": 50})
+            o = m.ok("scene.outline")[0]
+            check("collider 决定包围盒(中心 ±hw/hh)",
+                  o["x"] == 80 and o["y"] == 40 and o["w"] == 40 and o["h"] == 20, o)
+            check("outline 标出 kind/图层", o["kind"] == "box" and o["layer"] == 0, o)
+            m.ok("comp.add", {"id": eid, "comp": "sprite"})
+            m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "sw", "value": 8})
+            m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "sh", "value": 6})
+            check("collider 优先于 sprite", m.ok("scene.outline")[0]["w"] == 40)
+            m.ok("comp.remove", {"id": eid, "comp": "collider"})
+            o = m.ok("scene.outline")[0]
+            check("去掉 collider 后按 sprite 算",
+                  o["kind"] == "sprite" and o["w"] == 8 and o["h"] == 6, o)
+        finally:
+            m.close()
+
+
+def test_tile_brush(dll):
+    """B3 的瓦片刷子:CSV 建/读/写/批量,以及"一次拖拽 = 一条撤销"。"""
+    print("[瓦片刷子:tilemap.create/info/set/paint/csv]")
+    with tempdir("ds_tile_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "t"})
+            eid = m.ok("entity.add", {"name": "map"})["id"]
+            check("普通实体不能用 tilemap.info",
+                  "没有 tilemap" in m.err("tilemap.info", {"id": eid}))
+            m.ok("comp.add", {"id": eid, "comp": "tilemap"})
+            r = m.ok("tilemap.create",
+                     {"id": eid, "path": "res/map.csv", "cols": 4, "rows": 3})
+            csv_path = os.path.join(tmp, "res", "map.csv")
+            check("tilemap.create 落盘", os.path.exists(csv_path), r)
+            check("tilemap.create 把 path 写进组件",
+                  os.path.normcase(m.ok("tilemap.info", {"id": eid})["path"])
+                  == os.path.normcase(csv_path))
+            with open(csv_path, encoding="utf-8") as f:
+                text = f.read()
+            check("新建的 CSV 是 3 行 4 列全空",
+                  text.count("\n") == 3 and text.count("-1") == 12, repr(text))
+
+            info = m.ok("tilemap.info", {"id": eid})
+            check("tilemap.info 尺寸对", info["cols"] == 4 and info["rows"] == 3, info)
+            check("tilemap.info 带几何(16×16 像素/格)",
+                  info["tw"] == 16 and info["th"] == 16, info)
+            check("tilemap.info 全空", set(info["tiles"]) == {-1}, info["tiles"])
+            check("没有图集时 atlas_url 为空", info["atlas_url"] == "")
+
+            r = m.ok("tilemap.set", {"id": eid, "col": 2, "row": 1, "tile": 5})
+            check("tilemap.set 返回网格尺寸", r["cols"] == 4 and r["rows"] == 3, r)
+            info = m.ok("tilemap.info", {"id": eid})
+            check("画的那一格读回来是 5", info["tiles"][1 * 4 + 2] == 5, info["tiles"])
+            check("其它格没被碰到", info["tiles"].count(5) == 1, info["tiles"])
+
+            m.ok("undo")
+            eid2 = m.ok("entity.find", {"name": "map"})["id"]
+            info = m.ok("tilemap.info", {"id": eid2})
+            check("撤销瓦片后 CSV 复原(瓦片不在场景 JSON 里,靠 CSV 快照)",
+                  set(info["tiles"]) == {-1}, info["tiles"])
+
+            cells = [{"col": c, "row": 0, "tile": 7 + c} for c in range(4)]
+            r = m.ok("tilemap.paint", {"id": eid2, "cells": cells})
+            check("tilemap.paint 写 4 格", r["count"] == 4, r)
+            info = m.ok("tilemap.info", {"id": eid2})
+            check("paint 四格都写进去了", info["tiles"][0:4] == [7, 8, 9, 10],
+                  info["tiles"][0:4])
+            m.ok("undo")
+            eid3 = m.ok("entity.find", {"name": "map"})["id"]
+            check("整笔 paint 只需撤销一次",
+                  set(m.ok("tilemap.info", {"id": eid3})["tiles"]) == {-1},
+                  m.ok("tilemap.info", {"id": eid3})["tiles"])
+
+            r = m.ok("tilemap.set", {"id": eid3, "col": 9, "row": 5, "tile": 2})
+            check("画到范围外会自动扩", r["cols"] == 10 and r["rows"] == 6, r)
+            info = m.ok("tilemap.info", {"id": eid3})
+            check("扩展后旧格子保留、新格子写入",
+                  info["tiles"][5 * 10 + 9] == 2 and len(info["tiles"]) == 60, len(info["tiles"]))
+
+            m.ok("tilemap.csv", {"id": eid3, "csv": "-1,1\n2,-1\n"})
+            info = m.ok("tilemap.info", {"id": eid3})
+            check("tilemap.csv 整图替换", info["cols"] == 2 and info["rows"] == 2
+                  and info["tiles"] == [-1, 1, 2, -1], info)
+            with open(csv_path, encoding="utf-8") as f:
+                check("整图替换也落盘", f.read().strip() == "-1,1\n2,-1".strip())
+
+            e = m.err("tilemap.set", {"id": eid3, "col": -1, "row": 0})
+            check("负坐标给出原因", "col" in e or "row" in e, e)
+            e = m.err("tilemap.create", {"id": eid3})
+            check("缺 path 给出原因", "args.path" in e, e)
+            e = m.err("tilemap.info", {"id": 999999})
+            check("无效实体的 tilemap.info 带原因", "不存在" in e or "没有 tilemap" in e, e)
+        finally:
+            m.close()
+
+
+def test_clipboard(dll):
+    """B3 的复制/粘贴/再做一个(字段级复制,对所有组件都成立)。"""
+    print("[复制 / 粘贴 / 批量字段写]")
+    with tempdir("ds_clip_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "c"})
+            a = m.ok("entity.add", {"name": "src"})["id"]
+            m.ok("comp.add", {"id": a, "comp": "sprite"})
+            m.ok("comp.set", {"id": a, "comp": "sprite", "field": "sw", "value": 24})
+            m.ok("comp.set", {"id": a, "comp": "sprite", "field": "sh", "value": 12})
+            m.ok("entity.set_pos", {"id": a, "x": 100, "y": 40})
+
+            r = m.ok("entity.duplicate", {"id": a, "dx": 10, "dy": -5})
+            dup = r["ids"][0]
+            check("duplicate 返回新 id 且不同", dup != a, r)
+            d = m.ok("entity.get", {"id": dup})
+            check("duplicate 复制了组件字段", d["comps"]["sprite"]["sw"] == 24
+                  and d["comps"]["sprite"]["sh"] == 12, d["comps"].get("sprite"))
+            check("duplicate 位置按偏移", d["x"] == 110 and d["y"] == 35, d)
+            check("duplicate 保留了名字", d["name"] == "src", d["name"])
+            check("原实体没被动过",
+                  m.ok("entity.get", {"id": a})["x"] == 100)
+
+            r = m.ok("entity.duplicate", {"ids": [a, dup], "dx": 0, "dy": 0})
+            check("duplicate 支持一次多个", len(r["ids"]) == 2, r)
+            check("实体总数 = 4", len(m.ok("entity.list")) == 4)
+
+            r = m.ok("entity.copy", {"ids": [a]})
+            check("entity.copy 记下 1 个", r["count"] == 1, r)
+            r = m.ok("entity.paste", {"dx": -50, "dy": -50})
+            pasted = r["ids"][0]
+            d = m.ok("entity.get", {"id": pasted})
+            check("paste 位置按偏移", d["x"] == 50 and d["y"] == -10, d)
+            check("paste 带组件", d["comps"]["sprite"]["sw"] == 24, d["comps"].get("sprite"))
+
+            r = m.ok("comp.set_many", {"items": [
+                {"id": a, "comp": "transform", "field": "x", "value": 1},
+                {"id": a, "comp": "transform", "field": "y", "value": 2},
+            ]})
+            check("comp.set_many 报条数", r["count"] == 2, r)
+            d = m.ok("entity.get", {"id": a})
+            check("set_many 两项都生效", d["x"] == 1 and d["y"] == 2, d)
+            n_undo = m.ok("app.info")["undo"]
+            m.ok("undo")
+            check("set_many 一条撤销就全回去(不是两条)",
+                  m.ok("app.info")["undo"] == n_undo - 1)
+            a2 = m.ok("entity.find", {"name": "src"})["id"]
+            d = m.ok("entity.get", {"id": a2})
+            check("撤销后 xy 都复原", d["x"] == 100 and d["y"] == 40, d)
+
+            e = m.err("entity.duplicate", {})
+            check("duplicate 缺 id 给出原因", "args.id" in e, e)
+            e = m.err("comp.set_many", {"items": []})
+            check("空 items 给出原因", "items" in e, e)
+            e = m.err("comp.set_many", {"items": [
+                {"id": a2, "comp": "transform", "field": "nope", "value": 1}]})
+            check("batch 里字段错也带原因", "没有字段" in e, e)
+            check("batch 失败不留半成品",
+                  m.ok("entity.get", {"id": a2})["x"] == 100, m.ok("entity.get", {"id": a2}))
+        finally:
+            m.close()
+
+
 def test_cli():
     print("[宿主 CLI(不开窗口)]")
     if not os.path.exists(EXE):
@@ -387,6 +602,9 @@ def test_webview_chain():
                        encoding="utf-8", errors="replace", timeout=120)
     check("窗口 + 本地页面 + JS↔C 往返通", r.returncode == 0, (r.stdout or "")[-400:])
     check("自测报告 PASS", "PASS" in (r.stdout or ""), r.stdout)
+    # 页面那一层(渲染图/层级树/属性面板/瓦片刷子)由页面自己验,结果回传给宿主断言
+    check("界面自测跑起来了", "界面自测" in (r.stdout or ""), (r.stdout or "")[-600:])
+    check("界面自测全过", "0 项失败" in (r.stdout or ""), (r.stdout or "")[-600:])
 
 
 def main():
@@ -405,6 +623,9 @@ def main():
     test_undo_redo(dll)
     test_errors(dll)
     test_scene_json(dll)
+    test_viewport(dll)
+    test_tile_brush(dll)
+    test_clipboard(dll)
     test_cli()
     test_webview_chain()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败" + (f", {SKIP} 跳过" if SKIP else ""))

@@ -47,7 +47,7 @@ static void *try_load(const char *path)
 int ds_engine_load(DsEngine *e, const char *dll_path, const char *exe_dir)
 {
     void *h = NULL;
-    const char *missing[8];
+    const char *missing[32];
     int miss_n = 0;
     char cand[1024];
     char dir[1024];
@@ -92,6 +92,10 @@ int ds_engine_load(DsEngine *e, const char *dll_path, const char *exe_dir)
     BIND_I(scene_save); BIND_I(scene_load); BIND_I(scene_load_json); BIND_S(scene_json);
     BIND_I(frame_begin); BIND_I(frame_end); BIND_I(draw_scene);
     BIND_I(pixel); BIND_I(save_bmp); BIND_I(set_clear_color);
+    BIND_I(width); BIND_I(height); BIND_I(set_view);
+    BIND_I(tex_width); BIND_I(tex_height);
+    BIND_I(tilemap_load_csv); BIND_I(tilemap_load_file); BIND_I(tilemap_save_csv);
+    BIND_I(tilemap_tile); BIND_I(tilemap_cols); BIND_I(tilemap_rows);
     BIND_F(world_x); BIND_F(world_y);
     BIND_S(last_error); BIND_I(clear_error);
 
