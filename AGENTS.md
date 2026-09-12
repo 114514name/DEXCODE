@@ -7,6 +7,7 @@
 > - `README.md` — 面向使用者:怎么装、怎么跑、有哪些库与示例
 > - `docs/SPEC.md` — 语言与字节码的**权威规格**(改格式必须同步这里)
 > - `docs/MEMORY_DESIGN.md` — 内存模型的方案与**已实施/已撤销**结论
+> - `docs/DEXGAME_DESIGN.md` — **dexgame 游戏引擎 + 可视化 IDE 的设计决策与里程碑**
 > - `docs/TUTORIAL.md`、`docs/*_guide.html` — 教学材料
 > - 本文件 — 状态、约定、陷阱、待办
 
@@ -167,7 +168,7 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | 陷阱 | 现象 | 应对 |
 |------|------|------|
 | zig 缓存复用失败的链接 | 修好编译参数后仍报旧的 `undefined symbol` | 构建前清空 `_zigcache/`;`build_libs.bat` 已内置 |
-| sandbox/受限环境写 zig 缓存被拒 | `failed to create output directory ...AccessDenied` | 把 `ZIG_GLOBAL_CACHE_DIR`/`TMP` 指向工作区内 |
+| sandbox/受限环境写 zig 缓存被拒 | `failed to create output directory ...AccessDenied` —— 报错**像编译器坏了或源码有问题**,其实只是 zig 的默认缓存(`%LOCALAPPDATA%\zig\tmp`)与 `%TEMP%` 在工作区外、写不进去 | `build_libs.bat` 与 `main.py build-vm`(内部 `_compiler_env()`)都已把 `ZIG_GLOBAL_CACHE_DIR`/`TMP` 指向工作区内的 `_zigcache/` 与 `_zigtmp/`;只有**手写** zig 命令时才需自己设。注意 `main.py` 直到 `e1c0a83` 才补上,此前同一环境下「库能构建、VM 不能构建」 |
 | 测试临时文件重名 | 4 个测试文件曾共用 `_tmp_test.dexbc`,互相覆盖导致 VM 读到截断文件而随机崩溃 | 各测试文件使用带唯一后缀的路径(已修) |
 | `str.endswith("([{")` | 参数是**后缀串**不是字符集合,该判断恒为假(曾让"行尾 `{` 自动缩进"从未生效) | 用「末字符 ∈ 集合」判断 |
 | `tag_configure` 放在 `tag_add` 之后 | 配置不作用于已打区间(折叠的 `elide` 曾完全失效) | 先 `tag_configure` 再 `tag_add` |
@@ -225,6 +226,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | 新增 `docs/DEXGAME_DESIGN.md`(dexgame 决策记录 / ABI 方案 / 里程碑);本文件接入该文档、更新 zig 缓存陷阱行与待办 |
+| `e1c0a83` | `main.py build-vm` 在受限环境下失败:把 zig 缓存/临时目录收进工作区(`_compiler_env()`),并给出可操作的失败诊断。重编产物与已提交二进制**逐字节一致** |
 | `41c1777` | `tests/_tmpdir.py` 的回退分支原先**恒不触发**:`tempfile.gettempdir()` 在所有候选都不可用时按 Python 既定行为退化成 `os.getcwd()`,于是临时目录被撒在仓库根而不是 `_tmptest/`。现显式排除 cwd |
 | `6471b34` | 修正本文件与 README 的失实项:测试计数、34 MB 体积归因(示例媒体 28 MB 而非二进制)、galide/bluedit 重复规模、待办重排 |
 | `4b6836a` | 删除停用的 `galide/`(与 `bluedit/` 重复 **104 个同名定义**)+ 其测试 |
@@ -257,7 +260,13 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 ## 7. 待办 / 已知未做
 
-按价值排序,括号内是我的评估:
+**进行中:dexgame 游戏引擎(设计见 `docs/DEXGAME_DESIGN.md`)** — 决策已全部锁定,
+按 `M0.5 ABI 扩展 → M1 D3D11 渲染核心 → M2 场景与实体 → M3 物理 → M4 接口层` 推进;
+可视化 IDE(产品 B)在引擎可独立发布之后再动。下一刀是 **M0.5**。
+开工前已验证的两个前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK/特性级别 11_1);
+② `python main.py build-vm` 可重编且产物与已提交二进制逐字节一致。
+
+以下是既有项目的零散待办,按价值排序:
 
 1. **示例媒体占仓库体积的 80%**:`examples/**/res/` 28 MB(单个 mp3 4.5 MB、单张
    jpg 3 MB)。若要瘦身,方向是压缩/换格式/移出仓库(用下载脚本或 LFS),而不是动二进制。
