@@ -51,7 +51,9 @@
   二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
   **2.4 MB**。要让仓库瘦身,该动的是示例媒体,不是二进制。
 - 版本控制**刚建立**(2026-09),此前项目无 git;历史提交从「初始导入」开始。
-- ⚠️ **没有任何 git remote**:仓库只存在于本机磁盘,属单点故障。见「待办」第 1 条。
+- 远端 `origin` = `git@github.com:114514name/DEXCODE.git`。**本机到 `github.com:22`
+  的连接会被对端直接关闭**(TCP 其实通,但握手被切断),必须走 GitHub 官方备用通道
+  `ssh.github.com:443` —— 已写入 `~/.ssh/config` 的 `Host github.com` 块。见 §4。
 
 ### 测试基线(改动后请对照)
 
@@ -174,6 +176,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **`tempfile.mkdtemp` 的 `0o700` ACL**(最坑的一条) | 受限沙箱(只放行工作区写入)下,`mkdtemp`/`TemporaryDirectory` 建出的目录**内部既不能建子目录也不能写文件**,连 `shutil.rmtree` 都被拒;最外层只看到 `PermissionError: [WinError 5] 拒绝访问` / `[Errno 13] Permission denied`,看不出病因。曾让 `test_bluedit`/`test_designer`/`test_module`/`test_vm_versions` 四个脚本 rc=1 | `mkdtemp` 内部是 `os.mkdir(p, 0o700)`。实测同一父目录下:`0o700` FAIL / `0o777` OK / 默认 OK。测试统一走 `tests/_tmpdir.py`(以 `0o777` 建目录)。见 §3.4 |
 | 库函数失败只返回空值 | `bluedit.export.export_project` 失败时返回 `""`,裸调用后 `open(path)` 抛 `FileNotFoundError: ''`,把真实原因(「无法创建输出目录 …」)彻底吞掉 —— 排查时完全不知从何下手 | 测试改用 `_export()` 包装,失败时抛出 `export.last_error` 的内容。**写同类 API 时:失败要带得出原因,不要只返回空值**(库侧早已把原因记在 `last_error`,是调用方丢了它) |
 | `tests/test_editor.py` 驱动的是哪份 exe | 该测试曾指向**不存在**的 `tools/galedit.exe`(实际在 `tools/legacy_galedit_c/`),两个用例永远 skip,`check(..., True)` 是死代码 | 已修:路径更正 + `.gitignore` 放行该 exe + exe 入库(否则 clone 后仍缺文件)。现为 18 项有效断言 |
+| **`github.com:22` 被对端切断** | `git push` 报 `Connection closed by <ip> port 22`。注意这**不是** `Permission denied (publickey)` —— 用 `Test-NetConnection` 测 TCP 是通的,极容易被误判成「缺密钥/仓库不存在」而白折腾 | 走 GitHub 官方备用通道:在 `~/.ssh/config` 写 `Host github.com` / `HostName ssh.github.com` / `Port 443` / `User git`。验证:`ssh -T git@github.com` 应回 `Hi <用户名>! You've successfully authenticated` |
+| 受限沙箱阻断 Git 出站 | 沙箱(仅工作区写)下 `git ls-remote`/`push` 报 `sh.exe: couldn't create signal pipe, Win32 error 5`,HTTPS 则报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS` —— 看起来像 Git 坏了或没凭据,其实只是沙箱不放行出站 | 这两条都是**沙箱**造成,不是 Git 或凭据问题;提权后同一命令即恢复正常。诊断时先用 `git ls-remote <url>` 判定「通道是否通」「仓库是否存在」 |
 
 ---
 
@@ -213,15 +217,20 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 ## 6. 变更记录(新→旧)
 
 > 每完成一项改动,在这里加一行;细节请写在提交信息里。
+>
+> **哈希基准**:下表哈希来自「首次推送前把占位身份 `DEXCODE Dev <dev@localhost>`
+> 统一改写为 `114514name <feifan477@gmail.com>`」之后的历史。改写会改变**所有**
+> 提交的哈希,故此刻之前的任何旧哈希记录均已失效。此后本仓库提交身份为
+> `114514name <feifan477@gmail.com>`(本地 `git config`,未动全局配置)。
 
 | 提交 | 内容 |
 |------|------|
-| 补丁(见提交信息) | `tests/_tmpdir.py` 的回退分支原先**恒不触发**:`tempfile.gettempdir()` 在所有候选都不可用时按 Python 既定行为退化成 `os.getcwd()`,于是临时目录被撒在仓库根而不是 `_tmptest/`。现显式排除 cwd |
-| (本次 docs) | 修正本文件与 README 的失实项:测试计数、34 MB 体积归因(示例媒体 28 MB 而非二进制)、galide/bluedit 重复规模、待办重排 |
-| `78f4170` | 删除停用的 `galide/`(与 `bluedit/` 重复 **104 个同名定义**)+ 其测试 |
-| `a45e96a` | `test_editor.py` 指向真实存在的 `galedit.exe` 并入库该二进制(0 → 18 项有效断言) |
-| `f5ce92e` | 测试临时目录改用 `tests/_tmpdir.py`:修 `mkdtemp` 的 `0o700` ACL 导致 4 脚本失败;`test_bluedit` 导出失败改为带出 `last_error` |
-| `e955448` | `.dexdef` 原生 arity 上限改为**编译期强制**(`MAX_NATIVE_ARITY`,SPEC 4.5 同步) |
+| `41c1777` | `tests/_tmpdir.py` 的回退分支原先**恒不触发**:`tempfile.gettempdir()` 在所有候选都不可用时按 Python 既定行为退化成 `os.getcwd()`,于是临时目录被撒在仓库根而不是 `_tmptest/`。现显式排除 cwd |
+| `6471b34` | 修正本文件与 README 的失实项:测试计数、34 MB 体积归因(示例媒体 28 MB 而非二进制)、galide/bluedit 重复规模、待办重排 |
+| `4b6836a` | 删除停用的 `galide/`(与 `bluedit/` 重复 **104 个同名定义**)+ 其测试 |
+| `7f50657` | `test_editor.py` 指向真实存在的 `galedit.exe` 并入库该二进制(0 → 18 项有效断言) |
+| `2a48704` | 测试临时目录改用 `tests/_tmpdir.py`:修 `mkdtemp` 的 `0o700` ACL 导致 4 脚本失败;`test_bluedit` 导出失败改为带出 `last_error` |
+| `0828d9f` | `.dexdef` 原生 arity 上限改为**编译期强制**(`MAX_NATIVE_ARITY`,SPEC 4.5 同步) |
 | `b032a14` | IDE:括号配对高亮 + 查找替换(Ctrl+F/H/F3) + 代码折叠(边栏点击) |
 | `802b04d` | IDE:着色按 token 种类完整归类(修 1 基列偏移)+ 语法感知缩进 + 自动配对/Tab/Ctrl+/ |
 | Revert | **撤销 P4 字符串引用计数**(理由见 MEMORY_DESIGN 6.1) |
@@ -250,25 +259,22 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 按价值排序,括号内是我的评估:
 
-1. **没有任何 git remote**(高价值,需人工)。仓库只存在于本机磁盘 —— 一次误删或磁盘
-   故障即全部丢失,而这是目前**唯一**的恢复手段(打包目录里的旧快照早已删除)。
-   请补一个远端并首次 `push`。
-2. **示例媒体占仓库体积的 80%**:`examples/**/res/` 28 MB(单个 mp3 4.5 MB、单张
+1. **示例媒体占仓库体积的 80%**:`examples/**/res/` 28 MB(单个 mp3 4.5 MB、单张
    jpg 3 MB)。若要瘦身,方向是压缩/换格式/移出仓库(用下载脚本或 LFS),而不是动二进制。
-3. **`bluedit/settings.py` 仍把配置写到 `~/.galide.json`**:`galide/` 已删除,这个文件名
+2. **`bluedit/settings.py` 仍把配置写到 `~/.galide.json`**:`galide/` 已删除,这个文件名
    成了遗留物。直接改名会静默丢用户设置,故**未改**;如要改名需带迁移(旧文件存在且
    新文件不存在时沿用旧文件)。
-4. **环境相关的散件**(已 gitignore,未删除):根目录 20+ 个 `_*` 调试脚本与
+3. **环境相关的散件**(已 gitignore,未删除):根目录 20+ 个 `_*` 调试脚本与
    `_sm2.pdb`/`_smoke.pdb`(各 1.1 MB)、`nuitka-crash-report.xml`(0.6 MB)、
    `_zigcache/`(103 MB)、`.venv/`(353 MB)。另外 `我的项目/`、`我的界面设计/`、
    `完整导出/`、`mycode/` 是用户数据,归属待确认。
-5. **IDE 未实现**:多光标、`Ctrl+D` 选同词、正则/全词查找、查找历史、
+4. **IDE 未实现**:多光标、`Ctrl+D` 选同词、正则/全词查找、查找历史、
    自动换行、代码折叠跨多行注释。
-6. **`vm.c` 的 arity 兜底可以更早**:手写/篡改的 `.dexbc` 目前要到**调用期**才报
+5. **`vm.c` 的 arity 兜底可以更早**:手写/篡改的 `.dexbc` 目前要到**调用期**才报
    `unsupported native arity`;加载期只拒绝 `arity > 8`。改成加载期直接拒绝 `> 3`
    能让不可调用的签名更早暴露。**未做**,因为要重编 `vm.exe`/`vmnc.exe`/`galrun.exe`
    并重新入库三个二进制(改动收益小、二进制 diff 噪声大)。
-7. **文档漂移风险**:`README`/本文件里的测试项数会随测试增加而过期。
+6. **文档漂移风险**:`README`/本文件里的测试项数会随测试增加而过期。
    本文件已改为只维护「本机实测总数」,逐文件数字以实际运行为准。
 
 ### 明确不建议做(除非条件变化)
