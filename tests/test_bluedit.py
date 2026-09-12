@@ -13,7 +13,9 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from _tmpdir import mktempdir  # noqa: E402
 from bluedit import model as M
 from bluedit import vars as vars_mod
 from bluedit import export as ex
@@ -31,6 +33,20 @@ def check(name, cond, detail=""):
     else:
         FAIL += 1
         print(f"  FAIL  {name}  {detail}")
+
+
+def _export(project, root_dir):
+    """包装 export_project:失败时抛出可读原因。
+
+    裸调用会让紧随其后的 `open(path)` 抛 `FileNotFoundError: [Errno 2] ...: ''`
+    —— 空路径,完全看不出病因(常见病因是临时目录不可写)。库侧其实已经
+    把原因记在 export.last_error,这里把它带出来。
+    """
+    path = ex.export_project(project, root_dir)
+    if not path:
+        raise AssertionError(
+            f"export_project 失败: {ex.last_error or '未知原因'} (root_dir={root_dir})")
+    return path
 
 
 def make_project():
@@ -113,9 +129,15 @@ def test_vars():
 def test_export_compile():
     print("导出 DexLang 可编译")
     p = make_project()
-    d = tempfile.mkdtemp()
-    path = ex.export_project(p, d)
-    check("导出成功", bool(path))
+    d = mktempdir()
+    # 失败时给出库侧记录的真实原因(见 export.last_error);否则下面 open("")
+    # 只会抛 `FileNotFoundError: ''`,完全掩盖病因。这里不中断,让其余用例照常跑完。
+    try:
+        path = _export(p, d)
+    except AssertionError as e:
+        check("导出成功", False, str(e))
+        return
+    check("导出成功", True)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     check("含 include", 'include "gal_static";' in text or 'include "gal";' in text)
@@ -177,8 +199,8 @@ def test_new_blocks():
     wait2 = [n for n in sc2.nodes if n.type == M.N_WAIT]
     check("等待属性保留", len(wait2) == 1 and wait2[0].ms == 500)
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -233,8 +255,8 @@ def test_scene_data():
     rb = [n for n in p2.scenes[1].nodes if n.type == M.N_DREF]
     check("场景数据属性保留", len(rb) == 1 and rb[0].out_scene == 0 and rb[0].out_name == "hp_val")
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -289,8 +311,8 @@ def test_menu_data_outputs():
     check("菜单块往返输出口", len(mn2) == 1 and
           [q.kind for q in mn2[0].outputs] == ["exec", "value", "value"])
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -350,8 +372,8 @@ def test_literal_blocks():
     b2 = [n for n in sc2.nodes if n.type == M.N_BOLLIT]
     check("布尔属性保留", len(b2) == 1 and b2[0].lit_bool == 1)
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -455,8 +477,8 @@ def test_sound_trans():
     tr2 = [n for n in sc2.nodes if n.type == M.N_SCENE_TRANS]
     check("切镜头属性保留", len(tr2) == 1 and tr2[0].scene_trans_ms == 300)
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -500,8 +522,8 @@ def test_toast():
     check("属性保留", len(t2) == 1 and t2[0].toast_text == "获得道具:神秘钥匙"
           and t2[0].toast_corner == 0 and t2[0].toast_ms == 2000)
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -547,8 +569,8 @@ def test_fileio_blocks():
     sv2 = [n for n in p2.scenes[0].nodes if n.type == M.N_SAVE]
     check("存档属性保留", len(sv2) == 1 and sv2[0].file_path == "save/档1.dat")
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -603,8 +625,8 @@ def test_checkpoint():
     check("存档点属性保留", len(ck) == 2 and ck[0].ck_name == "A"
           and ck[0].file_path == "save/档1.dat")
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -668,8 +690,8 @@ def test_menu_data_inputs():
     check("往返后输入口保留", [q.kind for q in mn2.inputs] == ["exec", "value"])
     check("往返后 M_IN 保留", [n.param_name for n in m2.param_nodes()] == ["标题"])
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -695,8 +717,8 @@ def test_checkpoint_demo():
     check("含存档点A", len(cks) == 1 and cks[0].ck_name == "A"
           and cks[0].file_path == "save/check1.dat")
     check("含跳转", len(jmps) == 1 and jmps[0].file_path == "save/check1.dat")
-    d = tempfile.mkdtemp()
-    path = ex.export_project(p, d)
+    d = mktempdir()
+    path = _export(p, d)
     check("导出成功", bool(path))
     with open(path, encoding="utf-8") as f:
         text = f.read()
@@ -732,8 +754,8 @@ def test_menu_input_demo():
     mn = [n for n in p.scenes[0].nodes if n.type == M.N_MENU][0]
     check("菜单块输入口", [q.kind for q in mn.inputs] == ["exec", "value"]
           and mn.inputs[1].name == "问候语")
-    d = tempfile.mkdtemp()
-    path = ex.export_project(p, d)
+    d = mktempdir()
+    path = _export(p, d)
     check("导出成功", bool(path))
     with open(path, encoding="utf-8") as f:
         text = f.read()
@@ -807,8 +829,8 @@ def test_menu_ext_blocks():
     check("M_JUMP 往返保留", [n.flow_scene for n in m2_.nodes
           if n.type == M.M_JUMP] == [1])
     # 导出 + 编译
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -836,8 +858,8 @@ def test_menu_actions_demo():
     ck = [n for n in m.nodes if n.type == M.M_CLICK]
     check("菜单内设置变量", len(sv) == 1 and sv[0].var_name == "player_name")
     check("菜单内点击起点", len(ck) == 1 and ck[0].target_ctrl == "ok")
-    d = tempfile.mkdtemp()
-    path = ex.export_project(p, d)
+    d = mktempdir()
+    path = _export(p, d)
     check("导出成功", bool(path))
     with open(path, encoding="utf-8") as f:
         text = f.read()
@@ -869,8 +891,8 @@ def test_cat_demo():
           and sprs[0].spr_layer == 0 and sprs[1].spr_layer == 1)
     check("场景1 三选项", len(chs) == 1 and len(chs[0].options) == 3)
     check("好感度变量", len(dv) == 1 and dv[0].var_name == "affection")
-    d = tempfile.mkdtemp()
-    path = ex.export_project(p, d)
+    d = mktempdir()
+    path = _export(p, d)
     check("导出成功", bool(path))
     with open(path, encoding="utf-8") as f:
         text = f.read()
@@ -913,8 +935,8 @@ def test_long_char_controls():
     longn.long_dual = 0        # 单立绘模式:旁白行隐藏立绘(空白)
     sc.links.append(M.Link(sc.lid, entry.id, 0, longn.id, 0)); sc.lid += 1
     sc.links.append(M.Link(sc.lid, longn.id, 0, exitn.id, 0)); sc.lid += 1
-    d = tempfile.mkdtemp()
-    path2 = ex.export_project(p2, d)
+    d = mktempdir()
+    path2 = _export(p2, d)
     check("导出成功", bool(path2))
     with open(path2, encoding="utf-8") as f:
         text = f.read()
@@ -949,9 +971,9 @@ def test_long_dual():
     longn = sc.new_node(M.N_LONG, 0, 0)
     longn.lines = [(0, "A 说话"), (1, "B 说话"), (0, "A 再说")]
     L(entry.id, 0, longn.id, 0); L(longn.id, 0, exitn.id, 0)
-    d = tempfile.mkdtemp()
+    d = mktempdir()
     # 默认:同屏双人
-    path = ex.export_project(p, d)
+    path = _export(p, d)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     check("双人立绘都显示", 'gal_sprite(0, "res/a.png");' in text
@@ -960,7 +982,7 @@ def test_long_dual():
           and 'gal_sprite_alpha(0, 90);' in text)
     # 关闭同屏:切换说话人时只留当前
     longn.long_dual = 0
-    path = ex.export_project(p, d)
+    path = _export(p, d)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     check("单立绘模式无压暗", 'gal_sprite_alpha(1, 90);' not in text)
@@ -976,7 +998,7 @@ def test_long_dual():
     longn.long_dual = 1
     longn.long_narration_hide = 1
     longn.lines = [(0, "A 说话"), (-1, "旁白内容"), (1, "B 说话")]
-    path = ex.export_project(p, d)
+    path = _export(p, d)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     seg = near_lines(text)
@@ -984,14 +1006,14 @@ def test_long_dual():
     # 单立绘模式:旁白隐藏(默认)
     longn.long_dual = 0
     longn.long_narration_hide = 1
-    path = ex.export_project(p, d)
+    path = _export(p, d)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     seg = near_lines(text)
     check("单立绘时旁白隐藏", any("gal_sprite_show" in x for x in seg), str(seg))
     # 单立绘 + 关旁白隐藏 → 旁白保留
     longn.long_narration_hide = 0
-    path = ex.export_project(p, d)
+    path = _export(p, d)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     seg = near_lines(text)

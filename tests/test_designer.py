@@ -8,11 +8,12 @@
 
 import os
 import sys
-import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from _tmpdir import tempdir  # noqa: E402
 from dexlang import Lexer, Parser, compile_program, DexError  # noqa: E402
 from dexide.designer import (  # noqa: E402
     Widget, design_to_dict, design_from_dict, gen_dex,
@@ -100,7 +101,7 @@ def test_gen_dex_compiles():
 def test_save_load():
     print("保存/加载设计文件")
     d = make_design()
-    with tempfile.TemporaryDirectory(prefix="dexds_") as tmp:
+    with tempdir("dexds_") as tmp:
         path = os.path.join(tmp, "ui.egui")
         save_design(path, d)
         d2 = load_design(path)

@@ -13,11 +13,12 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from _tmpdir import tempdir  # noqa: E402
 import main as dexmain  # noqa: E402
 
 PASS = 0
@@ -70,7 +71,7 @@ def test_release_package():
     if not os.path.exists(GALRUN):
         skip("release 打包", "galrun.exe 未构建")
         return
-    with tempfile.TemporaryDirectory(prefix="dexrel_") as tmp:
+    with tempdir("dexrel_") as tmp:
         src = os.path.join(tmp, "game.dex")
         with open(src, "w", encoding="utf-8") as f:
             f.write(GAME_SRC)
@@ -105,7 +106,7 @@ def test_vm_reads_core_do():
     if not os.path.exists(VM):
         skip("core.do 读取", "vm.exe 未构建")
         return
-    with tempfile.TemporaryDirectory(prefix="dexvm_") as tmp:
+    with tempdir("dexvm_") as tmp:
         shutil.copy(VM, os.path.join(tmp, "vm.exe"))
         # 用非 GUI 程序(避免窗口),验证 core.do 机制
         src = os.path.join(tmp, "t.dex")

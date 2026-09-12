@@ -10,11 +10,12 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from _tmpdir import mktempdir  # noqa: E402
 from dexlang import (  # noqa: E402
     Lexer, Parser, compile_program, assemble, DexError,
 )
@@ -99,7 +100,7 @@ def test_module_cvm():
 def test_recursive_module():
     print("递归模块 include")
     # 模块 A include 模块 B;主文件只 include A
-    tmp = tempfile.mkdtemp(prefix="dexmod_")
+    tmp = mktempdir("dexmod_")
     try:
         os.makedirs(os.path.join(tmp, "libb"))
         os.makedirs(os.path.join(tmp, "liba"))
@@ -116,7 +117,7 @@ def test_recursive_module():
 
 def test_duplicate_include_dedup():
     print("重复 include 去重")
-    tmp = tempfile.mkdtemp(prefix="dexmod_")
+    tmp = mktempdir("dexmod_")
     try:
         with open(os.path.join(tmp, "dup.dex"), "w", encoding="utf-8") as f:
             f.write("func dup_f() -> int { return 5; }\n")
@@ -129,7 +130,7 @@ def test_duplicate_include_dedup():
 
 def test_library_may_not_execute():
     print("模块非法顶层语句")
-    tmp = tempfile.mkdtemp(prefix="dexmod_")
+    tmp = mktempdir("dexmod_")
     try:
         with open(os.path.join(tmp, "bad.dex"), "w", encoding="utf-8") as f:
             f.write("let x = 1;\n")
