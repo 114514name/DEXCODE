@@ -30,7 +30,7 @@
 | 产品 B: B6 资源与自动保存 | ✅ 完成 | `res.*`(导入/列表/改名/删除,缩略图走虚拟主机)+ 整包自动保存 + 崩溃恢复提示;`tests/test_dexstudio.py` **279 项** + 页面自测 **58 项**;见 §9.6 |
 | 产品 B: B7 打包 | ✅ 完成 | 前端资源内嵌进 exe + `package-dexstudio` 打包命令 + 干净目录验证;`tests/test_dexstudio.py` **284 项**;见 §9.7 |
 | 产品 B: B8 中文/编码 | ✅ 完成 | 三层 UTF-8 路径层 + 标题宽字符 + 恢复提示会话标记;`tests/test_dexstudio.py` **323 项** + 页面自测 **60 项**;见 §9.8 |
-| 产品 B: B9 资源根/拉线预览 | ✅ 完成 | 引擎资源根(相对路径可加载)+ 逻辑图拉线预览跟鼠标 + 资源面板两处修复;`tests/test_dexstudio.py` **329 项** + 页面自测 **67 项**;见 §9.9 |
+| 产品 B: B9 资源根/拉线预览 | ✅ 完成 | 引擎资源根(相对路径可加载)+ 逻辑图拉线预览跟鼠标 + 资源面板两处修复;`tests/test_dexstudio.py` **329 项** + 页面自测 **68 项**;见 §9.9 |
 
 **M2 期间对本文设计的三处修正**(以代码为准):
 
@@ -610,7 +610,7 @@ IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
 | **B5** ✅ | 生成 + 运行 + 输出面板 + 错误定位 + 代码页签(自写高亮) | ✅ 见 §9.5:一键 = 存盘 + 重生成逻辑图 + `dexc.exe` 编译;诊断由 C 解析成 `{level,phase,line,col,msg}`,输出面板点一下跳到代码页签并在那一行闪一下;"运行"用 **vmnc.exe**(无控制台)开独立游戏窗口,"停止"能收掉(`build.status` 可查 pid/退出码);高亮是自写的词法着色(零第三方 JS) |
 | **B6** ✅ | 项目与资源管理:新建/打开项目、`res/` 导入、图集预览、自动保存/崩溃恢复 | ✅ 见 §9.6:`res.list/import/pick/delete/rename`(缩略图/试听走虚拟主机);**整包**自动保存(场景 + 瓦片 CSV + 逻辑图)→ `.dexstudio/autosave.json`;`app.info.recoverable` + 恢复提示条(恢复/丢弃,不擅自恢复);新建 → 导入资源 → 存盘 → 重开内容一致;崩溃(自动保存比场景新)能恢复出两个实体 |
 | **B7** ✅ | 打包:单 exe(内嵌前端资源)+ 发布说明 | ✅ 见 §9.7:**前端资源编译进 exe**;`python main.py package-dexstudio` 产出 `dist/DexStudio/`(exe + WebView2Loader.dll + libdexgame.dll + README);测试把这三个文件拷到**干净临时目录**(里面没有 `web/`)再跑 `--selftest` 与 `--wv-selftest`,两项都全过 —— 页面自测全过就是「内嵌资源可用」的证据 |
-| **B9** ✅ | 资源路径(资源根)+ 逻辑图拉线预览 + 资源面板 | ✅ 见 §9.9:引擎加 `eng_set_asset_dir` + `dg_fopen_asset`(场景里继续存**项目相对**路径,项目可搬);`mousemove` 的 guard 修正(拉线预览跟鼠标)。`eng_*` 168 → **169**;`tests/test_dexstudio.py` **329 项** + 页面自测 **67 项** |
+| **B9** ✅ | 资源路径(资源根)+ 逻辑图拉线预览 + 资源面板 | ✅ 见 §9.9:引擎加 `eng_set_asset_dir` + `dg_fopen_asset`(场景里继续存**项目相对**路径,项目可搬);`mousemove` 的 guard 修正(拉线预览跟鼠标)。`eng_*` 168 → **169**;`tests/test_dexstudio.py` **329 项** + 页面自测 **68 项** |
 | **B8** ✅ | 中文/编码修复 + 恢复提示语义(用户真机报的三个症状) | ✅ 见 §9.8:标题 `SetWindowTextW` + 回读断言;自动保存带 `session`/`clean` 标记,只提示**上一次运行**留下的;根因是 `ds_json` 把 UTF-8 字节当码点(二次编码)+ 窄字符 API 按 ANSI 解路径 → 新增 `ds_utf8.c`/`dg_utf8.c`/`dx_utf8.c` 三层 UTF-8 路径层。`tests/test_dexstudio.py` **323 项**,发布形态在**中文目录**里也跑通 |
 
 产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 2170 项**)。
@@ -928,7 +928,7 @@ dexstudio/host/dexstudio.exe --wv-selftest
 python tests/test_dexstudio.py      # 279 项(B6 新增 28 项)
 dexstudio/host/dexstudio.exe --wv-selftest
 #   PASS  窗口标题:[DexStudio — DexLang 可视化 IDE]
-#   PASS  界面自测:67 项通过,0 项失败(有项目时;无项目 55 项)
+#   PASS  界面自测:68 项通过,0 项失败(有项目时;无项目时更少)
 ```
 
 B6 那 28 项覆盖:资源列表/导入/重名不覆盖/源不存在/改名/删除/非法名/`pick dry`;
@@ -1076,7 +1076,7 @@ dexstudio.exe --wv-selftest       # 窗口标题回读 + 页面自测 60 项
 
 ```bash
 python tests/test_dexstudio.py    # 329 项(新增 test_asset_paths / test_graph_link_drag_visible)
-dexstudio.exe --wv-selftest       # 页面自测 67 项(有项目时),其中:
+dexstudio.exe --wv-selftest       # 页面自测 68 项(有项目时),其中:
 #   PASS  预览线跟着鼠标走(不是连完才出现)
 #   PASS  缩略图真的解码了  猫_害羞.png     (逐张都解码,中文名的 URL 转义是另一条路)
 #   PASS  点缩略图能给实体设上贴图(tex_path 是项目相对路径)  res/foo.png

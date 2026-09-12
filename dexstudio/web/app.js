@@ -962,7 +962,9 @@ window.__ds_selftest = async function () {
         info.tiles.slice(0, 4).join(','));
     }
 
-    /* --- 清理:把测试实体删掉 --- */
+    /* --- 清理:把测试实体**和它建的 CSV** 都删掉 ---
+     * 只删实体的话,`res/__uitest__.csv` 会留在用户项目里(实测就是这么发现的:
+     * 跑完自检,别人的 res/ 里多出一个 CSV)。 */
     const ids = DS.entities.map((e) => e.id);
     for (const id of ids) {
       const e = byId(id);
@@ -974,6 +976,18 @@ window.__ds_selftest = async function () {
     await refresh();
     t('清理后无残留测试实体',
       !DS.entities.some((e) => /__uitest__|__tiletest__/.test(e.name || '')));
+    if (DS.info && DS.info.root) {
+      try {
+        const rl = await ds('res.list');
+        if ((rl.files || []).some((f) => f.name === '__uitest__.csv')) {
+          await ds('res.delete', { name: '__uitest__.csv' });
+        }
+      } catch (e) { /* 没有就算了 */ }
+      await refreshResources();
+      t('清理后没在 res/ 里留下自测的 CSV',
+        !(DS.res || []).some((f) => f.name === '__uitest__.csv'),
+        (DS.res || []).map((f) => f.name).join(','));
+    }
 
     /* --- 逻辑图模式:节点面板 / 加节点 / 属性 / 连线 / 生成 ---
      * 自检**不能破坏**用户已有的图:只动自己加的三个节点,结尾删掉。 */
