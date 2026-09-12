@@ -16,6 +16,7 @@
 
 #include "dexgame.h"
 #include "dexvalue.h"
+#include "dg_utf8.h"
 
 #include <stdio.h>
 
@@ -291,6 +292,15 @@ int64_t eng_set_view(const DexValue *a, int n) {
                                (float)dv_float_or(a, n, 1, 0.0),
                                (float)dv_float_or(a, n, 2, 0.0),
                                (float)dv_float_or(a, n, 3, 1.0));
+    return 0;
+}
+
+/* 资源根:相对路径(场景里的 res/hero.png"这种)先拼到它后面再打开。
+ * IDE 打开项目时设成项目根 —— 否则 IDE 自己那个引擎实例的工作目录是 IDE 的目录,
+ * 场景里的相对路径一个都打不开。空串 = 回到"用当前工作目录"。 */
+int64_t eng_set_asset_dir(const DexValue *a, int n) {
+    dg_clear_error();
+    dg_asset_dir_set(n > 0 ? dv_str(&a[0]) : "");
     return 0;
 }
 

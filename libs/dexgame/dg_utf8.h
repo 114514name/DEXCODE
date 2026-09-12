@@ -21,4 +21,20 @@ wchar_t *dg_w(const char *utf8);
 /* fopen 的 UTF-8 版本(内部 _wfopen)。始终返回 FILE*,失败为 NULL。 */
 FILE *dg_fopen(const char *utf8_path, const char *mode);
 
+/* ---------------------------------------------------------------- 资源根 */
+
+/* 资源根目录:相对路径先拼到它后面再打开;空 = 按当前工作目录(旧行为)。
+ *
+ * 为什么需要它:场景/代码里写的是 **项目相对** 路径(`res/hero.png`)——
+ *   - 游戏由 IDE 启动时工作目录就是项目根,所以能用;
+ *   - 但 IDE 自己那个引擎实例的工作目录是 IDE 的目录,`res/hero.png` 必然打不开
+ *     ("设置 sprite.tex_path 失败: cannot open image"),而把绝对路径写进场景 JSON
+ *     又让项目一搬家就废。
+ * 于是加一个资源根:IDE 打开项目时设成项目根,运行时按需设成游戏目录。 */
+void dg_asset_dir_set(const char *utf8_dir);
+const char *dg_asset_dir(void);
+
+/* 把相对路径按资源根拼好,再 dg_fopen。绝对路径(盘符或 UNC)原样用。 */
+FILE *dg_fopen_asset(const char *utf8_path, const char *mode);
+
 #endif /* DG_UTF8_H */

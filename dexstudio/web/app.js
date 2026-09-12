@@ -292,10 +292,17 @@ async function applyRes(f) {
     return;
   }
   const id = DS.sel[DS.sel.length - 1];
-  const e = byId(id);
-  if (!e) return;
+  /* 刻意**现查一次**实体,而不是查本地缓存 DS.entities:
+   * 缓存一旦过期,这里会静默 return(用户看到的是"点了没反应")。 */
+  let e;
   try {
-    if ((e.comps || []).indexOf('sprite') < 0) {
+    e = await ds('entity.get', { id });
+  } catch (err) {
+    log('er', '实体已失效(' + id + '),先在层级树里重选一个');
+    return;
+  }
+  try {
+    if (!e.comps || !Object.prototype.hasOwnProperty.call(e.comps, 'sprite')) {
       await call('comp.add', { id, comp: 'sprite' }, '挂 sprite');
     }
     await call('comp.set', { id, comp: 'sprite', field: 'tex_path',
@@ -1003,6 +1010,36 @@ window.__ds_selftest = async function () {
     t('连线进了图(执行流 + 数据线)', Graph.stats().links === l0 + 2,
       Graph.stats().links);
     t('画布上画出了连线', canvasHasColor(gcanvas, '#89b4fa'));
+    /* 拉线预览:从输出引脚按下 + 移动鼠标,那根虚线必须**跟着鼠标**。
+     * 早先 mousemove 里先判断 `!drag` 就 return,而拉线用的是 pending,
+     * 于是预览线一动不动 —— 用户看到的是"连完才出现一根线"。 */
+    {
+      const pin = Graph.pinScreenPos(nmId, 'v');       /* 数字节点的输出引脚 */
+      const rect = gcanvas.getBoundingClientRect();
+      const evd = (type, x, y, buttons) => gcanvas.dispatchEvent(
+        new MouseEvent(type, { bubbles: true, clientX: rect.left + x,
+                               clientY: rect.top + y, button: 0, buttons }));
+      if (!pin) {
+        t('能取到输出引脚的屏幕位置', false, 'pinScreenPos 返回 null');
+      } else {
+        evd('mousedown', pin.x, pin.y, 1);
+        const st0 = Graph.dragState();
+        t('从输出引脚拖出预览线', !!st0.pending, JSON.stringify(st0));
+        /* 往右下挪 120/80 屏幕像素 */
+        const tx = pin.x + 120, ty = pin.y + 80;
+        evd('mousemove', tx, ty, 1);
+        const st1 = Graph.dragState();
+        const moved = st1.pending
+          && Math.abs(st1.pending.gx - st0.pending.gx) > 20
+          && Math.abs(st1.pending.gy - st0.pending.gy) > 20;
+        t('预览线跟着鼠标走(不是连完才出现)', moved,
+          JSON.stringify(st0) + ' → ' + JSON.stringify(st1));
+        evd('mouseup', tx, ty, 0);        /* 落在空白处 = 不连线,只清 pending */
+        t('松开后预览线消失', !Graph.dragState().pending);
+        await Graph.refresh();
+        Graph.select(sfId);
+      }
+    }
     if (DS.info && DS.info.root) {
       const gen = await ds('graph.generate');
       t('生成代码落盘', !!gen.path && gen.source.indexOf('func logic_update') >= 0,
@@ -1096,6 +1133,50 @@ window.__ds_selftest = async function () {
           resp.ok && txt.indexOf('"name"') >= 0, resp.status);
       } catch (e) {
         t('项目根映射出去了(资源缩略图靠它)', false, String(e));
+      }
+      /* 真的有图片资源时:**把每张缩略图都当图片解码一次**。fetch 到 200 还不算数
+       * —— <img> 走的是另一条路(缓存/解码/URL 转义),坏了就是一个裂图标。
+       * 逐个都要试:中文名的 URL 转义与 ASCII 完全不同。 */
+      {
+        const imgs = (DS.res || []).filter((f) => f.kind === 'image');
+        if (!imgs.length) {
+          out.skip.push('没有图片资源:跳过缩略图解码检查');
+        } else {
+          for (const img of imgs) {
+            const url = resUrl(img.name);
+            const ok = await new Promise((res) => {
+              const im = new Image();
+              const done = (v) => res(v);
+              im.onload = () => done(im.naturalWidth > 0 && im.naturalHeight > 0);
+              im.onerror = () => done(false);
+              setTimeout(() => done(false), 5000);
+              im.src = url;
+            });
+            t('缩略图真的解码了  ' + img.name, ok, url);
+          }
+          /* 点资源 = 给选中实体设贴图。这一步以前**必然失败**:前端发的是项目
+           * 相对路径 res/xxx.png,而引擎按自己的工作目录去找(Sprite 的
+           * texture 停在 -1)—— 用户看到的就是"设不上图片"。 */
+          const keepSel = DS.sel;
+          const e0 = await ds('entity.add', { name: '__uitest_tex__' });
+          try {
+            await ds('comp.add', { id: e0.id, comp: 'sprite' });
+            /* applyRes 走的是 **UI 的选中项**,所以要先把它选中(这正是用户
+             * "点缩略图 → 设到选中实体"那条路,不能绕过) */
+            DS.sel = [e0.id];
+            await applyRes(imgs[0]);
+            const g = await ds('entity.get', { id: e0.id });
+            const sp = (g.comps || {}).sprite || {};
+            t('点缩略图能给实体设上贴图(tex_path 是项目相对路径)',
+              sp.tex_path === 'res/' + imgs[0].name, sp.tex_path);
+            t('设置的贴图真的被引擎加载了(texture >= 0)',
+              typeof sp.texture === 'number' && sp.texture >= 0, sp.texture);
+          } finally {
+            await ds('entity.remove', { id: e0.id });
+            DS.sel = keepSel;
+            await refresh();
+          }
+        }
       }
     } else {
       out.skip.push('没有打开项目:跳过 res.list/autosave 的界面检查');

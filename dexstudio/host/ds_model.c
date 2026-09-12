@@ -738,6 +738,20 @@ static int scene_switch(DsModel *m, const char *rel, int load)
 
 /* ------------------------------------------------------------ 命令实现 */
 
+/* 把项目根设成引擎的"资源根"。为什么必须有这一步:
+ * 场景里存的是**项目相对**路径(`res/hero.png` 这种,才可搬),而 IDE 自己那个
+ * 引擎实例的工作目录是 IDE 的目录 —— 不告诉引擎"相对谁",贴图/声音/瓦片 CSV
+ * 全部加载失败("设置 sprite.tex_path 失败: cannot open image 'res/hero.png'")。
+ * 游戏那边由 ds_run.c 以**项目根为工作目录**启动,所以天然一致。 */
+static void apply_asset_dir(DsModel *m)
+{
+    DexValue a[1];
+    if (!m->eng.ok || !m->eng.set_asset_dir) return;
+    a[0] = V_s(m->root);
+    m->eng.set_asset_dir(a, 1);
+}
+
+
 static Dsj *cmd_app_info(DsModel *m)
 {
     Dsj *r = dsj_obj();
@@ -802,6 +816,7 @@ static Dsj *cmd_project_new(DsModel *m, Dsj *args)
 
     snprintf(m->root, sizeof m->root, "%s", full);
     free(full);
+    apply_asset_dir(m);
     if (m->project) dsj_free(m->project);
     m->project = project_default(name);
     m->scene[0] = 0;
@@ -860,6 +875,7 @@ static Dsj *cmd_project_open(DsModel *m, Dsj *args)
     }
     snprintf(m->root, sizeof m->root, "%s", full);
     free(full);
+    apply_asset_dir(m);
     if (m->project) dsj_free(m->project);
     m->project = dom;
     m->scene[0] = 0;

@@ -42,3 +42,28 @@ FILE *dg_fopen(const char *utf8_path, const char *mode)
     return fopen(utf8_path, mode ? mode : "rb");
 #endif
 }
+
+/* ---------------------------------------------------------------- 资源根 */
+
+static char g_asset_dir[1024];
+
+void dg_asset_dir_set(const char *utf8_dir)
+{
+    snprintf(g_asset_dir, sizeof g_asset_dir, "%s", (utf8_dir && *utf8_dir) ? utf8_dir : "");
+}
+
+const char *dg_asset_dir(void) { return g_asset_dir; }
+
+static int path_is_abs(const char *p)
+{
+    return (p[0] && p[1] == ':') || p[0] == '\\' || p[0] == '/';
+}
+
+FILE *dg_fopen_asset(const char *utf8_path, const char *mode)
+{
+    char joined[2048];
+    if (!utf8_path || !*utf8_path) return NULL;
+    if (!g_asset_dir[0] || path_is_abs(utf8_path)) return dg_fopen(utf8_path, mode);
+    snprintf(joined, sizeof joined, "%s/%s", g_asset_dir, utf8_path);
+    return dg_fopen(joined, mode);
+}

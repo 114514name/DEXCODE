@@ -103,6 +103,11 @@ extern func eng_scene_load(path: string) -> int;
 extern func eng_scene_load_json(text: string) -> int;
 extern func eng_scene_json() -> string;
 
+# 资源根:场景/代码里的**相对路径**先拼到它后面再打开(空串 = 用当前工作目录)。
+# IDE 打开项目时会设成项目根 —— 这样场景里存 "res/hero.png" 就能加载,
+# 而不必把绝对路径写进场景(那会让项目一搬家就废)。游戏按需自己设。
+extern func eng_set_asset_dir(dir: string) -> int;
+
 # 描述符表自省(节点式 IDE 靠它生成属性面板)
 extern func eng_comp_count() -> int;
 extern func eng_comp_name_at(index: int) -> string;

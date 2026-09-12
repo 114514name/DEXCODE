@@ -1194,6 +1194,72 @@ def test_recover_session(dll):
         m3.close()
 
 
+def test_asset_paths(dll):
+    """场景里的资源路径必须是**项目相对**的,而且要能加载。
+
+    用户报的坑:点资源缩略图设贴图,`comp.set sprite.tex_path = "res/x.png"`
+    直接失败(`cannot open image 'res/x.png'`)—— 因为引擎按**自己的工作目录**
+    找相对路径,而 IDE 的工作目录不是项目根。以前靠"写绝对路径"绕过去会让
+    项目一搬家就废,所以改成:引擎有个资源根(eng_set_asset_dir),IDE 打开
+    项目时设成项目根。
+    """
+    print("[资源路径(项目相对 + 资源根)]")
+    with tempdir("ds_asset_") as tmp:
+        root = os.path.join(tmp, "proj")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": root, "name": "p"})
+            src = os.path.join(ROOT, "tests", "fixtures", "atlas2x2.png")
+            m.ok("res.import", {"src": src, "name": "hero.png"})
+            eid = m.ok("entity.add", {"name": "hero"})["id"]
+            m.ok("comp.add", {"id": eid, "comp": "sprite"})
+            r = m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "tex_path",
+                                  "value": "res/hero.png"})
+            check("项目相对路径的贴图能设上", r["value"] == "res/hero.png", r)
+            sp = m.ok("entity.get", {"id": eid})["comps"]["sprite"]
+            check("引擎真的加载了它(texture >= 0)",
+                  isinstance(sp.get("texture"), int) and sp["texture"] >= 0, sp)
+            check("场景 JSON 里存的是相对路径(项目可搬)",
+                  "res/hero.png" in json.dumps(m.ok("scene.json"), ensure_ascii=False),
+                  m.ok("scene.json"))
+            # 重开项目后也要能加载(资源根是在 project.open 时设的)
+            m.ok("project.save")
+        finally:
+            m.close()
+        m2 = Model(dll)
+        try:
+            m2.ok("project.open", {"dir": root})
+            eid = m2.ok("entity.find", {"name": "hero"})["id"]
+            sp = m2.ok("entity.get", {"id": eid})["comps"]["sprite"]
+            check("重开项目后贴图仍然加载得起来(texture >= 0)",
+                  isinstance(sp.get("texture"), int) and sp["texture"] >= 0, sp)
+            check("重开项目后路径依旧是相对的",
+                  sp.get("tex_path") == "res/hero.png", sp.get("tex_path"))
+        finally:
+            m2.close()
+
+
+def test_graph_link_drag_visible():
+    """拉线时那根预览线要跟着鼠标(页面自测覆盖;这里只钉住 JS 不被改回去)。
+
+    真正的行为断言在 `--wv-selftest` 的页面自测里(派发 mousedown/mousemove 后
+    检查 Graph.dragState())。这条静态检查是"别把 guard 又写回 pending 之前"的哨兵。
+    """
+    print("[逻辑图:拉线预览(静态哨兵)]")
+    p = os.path.join(ROOT, "dexstudio", "web", "graph.js")
+    if not os.path.exists(p):
+        skip("拉线预览哨兵", "graph.js 不存在")
+        return
+    src = open(p, encoding="utf-8").read()
+    # 只看 mousemove 处理函数那一段(注释里也提到过那句 guard,别被它干扰)
+    seg = src[src.index("addEventListener('mousemove'"):]
+    seg = seg[:seg.index("addEventListener('mouseup'")]
+    check("mousemove 里先更新 pending 再判断 drag",
+          "if (pending) { pending.gx" in seg
+          and seg.index("if (pending) { pending.gx") < seg.index("if (!drag) return;"),
+          "pending 必须在 drag 的 guard 之前")
+
+
 def test_packaged_exe():
     """B7:发布形态 —— **exe 旁边没有 web/ 目录**也要能用。
 
@@ -1351,6 +1417,8 @@ def main():
     test_utf8_paths(dll)
     test_build_in_chinese_path(dll)
     test_recover_session(dll)
+    test_asset_paths(dll)
+    test_graph_link_drag_visible()
     test_web_assets()
     test_packaged_exe()
     test_cli()

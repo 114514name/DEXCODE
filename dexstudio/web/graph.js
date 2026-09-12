@@ -376,9 +376,15 @@ const Graph = (function () {
     });
 
     window.addEventListener('mousemove', (ev) => {
-      if (!canvas || !drag) return;
+      if (!canvas) return;
       const p = eventPos(ev);
       const g = toGraph(p.x, p.y);
+      /* 正在拉的那根线要**跟着鼠标走**。注意它用 pending,不是 drag ——
+       * 早先这个处理函数开头先判断 drag 是不是空、为空就直接 return,
+       * 而拉线时 drag 恰好是 null,于是预览线只在起点画一次、一动不动,
+       * 看起来像"连完线才出现一根线"。 */
+      if (pending) { pending.gx = g.x; pending.gy = g.y; draw(); }
+      if (!drag) return;
       if (drag.mode === 'pan') {
         view.x = drag.vx - (p.x - drag.sx) / view.zoom;
         view.y = drag.vy - (p.y - drag.sy) / view.zoom;
@@ -388,7 +394,6 @@ const Graph = (function () {
         if (n) { n.x = Math.round(g.x - drag.dx); n.y = Math.round(g.y - drag.dy); }
         draw();
       }
-      if (pending) { pending.gx = g.x; pending.gy = g.y; draw(); }
     });
 
     window.addEventListener('mouseup', async (ev) => {
@@ -551,6 +556,21 @@ const Graph = (function () {
     stats: () => ({ nodes: doc.nodes.length, links: doc.links.length,
                     types: types.length, sel }),
     center: () => { view = { x: 40, y: 40, zoom: 1 }; draw(); },
+    /* 自检用:拉线时 pending 必须跟着鼠标更新(曾经因为 mousemove 里先判断
+     * `!drag` 而完全不动 —— 现象是"连完线才出现")。 */
+    dragState: () => ({
+      pending: pending ? { gx: pending.gx, gy: pending.gy,
+                           from: pending.from, from_pin: pending.from_pin } : null,
+      mode: drag ? drag.mode : null,
+    }),
+    /* 自检用:把某个引脚的位置换算成屏幕坐标(要往它上面派发鼠标事件) */
+    pinScreenPos: (node_id, pin_name) => {
+      const n = doc.nodes.find((k) => k.id === node_id);
+      if (!n) return null;
+      const q = pinAt(n, pin_name);
+      if (!q) return null;
+      return toScreen(q.x, q.y);
+    },
   };
 })();
 

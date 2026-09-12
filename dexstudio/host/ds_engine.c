@@ -101,6 +101,7 @@ int ds_engine_load(DsEngine *e, const char *dll_path, const char *exe_dir)
     BIND_I(pixel); BIND_I(save_bmp); BIND_I(set_clear_color);
     BIND_I(width); BIND_I(height); BIND_I(set_view);
     BIND_I(tex_width); BIND_I(tex_height);
+    BIND_I(set_asset_dir);
     BIND_I(tilemap_load_csv); BIND_I(tilemap_load_file); BIND_I(tilemap_save_csv);
     BIND_I(tilemap_tile); BIND_I(tilemap_cols); BIND_I(tilemap_rows);
     BIND_F(world_x); BIND_F(world_y);

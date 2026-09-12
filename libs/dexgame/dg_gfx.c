@@ -534,7 +534,7 @@ int dg_gfx_save_bmp(const char *path) {
     const uint32_t datalen = (uint32_t)stride * (uint32_t)g_h;
     const uint32_t filesize = 54 + datalen;
 
-    FILE *f = dg_fopen(path, "wb");
+    FILE *f = dg_fopen_asset(path, "wb");
     if (!f) {
         dg_error("cannot open '%s' for writing", path);
         g_ctx->lpVtbl->Unmap(g_ctx, (ID3D11Resource *)g_stage, 0);

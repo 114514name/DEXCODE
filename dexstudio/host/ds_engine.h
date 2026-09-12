@@ -44,6 +44,8 @@ typedef struct {
     DsFnI frame_begin, frame_end, draw_scene, pixel, save_bmp, set_clear_color;
     DsFnI width, height, set_view;
     DsFnI tex_width, tex_height;
+    /* 资源根:让场景里的相对路径(res/hero.png)在 IDE 这边也能打开 */
+    DsFnI set_asset_dir;
     /* 瓦片地图(编辑器的刷子直接改 CSV 再让引擎重新加载) */
     DsFnI tilemap_load_csv, tilemap_load_file, tilemap_save_csv;
     DsFnI tilemap_tile, tilemap_cols, tilemap_rows;
