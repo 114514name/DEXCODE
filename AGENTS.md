@@ -29,10 +29,10 @@
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
-| **游戏引擎** | `libs/dexgame/`(~5700 行,7 个 .c + 4 个 .h) | 模块化 2D 引擎:**D3D11 批渲染** + 实体/组件/场景 + 物理/瓦片地图 + **输入/主循环**,见 `docs/DEXGAME_DESIGN.md`。当前 M4(接口层,进行中) |
+| **游戏引擎** | `libs/dexgame/`(~6300 行,8 个 .c + 4 个 .h) | 模块化 2D 引擎:**D3D11 批渲染** + 实体/组件/场景 + 物理/瓦片地图 + 输入/主循环 + **音频(XAudio2)**,见 `docs/DEXGAME_DESIGN.md`。当前 M4(接口层,进行中) |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(25 个测试文件 + `_tmpdir.py`,~9300 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(26 个测试文件 + `_tmpdir.py`,~9700 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -47,7 +47,7 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:1188 项通过 / 0 失败** —— 25 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- **测试:1269 项通过 / 0 失败** —— 26 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
 - 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
   二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
@@ -86,10 +86,11 @@ python tests/test_dexgame.py     # 59  dexgame 引擎 D3D11 渲染核心(M1,含�
 python tests/test_scene.py       # 133 dexgame 实体/组件/JSON 场景(M2,含像素断言)
 python tests/test_phys.py        # 193 dexgame 碰撞/查询/运动学/瓦片地图(M3,含像素断言)
 python tests/test_input.py       # 78  dexgame 输入/动作映射/主循环(M4-a)
+python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解析,M4-b)
 ```
 
-合计 **202 个测试函数 / 1175 处 `check()` 调用**;实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **1188 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **208 个测试函数 / 1250 处 `check()` 调用**;实际执行数随平台与是否构建
+`vm.exe` 而变,本机实测 **1269 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -222,6 +223,9 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **瓦片 id 0 是合法图块,不能用 0 表示空**(M3) | 一开始约定"`0` 或 `-1` = 空格子",结果图集第 0 块永远画不出来 | 空 = **负数**(CSV 写 `-1`),`0..255` 全是合法图块。`solid[]` 表用 `-1 = 未指定(非空即实心)/0/1` 三态 |
 | **射线从自己体内发出会命中自己**(M3) | 玩家向脚下的地面打射线,结果 `t=0` 且命中的是玩家自己的碰撞体 —— 示例里一眼就撞上了 | `eng_raycast`/`eng_sweep_box` 末尾加 `ignore` 参数(0 = 不忽略)。注意瓦片的 `obj` 也是 0,所以判断要写 `if (ignore && obj == ignore)` |
 | **`restitution = 0` 会算出 `-0`**(M3) | 撞地后 `vy = -vy * 0.0` 得到 `-0.0`,打印成 `-0`,和 `0` 不相等,测试与用户判断都踩 | 先判 `restitution > 0` 再算;或统一 `if (fabsf(v) < 阈值) v = 0.0f` |
+| **XAudio2 没有导入库,而且要 COM 初始化**(M4) | zig 只提供 mingw 的 `xaudio2.h`(接口的 C 版 vtable)不提供 `.lib`;直接 `-lxaudio2` 链不上。另外每个用 XAudio2 的线程都要 `CoInitializeEx` | 运行时 `LoadLibraryA("xaudio2_9.dll")`(Win8 回退 `xaudio2_8.dll`)+ `GetProcAddress("XAudio2Create")`;init 里 `CoInitializeEx(COINIT_APARTMENTTHREADED)` 并**忽略已初始化**的返回值 |
+| **没有声卡不能让引擎崩**(M4) | 无音频设备时 `CreateMasteringVoice` 失败。若把 init 当致命错误,整个游戏都跑不起来 —— 而这只是"没声音" | `eng_audio_ok()` 暴露设备状态;失败时播放调用一律**带原因的失败**(而不是崩溃),测试据此 **SKIP** 而不是 FAIL。注意 `eng_audio_init` 在**两个** init 函数里都要调(offscreen 那次漏了就会得到 `ok=0` 且**原因为空**,很容易误判成"设备坏了") |
+| **短音频的"正在播放"断言不稳**(M4) | 0.1 秒的音效在忙机器上可能在 `play` 与 `playing` 两次调用之间**自己播完**,`BuffersQueued` 变 0 → 断言偶发失败(实测整套跑时命中过一次) | 状态类断言一律用 **loop=1**(无限循环,永远不会自然结束);要测"播完"就显式等待或用长样本 |
 | **边沿检测的拷贝时机**(M4) | `pressed`/`released` 靠"上一帧 vs 当前"。第一版在 `begin_frame`(也就是 pump **之后**)把 now 拷进 prev,于是**本帧刚按下的键立刻变成"上一帧也按着"**,pressed 永远为假 —— 而 down 一切正常,极容易以为"边沿就这样" | 拷贝放在**帧结束**(`dg_input_end_frame`,由 `eng_frame_end` 调)。判据:`down` 对但 `pressed` 恒为假 → 先查拷贝时机 |
 | **语言没有全局变量 → 回调拿不到主程序的 `let`**(M4) | 主程序里 `let st = eng_object_new();`,然后在 `func on_update()` 里用 `st` → 编译期直接报 `undefined variable`。**回调式 API 撞上语言的第一个硬限制** | 跨帧状态放**组件字段**里,靠 `eng_set_name(obj,"state")` + `eng_find("state")` 取回(名字本来就是 IDE 场景树要的)。别指望闭包 |
 | **`eng_dt()` 是帧间隔,不是物理步长**(M4) | 以为它能当"固定步长"用(手动物理时不调 `eng_frame_begin` 就恒为 0);另外它是**毫秒精度**的墙钟差,几帧挤在 1ms 内时是 0 | 固定步长用 `1.0 / eng_physics_set_step(hz)` 自己算;`eng_dt()` 只给"这帧该走多远"用。测试里断言 dt 前先忙等到下一毫秒 |
@@ -284,6 +288,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | M4-b 完成:设计文档 §8 补上音频实现(XAudio2 选型、声音资源/播放实例两层模型、WAV 支持范围、无声卡时的降级、audio 组件);本文件同步测试基线、新增 3 条 M4 陷阱、§1/§2/§7 更新 |
+| (本次 M4-b) | **dexgame M4-b:音频**。新增 `dg_audio.c`(~430 行):XAudio2(运行时 LoadLibrary,COM 初始化)**声音资源按路径缓存** + **播放实例**(同一声音可同时多次播放)、手写 RIFF/WAVE 解析(8/16 位 PCM,单/双声道,拒绝非 PCM/24 位/多声道并给原因)、主音量/实例音量/停止/播放计数、`eng_audio_ok()` 设备状态(无声卡时播放**带原因失败**而不是崩)。新增 `audio` 组件(场景里能带声音,path 一设立刻解码,JSON 只存持久字段)。`eng_*` 132 → **154** 个函数。新增 `tests/test_audio.py`(81 项,含解析拒绝路径/播放状态/组件往返/双 VM)与 `tests/fixtures/make_wav.py`(+3 个 WAV 输入数据) |
 | (本次 docs) | M4-a 完成:设计文档 §8 补上**已实现**的帧循环/回调/输入/动作映射(eng_run 是语言模块而非 C 导出、按键码统一编号、合成输入),§5 的风险表补"回调拿不到局部变量";本文件同步测试基线、新增 3 条 M4 陷阱、§1/§2/§7 更新 |
 | (本次 M4-a) | **dexgame M4-a:输入 + 动作映射 + 主循环 + 实体名**。新增 `dg_input.c`(键盘/鼠标/XInput 手柄、统一按键码、**两层接口**:轮询 + 动作映射、边沿检测、`eng_input_feed*` 合成输入供无人值守测试)、`dexgame_fast.dex`(语言模块提供 `eng_run`/`eng_run_frames`/`eng_bind_default_actions`,零 VM 改动)、**实体名**(`eng_set_name`/`eng_name`/`eng_find`,随场景 JSON 存取 —— 因为语言没有全局变量,回调只能靠名字找状态实体);`eng_*` 105 → **132** 个函数;`eng_dt()` 改为帧间隔(与物理模式无关)。新增 `tests/test_input.py`(78 项,含双 VM)。修掉一个隐蔽 bug:边沿检测的 now→prev 拷贝放在帧开始会把 pressed 变成永远为假 |
 | (本次 docs) | M3 完成:设计文档 §6 重写为**已实现的样子**(固定步长/子步上限/轴分离解算/宽相/插值/瓦片),新增 §6.4 本轮锁定的 7 个决定与 §6.5 已知简化,里程碑表与验收表同步;本文件同步测试基线、新增 8 条 M3 陷阱、§1/§2/§5.1/§7 更新 |
@@ -368,8 +374,13 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
     边沿检测,以及 `eng_input_feed*` **合成输入**(无人值守测试与 IDE 脚本化试玩)。
   - **实体名**:`eng_set_name/eng_name/eng_find`,随场景 JSON 存取。原因是语言
     **没有全局变量** —— 回调函数看不到主程序的 `let`,跨帧状态只能放组件里靠名字找。
-- **M4 剩余**(按建议顺序):音频(XAudio2,已定)→ 文字(DirectWrite + 字形图集,
-  原 M1b)→ 静态链接变体 → 一个完整可玩的**平台跳跃示例**(已定主题)。
+  - **音频(M4-b 已完成)**:`dg_audio.c` —— XAudio2(运行时 LoadLibrary + COM 初始化),
+    **声音资源(按路径缓存)+ 播放实例(同一声音可同时多次响)**两层模型;
+    手写 RIFF/WAVE 解析(8/16 位 PCM,单/双声道);`eng_sound_*`/`eng_voice_*`/`eng_audio_*`;
+    **没有声卡时不崩**(`eng_audio_ok()` 暴露状态,播放带原因失败,测试据此 SKIP);
+    `audio` 组件让场景能带声音(JSON 只存 path/volume/loop/play_on_start)。
+- **M4 剩余**(按建议顺序):文字(DirectWrite + 字形图集,原 M1b)→ 静态链接变体 →
+  一个完整可玩的**平台跳跃示例**(已定主题;输入/物理/瓦片/音频都已就位)。
   做完产品 A 就能独立发布,然后才动可视化 IDE(产品 B)。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制

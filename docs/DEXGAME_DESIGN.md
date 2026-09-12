@@ -495,6 +495,32 @@ on_update, on_draw)` 用 `call("名字")` 分发 —— 与 `egui_fast.dex` 的 
   回调函数看不到主程序的 `let`,跨帧状态只能放组件里靠名字取回。名字随场景 JSON 存取,
   也是 IDE 场景树要显示的东西。
 
+### 8.1c M4-b 落地实况(音频)
+
+**选型**:XAudio2(用户已确认)。与 D3D11 同一风格 —— 用系统 API,不往仓库塞第三方代码;
+仓库里唯一 vendored 的东西仍是 `stb_image`(283KB 的解码器,自己写不值),而 WAV 解析
+只要 ~120 行。miniaudio 虽然更全能(自带 mp3/ogg 解码),但那是 20 万行级别的单头文件。
+
+**两层模型**(别混):
+
+| 概念 | 是什么 | 为什么 |
+|---|---|---|
+| 声音资源 `eng_sound_load` | 按**路径缓存**的解码结果(取样率/声道/时长 + PCM 缓冲)| 同一段音效反复播放不该反复读盘/解码;`WAVEFORMATEX` 与 PCM 缓冲在播放期间必须保活,归它持有 |
+| 播放实例 `eng_sound_play` | 一次播放(`IXAudio2SourceVoice`)| 同一个声音要能同时响多次:脚步、子弹、连击音 |
+
+**平台细节**:
+
+- XAudio2 是 COM 接口但**没有导入库**:运行时 `LoadLibraryA("xaudio2_9.dll")`
+  (Win8 回退 `xaudio2_8.dll`)+ `GetProcAddress("XAudio2Create")`;每个使用它的线程要
+  `CoInitializeEx`(已被别的模式初始化过就忽略)。
+- **没有声卡不算致命**:`eng_audio_ok()` 暴露设备状态,`CreateMasteringVoice` 失败后
+  所有播放调用都**带原因失败**,游戏照常跑(只是没声音)。测试据此 SKIP 而不是 FAIL。
+- WAV 支持范围:8/16 位 PCM、单/双声道。非 PCM(float)、24 位、多声道会**明确拒绝并说明**
+  (而不是"放不出声但不知道为啥")。mp3/ogg 不在范围里 —— 要就要额外的解码器。
+- `audio` 组件让**场景能带声音**:`path`/`volume`/`loop`/`play_on_start` 持久,
+  `handle`/`voice`/`playing` 是运行时;设置 `path` 时**立刻解码**(路径错了当场报,
+  不要等到播放那一刻);卸载组件/删除实体会停掉在放的实例。
+
 ### 8.2 接口约定
 
 - 全部函数 `eng_` 前缀;`.dexdef` 顶部 `abi value_array;`
