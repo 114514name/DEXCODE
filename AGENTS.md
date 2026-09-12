@@ -32,7 +32,7 @@
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
 | **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **169** 个函数(含为 IDE 加的 `eng_object_id_at`/`eng_set_view`/`eng_set_asset_dir`)。见 `docs/DEXGAME_DESIGN.md` |
 | **纯 C 工具链(产品 B 地基)** | `tools/dexc/`(7 个 .c + 1 个 .h,~3700 行) | **dexc.exe**:lexer/parser/compiler/assembler/disassembler/asmtext/.dexdef 全部从 Python 移植到 C,与 Python 前端**逐字节一致**(`tests/test_dexc.py` 478 项,拿全仓库 34 个 .dex + 一批故意写错的源码对照字节码/汇编文本/错误/警告)。编译这一步从此不需要 Python —— `dexc.exe` + `vm.exe` 即可完成"源码 → 可运行游戏" |
-| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 8 个 C 文件 ~3000 行 + `web/` 5 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/视图/瓦片/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。**B3 场景 + B4 逻辑 + B5 编译/运行 + B6 资源/自动保存 + B7 打包已完成(产品 B 全部里程碑)**。场景编辑:视口(引擎离屏渲染 → 虚拟主机 → `<canvas>`,平移/缩放/网格/吸附/框选/拖动)、层级树、自省生成的属性面板、图层、瓦片刷子、复制粘贴、快照式撤销(含瓦片 CSV)。逻辑编辑:UE 蓝图式节点图(22 种面向 dexgame 的节点,**目录/引脚/校验/生成全在 C**),生成 `scripts/logic.dex` 交给 `dexc.exe`;一键编译(诊断带行列)+ **独立窗口运行/停止** + 代码页签(自写高亮);`res/` 资源面板(缩略图走虚拟主机)+ **整包自动保存 + 崩溃恢复提示**;**前端资源内嵌进 exe**(发布形态 = exe + WebView2Loader.dll + libdexgame.dll + README)。测试:ctypes 调模型 + 无窗口 CLI + WebView2 离屏自测 + 前端 `node --check` + **页面自测 + 干净目录发布形态 + 中文路径端到端 + 资源根**(`tests/test_dexstudio.py` **329 项**,页面 68 项)。见 `docs/DEXGAME_DESIGN.md` §9 |
+| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 11 个 C 文件 ~6300 行 + `web/` 11 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/视图/瓦片/积木/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。**B3 场景 + B4 节点图 + B5 编译/运行 + B6 资源/自动保存 + B7 打包 + B8 中文编码 + B9 资源根 + B10 体验大修 + B11 Scratch 式积木模式** 已完成。前端三档:`积木`(零基础,句子积木 + 全下拉,不连线不打字;`scripts/blocks.json`)→ `节点`(UE 蓝图式) → `代码`;字段元数据驱动的控件(枚举下拉/取色器/资源与实体下拉/只读标注)、父子层级树、场景管理、一键编译**先存盘**、生成前校验、资源改名同步引用、关窗未保存确认、单实例。测试:ctypes 调模型 + 无窗口 CLI + 离屏 WebView2 自测 + `node --check` + **页面自测(不带项目 95 / 带项目 120)** + 发布形态 + 中文路径 + 真实项目像素断言(`tests/test_dexstudio.py` **479 项**;`--selftest` **51 项**)。细节/未做项见 `docs/DEXSTUDIO_UX_ISSUES.md`,见 `docs/DEXGAME_DESIGN.md` §9 |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
 | 测试 | `tests/`(30 个测试文件 + `_tmpdir.py`,~12900 行) | 全部是**手写 check() 脚本**,不用 pytest |
@@ -94,10 +94,10 @@ python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解�
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
 python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
-python tests/test_dexstudio.py   # 329 DexStudio 模型/逻辑图/编译运行/资源自动保存 + 前端资源 + CLI + WebView2 + 发布形态 + **中文路径/恢复语义/资源根** + 页面自测
+python tests/test_dexstudio.py   # 479 DexStudio 模型/积木与逻辑图/编译运行/资源自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + **中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘/未初始化加载场景/生成的游戏真的跑起来** + 页面自测(不带项目 95 项、带项目 120 项)
 ```
 
-合计 **30 个脚本 / 234 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
+合计 **30 个脚本 / 236 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
 **实测执行数 > 静态调用数**);实际执行数随平台与是否构建 `vm.exe` 而变。
 本文件不逐条维护各项数字,以实际运行为准(改动后请把上面这行数字顺手改掉)。
 
@@ -204,20 +204,15 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 ## 4. 已知陷阱(踩过并记录)
 
-**完整表格见 `docs/PITFALLS.md`**(M0.5 → B9,71 条)。
+**完整表格见 `docs/PITFALLS.md`**(M0.5 → B11,79 条)。
 这里只留最近一阶段的几条,免得本文件超出工作区指令预算被截断。
 
 | 陷阱 | 现象 | 应对 |
 |------|------|------|
-| **JSON 解析器把 UTF-8 的字节当成"码点"**(B8,最隐蔽) | `ds_json.c` 的 `parse_string` 对**普通字符**也调 `put_utf8(c)`;汉字是 3 个字节,被当成 3 个码点各编一次 → **二次编码**。症状千奇百怪:磁盘上建出乱码目录(`我的项目`→`茅隆鹿…`)、资源"那个路径下没有那个资源"、实体名/场景名乱码 | 普通字符一律 `put_byte`(**原样抄字节**),`put_utf8` 只用于 `\uXXXX` 转义。判据:**JSON 文本是 UTF-8,解析器不做任何编码转换**(引擎的 `dg_json.c` 本来就是对的,可对照) |
-| **Windows 的窄字符 API 全按 ANSI 解路径**(B8) | 中文系统 ACP=936,而我们的字符串是 UTF-8:`CreateWindowExA` → **标题乱码**;`fopen`/`GetFileAttributesA`/`CopyFileA`/`FindFirstFileA` → 中文路径找不到文件、建出乱码目录;`GetOpenFileNameA` 返回 GBK;`CreateProcessA` 让 dexc 收到乱码路径;CRT 的 `argv` 也已被 ANSI 解过一遍 | 交给系统之前都转宽字符走 W 版:宿主 `ds_utf8.c`、引擎 `dg_utf8.c`、dexc `dx_utf8.c`;标题单独 `SetWindowTextW`,`argv` 从 `__wgetmainargs` 重取。判据:**代码里不该再出现 `CreateFileA`/`FindFirstFileA`/`GetOpenFileNameA`/`CreateProcessA`/`LoadLibraryA`/裸 `fopen`**(中文用户名下 `%LOCALAPPDATA%` 本身就带中文) |
-| **捕获的子进程输出可能不是合法 UTF-8**(B8) | dexc/vm 从 argv 拿到的路径被 CRT 转成 ANSI(GBK),而它们自己的消息是 UTF-8 → 一份输出混两种编码;进 JSON 后前端 `JSON.parse` 直接抛(`invalid continuation byte 0xce`),**输出面板全废** | 两头都管:① dexc 改成 UTF-8 原生(宽 argv + `_wfopen`);② 宿主在捕获出口加 `dsu_utf8_clean()`(非法字节 → U+FFFD),**保证"响应永远是合法 UTF-8"这条契约** |
-| **恢复提示不区分"谁写的自动保存"**(B8,用户报的) | 自动保存每 30 秒写一次、总是比场景新 → 界面**一直**显示"上次好像没有正常退出";点「恢复/丢弃」当时消失,**30 秒后自动保存又写出来**,提示条跟着回来,像按钮没反应 | 包里记 `session`(进程号+启动时刻+序号),`recoverable` 要求"**不是本次运行写的**";`file_mtime` 读不出来时**不再当作 0**(0 会被当成"比自动保存旧"→ 假可恢复);正常退出再盖 `clean=1`,强杀走不到 ⇒ 前端能区分"崩溃"与"正常退出但没存盘" |
-| **改了场景却没记住"起始场景"**(B8,顺带发现) | `scene.new` 把实体存在 `scenes/第一关.json`,但 `start_scene` 还是 `scenes/main.json` → 存盘后重开**回到空场景**,用户以为刚摆的东西丢了(其实还在) | `scene_switch` 里顺手把当前场景写回 `project.start_scene`(项目相对路径、正斜杠)。判据:**凡是"当前在编辑哪个文件"这种状态,都要能被重新打开时恢复** |
-| **相对资源路径按"引擎自己的工作目录"解析**(B9,用户报的) | 场景里存的是**项目相对**路径(`res/hero.png`,这样项目才可搬),但 IDE 自己那个引擎实例的工作目录是 IDE 的目录 → `comp.set sprite.tex_path = "res/hero.png"` 必然失败(`cannot open image`),贴图设不上、`texture` 停在 -1。用绝对路径绕过去又让项目一搬家就废 | 引擎加**资源根**:`eng_set_asset_dir(dir)` + `dg_fopen_asset()`(相对路径先拼资源根,绝对路径原样),IDE 在 `project.new/open` 时设成项目根;游戏那边本来就以项目根为工作目录启动,天然一致。判据:凡是"用户能填的相对路径",都要有一个明确的"相对谁" |
-| **拉线预览用的是 pending,guard 却看 drag**(B9,用户报的) | 逻辑图连线时那根预览线**不跟鼠标**,松手连线成功后才"啪"地出现。原因:`mousemove` 处理函数开头先 `if (!drag) return;`,而拉线时 `drag` 是 null(只有平移/拖节点才设 drag)—— pending 的更新与重绘被这行挡掉了 | 把 `if (pending) {…draw();}` 挪到 `drag` 的 guard **之前**。教训同一类:**多个互斥的拖拽状态别共用一个"有没有在拖"的标志**;页面自测里派发 mousedown/mousemove 后读 `Graph.dragState()` 钉住它 |
-| **模态文件对话框会把无人值守流程挂死**(B6) | `res.pick` 弹的是模态对话框;测试/离屏自测只要调到它就是无限等待(实测挂到 120s 超时) | 给命令留不弹窗的路:`res.pick {dry:1}`。测试只用 dry。**凡是会阻塞的 UI 调用都要有可注入的不阻塞入口** |
-| **缓存过期时 UI 静默 return = "点了没反应"**(B9) | `applyRes` 用本地缓存 `DS.entities` 里的 `byId(id)` 判断"要不要先挂 sprite",缓存一过期就 `if (!e) return;` —— 用户点缩略图什么都不会发生,也没有任何提示(自测里同样因此拿不到贴图) | 改成**现查一次** `entity.get`;查不到就明确报"实体已失效,先重选"。判据:UI 里别拿缓存当"存在性"依据,更不能查不到就静默返回 |
+| **`hidden` 属性被作者样式的 `display` 盖掉**(B10,用户报的) | `style.css` 里 `.recover{display:flex}` / `.row{display:flex}` 这类规则**作者样式优先于浏览器默认样式**,于是 `[hidden]{display:none}` 失效:恢复提示条、橡皮选项、改名行在"该藏"的时候照样显示。JS 里 `el.hidden = true` 看起来生效了,写测试也只断言 `.hidden` 属性,所以长期没人发现 | `style.css` 顶部加 `[hidden] { display: none !important; }`;**断言要断 `getComputedStyle(el).display === 'none'`,不要断 `.hidden` 属性** —— 这两句话合起来才算把这类问题钉死(页面自测里 4 个元素逐个断 computed display) |
+| **按钮引用了不存在的元素 id = 整块接线停摆**(B10) | `el('btn-x').onclick = …` 在 `init()` 里跑,id 写错/漏在 HTML 外就抛 TypeError,**后面所有按钮的接线都不会执行** —— 现象是"好几个按钮一起点了没反应",很难看出源头 | `tools/check_web_ids.py`:把 `$('…')` / `el('…')` / `getElementById('…')` 里的 id 与 `index.html` 的 id 集合对照,任何缺失直接退出码 1(已进 `tests/test_dexstudio.py`)。判据:**HTML 是前端的"接口",接口名要对得上,而且要有自动检查** |
+| **引擎没初始化就干活:游戏 60ms 跑完 / 场景"加载成功"却是空壳**(B11,实测) | 两个连着的坑:① IDE 生成的 `main.dex` 模板从不 `eng_init`,而 `eng_run` 的循环条件是 `while eng_running()` —— 没窗口它恒为 0,于是 on_start 跑一遍就退出(**60ms、exit 0、零输出**,用户看到的是"点运行什么都没发生");② `dg_comp_kind()` 在组件池没建时返回 -1,而场景加载把 -1 当成"不认识的组件"**静默跳过** → 实体/名字都在,`eng_find` 找得到,但 transform/sprite 一个都没挂上 | 模板在 `eng_run` 前显式 `eng_init(...)`;`eng_run`/`eng_run_frames` 自己兜底自动开窗;`dg_comp_kind()`/`dg_scene_parse()` 按需 `dg_scene_init()`。判据:**"未知"和"还没准备好"必须能区分**;`test_template_game_really_runs`(跑起来 2 秒后进程必须还活着)+ `test_scene_load_before_init`(未初始化也要装上组件)钉住 |
+| **同一个坐标公式在引擎和宿主里各写一遍**(B11,用户报的) | 引擎画精灵是 `原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放`,宿主 `scene.outline` 写的是 `世界坐标 + 轴心` → 框线偏到图片外面,用户看到的就是**"改了贴图只有框线在动、图像没出现"**。同类:视口用**活动相机的 camera.x/y/zoom**,而 `app.info` 报的是编辑器视图覆盖值 → 相机一挪,画面走、框线不走 | 宿主照抄引擎公式并注明"必须与引擎逐字相同";没有视图覆盖时 `app.info`/`scene.render` 返回**实际生效**的活动相机视图。判据:**凡是"引擎怎么画"的公式,宿主只能有一份** —— 靠 `test_outline_matches_pixels`(比框线与像素包围盒)锁住 |
 
 > 加新陷阱时:**写进 `docs/PITFALLS.md` 的表尾**,再把本节的最后一条挤出去。
 
@@ -299,23 +294,23 @@ libdexgame.dll          场景的权威表示:eng_scene_json / eng_scene_load_js
 测试入口(C 侧逻辑全部可无窗口验证):
 ```bash
 python main.py build-dexstudio                 # 构建
-dexstudio/host/dexstudio.exe --selftest        # 模型自测(22 项,含中文与编码一节)
+dexstudio/host/dexstudio.exe --selftest        # 模型自测(51 项:中文/编码、下拉候选、父子、编译存盘、生成前校验…)
 dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'
-dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外;等 ui.ready 后再让页面自测
-python tests/test_dexstudio.py                 # 329 项(ctypes + 逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源 + CLI + WebView2 + 发布形态 + 中文路径/恢复语义/资源根 + 页面自测)
+dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外;等 ui.ready 后再让页面自测(加 --project <绝对路径> 会多跑 25 项资源/贴图检查)
+python tests/test_dexstudio.py                 # 479 项(ctypes + 积木/逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + 中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘 + 未初始化加载场景 + 模板游戏真的跑起来 + 页面自测 95/120 项)
 ```
 
 **命令一览**(全部走 `ds_command`,前端与测试用的是同一批):
 `app.info` / `app.components` / `ui.boot|ready|error` /
-`project.new|open|save|state` / `scene.new|load|save|save_as|list|json|render|outline` /
-`entity.list|get|add|remove|rename|set_pos|find|duplicate|copy|paste` /
+`project.new|open|pick|recent|save|state` / `scene.new|load|save|save_as|list|json|render|outline|options|rename|delete|set_start` /
+`entity.list|get|add|remove|rename|set_pos|set_parent|find|duplicate|copy|paste` /
 `comp.schema|add|remove|set` / `comp.set_many` /
 `view.set` / `tilemap.create|info|set|paint|csv` / `undo` / `redo` /
-`graph.types|new|info|save|generate` / `graph.node.add|remove|set|move` / `graph.link|unlink`
+`graph.types|options|validate|new|info|save|generate` / `graph.node.add|remove|duplicate|set|move|move_many` / `graph.link|unlink`
 (逻辑图在 `scripts/logic.json`,生成 `scripts/logic.dex`)/
-`build.compile|run|stop|status` / `project.scripts` / `file.read`
+`build.compile|run|stop|status` / `project.scripts` / `file.read|open_external`
 (一键编译 = 存盘 + 重生成逻辑图 + dexc;诊断带 `{level,phase,line,col,msg}`;`run detach:1` 用 vmnc 开独立窗口)/
-`res.list|import|pick|delete|rename` / `autosave.tick|clear` / `recover.status|apply|discard`
+`res.list|import|pick(multi)|delete(force)|rename(update_refs)|refs` / `autosave.tick|clear` / `recover.status|apply|discard`
 (自动保存是**整包**:场景 + 瓦片 CSV + 逻辑图 → `.dexstudio/autosave.json`;`recoverable` 判据是"自动保存比场景新")。
 
 **界面自测**:`dexstudio/web/app.js` 里的 `window.__ds_selftest()` 由页面自己跑
@@ -338,6 +333,8 @@ python tests/test_dexstudio.py                 # 329 项(ctypes + 逻辑图 + �
 
 | 提交 | 内容 |
 |------|------|
+| (本次 B11) | **DexStudio:Scratch 式积木模式 + 用户报的四个"看不到效果"**(用户原话:"导入的预览图还是裂图标""改贴图了能看到框线改变,但并没有实际的图像被显示""声音预览也没有效果""这代码块设计是认真的吗…完全就是把代码换了一种形式!必须修改")。**① 积木模式(新)**:`dexstudio/host/ds_blocks.c`(~1370 行)+ `web/blocks.js`,16 种**句子积木**("让 [玩家] 往 [右] 走,速度 [中(每秒 150)]"),每个空都是下拉(实体/方向/速度/按键/动作/字段…),点一下加进脚本、▲▼ 调序、✕ 删、`如果…就` 有肚子(条件积木把动作装进去),全程不连线不打字;`scripts/blocks.json` 落盘,`logic_mode` 选 `blocks`/`graph`(新项目默认积木,老项目按 graph);一键示例"移动+跳跃 / 相机跟随 / 放音效"。**② 模板游戏 60ms 就跑完(实测)**:IDE 生成的 `main.dex` 从不 `eng_init`,而 `eng_run` 的循环条件是 `while eng_running()`(没窗口恒为 0)→ 用户按「运行」什么都不发生;修成模板显式 `eng_init(dexstudio_game_title(), 960, 540, 1)` + `eng_run` 自己兜底开窗。**③ 场景"加载成功"却是空壳**:`dg_comp_kind()` 在组件池没建时返回 -1,场景加载把 -1 当成"不认识的组件"静默跳过 → 组件池按需 `dg_scene_init()`。**④ 框线公式与引擎不一致**(引擎 `原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放`,宿主写成 `世界坐标 + 轴心`)→ 这就是"只有框线在动、图像在别处"的根因;顺带视口改用**实际生效的活动相机**视图(`app.info`/`scene.render`)。**⑤ 旧模板的 32×32 裁切**(`sprite.sw/sh` 是"截取多大")→ 换贴图时自动改成整张(带 `note` 说明),打开老项目时内存里同样修正(不动用户文件、不算脏)。**⑥ 页面自测带项目时资源那段被整段 SKIP**(`DS.info` 还是 refresh 之前的)→ 自测自己记 `app.info`,并新增 `test_page_with_project` 钉住"缩略图真的解码 / 声音真的能播 / 换贴图后选中框 = 整张贴图"。**测**:`tests/test_dexstudio.py` 397 → **479 项**(新增 `test_blocks_model` / `test_blocks_behavior` / `test_scene_load_before_init` / `test_template_game_really_runs` / `test_outline_matches_pixels` / `test_page_with_project`),`--selftest` **51 项**,页面自测 **95(不带项目)/ 120(带项目)**,全量 30 脚本 0 失败。**零字节码格式改动**(引擎只改了 `dg_comp_kind`/`dg_scene_parse` 的按需初始化) |
+| (本次 B10) | **DexStudio 体验/逻辑大修(用户报"用起来十分别扭"——逐条查证后一次性修)**。先用实证定位:`tools/check_web_ids.py`(前端 id 覆盖)、ctypes 直连模型、headless Edge 读 computed style、离屏 WebView2 自测、`dexc` 编译探针。**修掉的硬伤**:① 「挂组件」「改名」两个按钮**从来没有接线**(点了没反应,于是用户根本挂不上任何组件);② `[hidden]` 被 `.recover{display:flex}` 等作者样式盖掉 → 恢复提示条/橡皮选项/改名行**永远显示**(用户报的"一直提示没正常退出"根因在这里,B8 只修了判定逻辑);③ 「编译/运行」**不存盘** → 游戏跑的是磁盘旧场景;④ 运行的游戏**写死 `scenes/main.json`** → 改成生成 `scripts/project_info.dex` + `dexstudio_start_scene()`,老项目编译时兜底改写;⑤ 「保存」**不写逻辑图**;⑥ 新节点属性是空值却照样生成 `eng_find("")` 这种静默无效代码 → 默认值给成合法值 + **生成前校验**(缺属性拦住、实体不在当前场景只警告);⑦ `on_action` 类节点永不触发(谁都没绑默认键位)→ 生成 `logic_start` 时 `eng_bind_default_actions()`;⑧ 瓦片地图在界面上无法新建;⑨ 删掉当前场景后回退到 `<根>\main.json`(裸文件名当相对路径用)。**门槛改造**:字段元数据表(`label/kind/enum/min/max/step/unit/readonly`)→ 枚举下拉/布尔复选/位掩码/**取色器**/**资源与实体下拉**(带导入入口);逻辑图属性全部改下拉(实体/组件/**联动字段**/动作/**按键名**/鼠标键/音频);项目改用**文件夹对话框 + 最近项目 + 新建向导(模板单选)**;实体「+」先问模板;场景**下拉切换**+ 改名/删除/「游戏从这里开始」;图层整层 ↑↓;网格预设;父子层级树 + 拖拽设父 + `entity.set_parent`(带环检测);资源改名**同步引用**;关窗未保存确认;单实例互斥量;`web-<hash>` 旧目录清理;帮助面板;逻辑图框选多选/整组拖动(`graph.node.move_many`)/复制;输出面板默认只显示人话。**测**:`tests/test_dexstudio.py` 329 → **397 项**(新增 `test_ui_contract` / `test_web_wiring`),`--selftest` 22 → **51 项**,页面自测 68 → **102 项**(新增"computed display 真的隐藏"、"真的点按钮"、多选/整组拖动、图层整层移动);全量 30 个脚本 0 失败。**零字节码格式改动**(引擎一行没动,只有宿主/前端/工具链)。细节与未做项见 `docs/DEXSTUDIO_UX_ISSUES.md` |
 | (本次 B9) | **DexStudio:资源路径(资源根)+ 逻辑图拉线预览 + 资源面板两处修复(用户真机报的两个症状)**。① **逻辑图拉线不跟鼠标**:`mousemove` 开头先判断 `drag` 就 return,而拉线用的是 `pending` → 预览线一动不动,松手才出现;把 pending 的更新挪到 guard 之前,并在页面自测里派发 mousedown/mousemove 后读 `Graph.dragState()` 断言"跟着走"。② **贴图设不上 / 缩略图裂图标**:根因是场景里存的是**项目相对**路径(`res/hero.png`),而引擎按自己的工作目录解析 → `comp.set sprite.tex_path` 直接失败(`texture` 停在 -1);缩略图的裂图标经排查是 B8 之前那版的乱码资源名导致的 URL 404(本版已好,新增"每张缩略图都真的解码一次"的断言钉住)。修法:引擎新增 `eng_set_asset_dir(dir)` + `dg_fopen_asset()`(相对路径拼资源根、绝对路径原样),IDE 在 `project.new/open` 时设成项目根 —— 场景里继续存相对路径,项目仍可搬(`eng_*` 168 → **169**)。顺带:`applyRes` 不再拿本地缓存当存在性依据(缓存过期就静默 return = "点了没反应"),改为现查 `entity.get`;`--wv-selftest` 的页面自测 62 → **68 项**(拉线预览 3 项 + 缩略图逐张解码 + 点缩略图设贴图 2 项 + 自测收尾会删掉自己建的 CSV)。**测**:`tests/test_dexstudio.py` 323 → **329 项**(新增 `test_asset_paths` / `test_graph_link_drag_visible`)。**零字节码格式改动** | 
 | (本次 B8) | **DexStudio 中文/编码修复 + 恢复提示语义(用户报的三个症状)**。① **窗口标题乱码**:`CreateWindowExA` 把 UTF-8 标题按 ANSI(936)解 → 改 `SetWindowTextW`,并在 `--wv-selftest` 里 `GetWindowTextW` **回读断言**(不看屏幕也能证明)。② **恢复提示一直显示、按钮没用**:自动保存每 30 秒写一次(总比场景新),而 `recoverable` 不区分"谁写的" → 自动保存包里记 `session`,只提示**上一次运行**留下的;正常退出盖 `clean=1`(强杀盖不上)⇒ 前端能区分"崩溃"与"正常退出但没存盘";`file_mtime` 读不出来不再当 0(假可恢复)。③ **中文名全是乱码/找不到资源**:根因是 `ds_json.c` 的解析器把 UTF-8 的**字节**当码点又编了一遍(二次编码),叠加 Windows 窄字符 API 按 ANSI 解路径。于是新增三层 UTF-8 路径层(`dexstudio/host/ds_utf8.c`、`libs/dexgame/dg_utf8.c`、`tools/dexc/dx_utf8.c`),把 `fopen`/`GetFileAttributesA`/`FindFirstFileA`/`CopyFileA`/`MoveFileA`/`DeleteFileA`/`CreateProcessA`/`LoadLibraryA`/`GetOpenFileNameA`/`GetModuleFileNameA`/`argv` 全换成宽字符版本;`dsu_utf8_clean()` 保证"响应永远是合法 UTF-8"。顺带修两处真问题:`scene.new` 没把当前场景记进 `start_scene`(重开项目回到空场景);`project.new` 不能建多级目录。**测**:`test_dexstudio.py` 284 → **323 项**(新增 `test_utf8_paths` / `test_build_in_chinese_path` / `test_recover_session`),`--selftest` 14 → **22 项**(含"中文与编码"一节),页面自测新增 2 项措辞断言;**dexc 仍与 Python 前端逐字节一致(478 项)**。**零字节码格式改动** |
 | (本次 B7) | **DexStudio B7:打包(前端资源内嵌 + 发布形态)**。新增 `tools/embed_web.py`(把 `dexstudio/web/*` 生成成 `dexstudio/host/ds_embed.c`:字节数组 + 表 + 内容哈希)与 `main.py package-dexstudio`(产出 `dist/DexStudio/`:exe + WebView2Loader.dll + libdexgame.dll + README.txt)。宿主找前端目录的顺序改成 `--web` → exe 同目录 `web/` → `exe/../../dexstudio/web` → **内嵌资源**(解包到 `%LOCALAPPDATA%\DexStudio\web-<哈希>` 再映射),于是发布出去**不需要 `web/` 目录**,而开发期仍然优先用磁盘上的那份。顺带修两个只在发布形态暴露的真问题:`--selftest` 的临时项目与「没有项目时的预览图目录」原本都写成 `exe_dir/../..\_zigtmp\...`,干净目录里不可写(视口渲染图解码成 `0×0`)—— 统一走新的 `ds_temp_dir()`。**测**:`tests/test_dexstudio.py` 279 → **284 项**,新增 `test_packaged_exe()`(把三个文件拷到**没有 `web/`** 的干净临时目录,跑 `--selftest` 与 `--wv-selftest`,后者含页面自测 58 项)。**零字节码格式改动** |
@@ -512,11 +509,13 @@ python tests/test_dexstudio.py                 # 329 项(ctypes + 逻辑图 + �
     `test_build_in_chinese_path` / `test_recover_session`);`--selftest` **22 项**;
     发布形态测试把三个文件拷进**中文目录**再跑,标题也断言。
   - ✅ **B9 已完成(资源根 + 拉线预览 + 资源面板)**:用户报「流程图拉线不跟鼠标」「图片能导入但显示裂图标、设不上贴图」两件事 —— 前者是 `mousemove` 的 guard 看错了状态(`drag` vs `pending`),后者是**相对资源路径按引擎自己的工作目录解析**(引擎新增 `eng_set_asset_dir` + `dg_fopen_asset`,IDE 打开项目时设成项目根,场景里继续存可搬的相对路径);顺带让 `applyRes` 不再拿本地缓存当存在性依据。验收证据:`tests/test_dexstudio.py` **329 项**、页面自测 **68 项**(含「预览线跟着鼠标走」与「点缩略图真的设上贴图且 texture>=0」)。细节见 `docs/DEXGAME_DESIGN.md` §9.9。
+  - ✅ **B10 已完成(体验/逻辑大修)**:用户报"用起来十分别扭"之后逐条查证并修复,清单/验收/未做项见 `docs/DEXSTUDIO_UX_ISSUES.md`。验收证据:`tests/test_dexstudio.py` **397 项**、`--selftest` **51 项**、页面自测 **102 项**,全量 30 脚本 0 失败。
+  - ✅ **B11 已完成(Scratch 式积木模式 + 四个"看不到效果")**:用户报「预览图裂图标 / 改贴图只有框线动、图像不显示 / 声音试听没反应 / 这代码块设计根本没法让零基础用户上手」。做成三档前端:**积木**(句子积木 + 全下拉,不连线不打字,点一下就加,`如果…就` 有肚子;16 种积木;`scripts/blocks.json`)/ 节点图(进阶)/ 代码。同时挖出并修掉四个**真**问题:① IDE 生成的 `main.dex` 从不 `eng_init`,而 `eng_run` 的循环条件是 `while eng_running()` → **游戏 60ms 就退出、什么都不显示**(实测);② 组件池没初始化时场景加载把每个组件当成"不认识的组件"静默跳过 → **有实体没组件**;③ 宿主 `scene.outline` 的框线公式与引擎画图**不是同一个**(差一个 `源尺寸 × 轴心 × 缩放`)→ 这就是"只有框线在动、图像在别处";④ 旧模板留下的 `sprite.sw/sh = 32` 让 300×400 的图只画左上角一块。验收证据:`tests/test_dexstudio.py` **479 项**(含"未初始化也能装组件""模板游戏 2 秒后还活着""框线与像素包围盒对齐""带项目跑页面自测:缩略图真的解码 / 声音真的能播"),`--selftest` **51 项**,页面自测 **95 / 120 项**,全量 30 脚本 0 失败。页面自测 95/120 的差别就是这一轮新开的资源/试听/换贴图那 25 项。细节见 `docs/DEXGAME_DESIGN.md` §9.10 与 `docs/PITFALLS.md` 的 B11 段。
   - ✅ **产品 B(B1–B7)全部完成** —— 14 项决策逐条落地:纯 C 工具链 / WebView2 宿主 /
     蓝图式逻辑图 / 完整场景编辑器 + 瓦片刷子 / 一键编译 + 独立窗口运行 + 错误定位 /
     编辑器基础功能(撤销重做、复制粘贴、框选、网格吸附、中文界面、自动保存与崩溃恢复)/
     自写代码高亮 / 模型层在 C 并可测 / 固定项目结构 / `dexstudio/` / 地基先行 / 自动提交推送。
-    全量测试见 §2(其中 DexStudio **329 项**)。
+    全量测试见 §2(其中 DexStudio **397 项**;B10 之后页面自测 102 项)。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。
