@@ -30,6 +30,7 @@
 | 产品 B: B6 资源与自动保存 | ✅ 完成 | `res.*`(导入/列表/改名/删除,缩略图走虚拟主机)+ 整包自动保存 + 崩溃恢复提示;`tests/test_dexstudio.py` **279 项** + 页面自测 **58 项**;见 §9.6 |
 | 产品 B: B7 打包 | ✅ 完成 | 前端资源内嵌进 exe + `package-dexstudio` 打包命令 + 干净目录验证;`tests/test_dexstudio.py` **284 项**;见 §9.7 |
 | 产品 B: B8 中文/编码 | ✅ 完成 | 三层 UTF-8 路径层 + 标题宽字符 + 恢复提示会话标记;`tests/test_dexstudio.py` **323 项** + 页面自测 **60 项**;见 §9.8 |
+| 产品 B: B9 资源根/拉线预览 | ✅ 完成 | 引擎资源根(相对路径可加载)+ 逻辑图拉线预览跟鼠标 + 资源面板两处修复;`tests/test_dexstudio.py` **329 项** + 页面自测 **67 项**;见 §9.9 |
 
 **M2 期间对本文设计的三处修正**(以代码为准):
 
@@ -609,9 +610,10 @@ IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
 | **B5** ✅ | 生成 + 运行 + 输出面板 + 错误定位 + 代码页签(自写高亮) | ✅ 见 §9.5:一键 = 存盘 + 重生成逻辑图 + `dexc.exe` 编译;诊断由 C 解析成 `{level,phase,line,col,msg}`,输出面板点一下跳到代码页签并在那一行闪一下;"运行"用 **vmnc.exe**(无控制台)开独立游戏窗口,"停止"能收掉(`build.status` 可查 pid/退出码);高亮是自写的词法着色(零第三方 JS) |
 | **B6** ✅ | 项目与资源管理:新建/打开项目、`res/` 导入、图集预览、自动保存/崩溃恢复 | ✅ 见 §9.6:`res.list/import/pick/delete/rename`(缩略图/试听走虚拟主机);**整包**自动保存(场景 + 瓦片 CSV + 逻辑图)→ `.dexstudio/autosave.json`;`app.info.recoverable` + 恢复提示条(恢复/丢弃,不擅自恢复);新建 → 导入资源 → 存盘 → 重开内容一致;崩溃(自动保存比场景新)能恢复出两个实体 |
 | **B7** ✅ | 打包:单 exe(内嵌前端资源)+ 发布说明 | ✅ 见 §9.7:**前端资源编译进 exe**;`python main.py package-dexstudio` 产出 `dist/DexStudio/`(exe + WebView2Loader.dll + libdexgame.dll + README);测试把这三个文件拷到**干净临时目录**(里面没有 `web/`)再跑 `--selftest` 与 `--wv-selftest`,两项都全过 —— 页面自测全过就是「内嵌资源可用」的证据 |
+| **B9** ✅ | 资源路径(资源根)+ 逻辑图拉线预览 + 资源面板 | ✅ 见 §9.9:引擎加 `eng_set_asset_dir` + `dg_fopen_asset`(场景里继续存**项目相对**路径,项目可搬);`mousemove` 的 guard 修正(拉线预览跟鼠标)。`eng_*` 168 → **169**;`tests/test_dexstudio.py` **329 项** + 页面自测 **67 项** |
 | **B8** ✅ | 中文/编码修复 + 恢复提示语义(用户真机报的三个症状) | ✅ 见 §9.8:标题 `SetWindowTextW` + 回读断言;自动保存带 `session`/`clean` 标记,只提示**上一次运行**留下的;根因是 `ds_json` 把 UTF-8 字节当码点(二次编码)+ 窄字符 API 按 ANSI 解路径 → 新增 `ds_utf8.c`/`dg_utf8.c`/`dx_utf8.c` 三层 UTF-8 路径层。`tests/test_dexstudio.py` **323 项**,发布形态在**中文目录**里也跑通 |
 
-产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 2164 项**)。
+产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 2170 项**)。
 
 ### 9.3 B3 落地实况(与 §9.1 的差异以此为准)
 
@@ -926,7 +928,7 @@ dexstudio/host/dexstudio.exe --wv-selftest
 python tests/test_dexstudio.py      # 279 项(B6 新增 28 项)
 dexstudio/host/dexstudio.exe --wv-selftest
 #   PASS  窗口标题:[DexStudio — DexLang 可视化 IDE]
-#   PASS  界面自测:60 项通过,0 项失败(有项目时;无项目 50 项)
+#   PASS  界面自测:67 项通过,0 项失败(有项目时;无项目 55 项)
 ```
 
 B6 那 28 项覆盖:资源列表/导入/重名不覆盖/源不存在/改名/删除/非法名/`pick dry`;
@@ -976,14 +978,14 @@ gitignore)。**"单 exe"指的是 IDE 不需要 Python、不需要旁边摆 `web
 
 ```bash
 python main.py package-dexstudio      # → dist/DexStudio/{exe, WebView2Loader.dll, libdexgame.dll, README.txt}
-python tests/test_dexstudio.py        # 323 项,含 test_packaged_exe()
+python tests/test_dexstudio.py        # 329 项,含 test_packaged_exe()
 ```
 
 `test_packaged_exe()` 把这三个文件拷进**干净临时目录**(并断言里面**没有** `web/`),
 然后在那个目录里跑:
 
 - `--selftest` → 22 项全过(模型自测 + 中文与编码;临时项目现在放缓存目录,不再依赖 `exe/../..`);
-- `--wv-selftest` → 起窗口 + 加载**内嵌**前端 + 窗口标题回读 + 页面自测 **60 项全过**。
+- `--wv-selftest` → 起窗口 + 加载**内嵌**前端 + 窗口标题回读 + 页面自测全过(项数随项目里的资源而变)。
 
 **这个测试当场抓出两个真问题**(都已修,记进 `docs/PITFALLS.md`):
 
@@ -1053,6 +1055,45 @@ dexstudio.exe --wv-selftest       # 窗口标题回读 + 页面自测 60 项
   保证"响应永远是合法 UTF-8"。彻底的做法是把 `vm.c` 也改成 UTF-8 原生(要重编三个 exe,
   本轮没做)。
 - 内嵌资源的解包目录仍用 `%LOCALAPPDATA%`(中文用户名已支持,只是路径里会有中文)。
+
+---
+
+### 9.9 B9 落地实况(资源路径 + 拉线预览)
+
+用户在真机上又报了两件事,都是"看着像小毛病、其实是设计缺口"。
+
+| 症状 | 根因 | 修法 |
+|------|------|------|
+| 逻辑图连线时那根线**不跟鼠标**,松手连上了才"啪"地出现 | `mousemove` 处理函数开头写的是 `if (!drag) return;`,而拉线用的是 `pending`(只有平移画布/拖节点才设 `drag`)—— 更新鼠标位置与重绘那两行永远跑不到 | 把 `if (pending) {…draw();}` 挪到 `drag` 的 guard **之前**;`Graph` 暴露 `dragState()`/`pinScreenPos()` 给页面自测,派发 mousedown+mousemove 后断言 `pending` 真的跟着走(光看像素会漏掉"线还在原点") |
+| 图片能导入,但面板显示裂图标;**点缩略图给实体设不上贴图** | ① 缩略图:旧版(B8 之前)资源名从 `FindFirstFileA` 出来是 GBK,拼出的 URL 404 —— B8 修好了,本轮补上"每张缩略图都真的解码一次"的断言钉住它。② **设不上贴图是真 bug**:场景里存的是**项目相对**路径(`res/hero.png`,这样项目才可搬),而 IDE 自己那个引擎实例的工作目录是 IDE 的目录 → 引擎按自己的工作目录找 → 必然 `cannot open image`,`sprite.texture` 停在 -1。用绝对路径绕过去又让项目一搬家就废 | 引擎加**资源根**:`eng_set_asset_dir(dir)` + `dg_fopen_asset()`(相对路径先拼资源根、绝对路径原样,引擎里所有打开文件的地方都换成它),IDE 在 `project.new/open` 时设成项目根。于是场景里继续存**相对**路径、项目仍可搬,而游戏那边本来就用项目根当工作目录(`ds_run` 传的 cwd),两边一致。`eng_*` 168 → **169** |
+
+**顺带修掉的一处**(写自测时自己撞上的):`applyRes` 拿本地缓存 `DS.entities` 的
+`byId(id)` 判断"要不要先挂 sprite",缓存一过期就 `if (!e) return;` —— 用户点缩略图
+**什么都不发生、也没有任何提示**。改成现查一次 `entity.get`,查不到就明确报
+"实体已失效,先重选"。**判据:UI 别拿缓存当"存在性"依据,更不能查不到就静默返回。**
+
+**验收证据**
+
+```bash
+python tests/test_dexstudio.py    # 329 项(新增 test_asset_paths / test_graph_link_drag_visible)
+dexstudio.exe --wv-selftest       # 页面自测 67 项(有项目时),其中:
+#   PASS  预览线跟着鼠标走(不是连完才出现)
+#   PASS  缩略图真的解码了  猫_害羞.png     (逐张都解码,中文名的 URL 转义是另一条路)
+#   PASS  点缩略图能给实体设上贴图(tex_path 是项目相对路径)  res/foo.png
+#   PASS  设置的贴图真的被引擎加载了(texture >= 0)  4098
+```
+
+- `test_asset_paths()`:项目相对路径能设上、`texture >= 0`、**场景 JSON 里存的是相对路径**,
+  以及**重开项目后**贴图仍然加载得起来(资源根是在 `project.open` 时设的)。
+- `test_graph_link_drag_visible()`:静态哨兵 —— 钉住 `graph.js` 里 `pending` 的更新
+  必须在 `drag` 的 guard 之前(行为断言在页面自测里)。
+
+**已知简化(B9)**
+
+- 瓦片地图的 `path`/`tex_path` 仍然由宿主存**绝对路径**(B3 的既有设计,宿主要按路径
+  读写 CSV 与做撤销快照)。资源根让绝对路径照常工作,所以功能没问题,但这些字段
+  在项目搬家后需要重新指认。要彻底可搬得把 CSV 的读写也改成"项目相对 + 运行时解析"。
+- `vm.exe` 仍是窄字符路径(见 §9.8 的说明)。
 
 ---
 
