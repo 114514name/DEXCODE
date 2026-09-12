@@ -1,0 +1,66 @@
+// examples/dexgame/demo_m1.dex — dexgame M1 渲染核心演示
+//
+// 演示内容:D3D11 批渲染、纹理、alpha 混合、C 侧拥有的帧循环、165Hz 帧节奏。
+// 运行:  python main.py run examples/dexgame/demo_m1.dex
+//        (或先 compile 再直接跑 vm.exe,不需要 Python)
+//
+// 操作:跑固定帧数后自动退出(无人值守也能验证);关闭窗口也会立即退出。
+
+include "dexgame";
+
+// ---- 初始化:960x540,开启垂直同步 ----
+if eng_init("dexgame M1 演示", 960, 540, 1) != 0 {
+    print "eng_init 失败: " + eng_last_error();
+} else {
+    print "GPU: " + eng_gpu_name();
+    print "显存: " + eng_vram_mb() + " MB";
+
+    // 程序化纹理:两个不同颜色的小方块,放大后当精灵用
+    let tex_red = eng_tex_solid(4, 4, 0xFFFF4040);
+    let tex_blue = eng_tex_solid(4, 4, 0xFF4080FF);
+    if tex_red < 0 || tex_blue < 0 {
+        print "纹理创建失败: " + eng_last_error();
+    }
+
+    eng_set_clear_color(0xFF101018);
+
+    let frames = 0;
+    let max_frames = 240;          // 约 1.5 秒 @165Hz
+    let t0 = eng_now_ms();
+
+    while eng_running() && frames < max_frames {
+        // frame_begin 抽消息 / 绑目标 / 清屏 / 重置批次
+        if eng_frame_begin() == 0 {
+            // 窗口被关闭
+            frames = max_frames;
+        } else {
+            let t = frames * 4;
+
+            // 背景层:一条会呼吸的暗色横带(演示 alpha 混合)
+            let pulse = 40 + (t % 120);
+            eng_rect(0.0, 400.0, 960.0, 60.0, eng_rgba(30, 60, 120, pulse));
+
+            // 来回移动的两个精灵
+            let x1 = 100.0 + t;
+            let x2 = 700.0 - t;
+            eng_draw(tex_red, x1, 200.0, 48.0, 48.0, 0xFFFFFFFF);
+            eng_draw(tex_blue, x2, 260.0, 64.0, 48.0, 0xC0FFFFFF);
+
+            // 固定不动的参考方块
+            eng_rect(456.0, 246.0, 48.0, 48.0, 0xFF40FF80);
+
+            eng_frame_end();
+            frames = frames + 1;
+        }
+    }
+
+    let ms = eng_now_ms() - t0;
+    print "渲染帧数: " + frames;
+    if ms > 0 {
+        // 整数除法,避免依赖浮点格式化
+        print "实测帧率(约): " + (frames * 1000 / ms) + " fps";
+    }
+    print "GPU 时间线结束,错误信息: [" + eng_last_error() + "]";
+    eng_shutdown();
+    print "done";
+}

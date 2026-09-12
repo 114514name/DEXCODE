@@ -119,17 +119,21 @@ def test_def_directive():
                    'abi value_array;\n', "<t>")
     check("abi 写在 extern 之后也生效", d2.abi == "value_array")
 
-    check("value_array 上限为 8",
+    _16 = ", ".join("p%d: int" % k for k in range(16))
+    check("value_array 上限为 16",
           parse_def('abi value_array;\nrefer "x";\n'
-                    'extern func f(a: int, b: int, c: int, d: int, e: int, f: int, '
-                    'g: int, h: int) -> int;\n', "<t>").natives[0].arity == 8)
+                    'extern func f(%s) -> int;\n' % _16, "<t>").natives[0].arity == 16)
+    _17 = ", ".join("p%d: int" % k for k in range(17))
+    # 引擎 API 有天然很宽的函数:eng_draw_uv 有 10 个参数。
+    # 这个上限只是 vm.c 的 param_types 数组容量,不是格式约束。
+    check("10 参签名可用(eng_draw_uv 的形态)",
+          O.MAX_NATIVE_ARGS >= 10)
 
     for name, body, frag in (
         ("arity=4 在 direct 下被拒绝", 'refer "x";\n'
          'extern func f(a: int, b: int, c: int, d: int) -> int;\n', "at most 3"),
-        ("arity=9 在 value_array 下被拒绝", 'abi value_array;\nrefer "x";\n'
-         'extern func f(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int, '
-         'i: int) -> int;\n', "at most 8"),
+        ("arity=17 在 value_array 下被拒绝", 'abi value_array;\nrefer "x";\n'
+         'extern func f(%s) -> int;\n' % _17, "at most 16"),
         ("重复 abi 被拒绝", 'abi value_array;\nabi direct;\nrefer "x";\n', "duplicate 'abi'"),
         ("未知 abi 被拒绝", 'abi nonsense;\nrefer "x";\n', "unknown abi"),
     ):
@@ -146,8 +150,8 @@ def test_def_directive():
         check("direct 越界时提示 value_array", "abi value_array" in str(e), str(e))
 
     check("parse_sig 默认限 3", parse_sig("iii:i") == ([1, 1, 1], 1))
-    check("parse_sig max_arity=8 放行 8 参",
-          parse_sig("iiiiiiii:i", max_arity=8) == ([1] * 8, 1))
+    check("parse_sig max_arity=16 放行 16 参",
+          parse_sig("i" * 16 + ":i", max_arity=16) == ([1] * 16, 1))
     try:
         parse_sig("iiii:i")
         check("parse_sig 默认拒 4 参", False, "未报错")

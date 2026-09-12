@@ -155,7 +155,7 @@ enum {
 
 #define MAX_STACK  (1u << 20)
 #define MAX_FRAMES (1u << 16)
-#define MAX_NATIVE_ARGS 8
+#define MAX_NATIVE_ARGS 16
 
 /* 原生函数表里 ret_type 字节的高位标记调用约定(见 docs/SPEC.md 4.5)。
    ret_type 的有效值只有 0..3,高位是空的;旧字节码该位恒为 0,故新旧 VM 对

@@ -57,19 +57,28 @@ echo [1/6] libs\math\libdexmath.dll
 echo [2/6] libs\std\libdexstd.dll
 "%ZIG%" cc %COMMON% -o libs\std\libdexstd.dll libs\std\libdexstd.c || exit /b 1
 
-echo [3/6] libs\img\libdeximg.dll
+echo [3/7] libs\img\libdeximg.dll
 "%ZIG%" cc %COMMON% -o libs\img\libdeximg.dll libs\img\libdeximg.c || exit /b 1
 
-echo [4/6] libs\ui\libdexui.dll
+echo [4/7] libs\ui\libdexui.dll
 "%ZIG%" cc %COMMON% -o libs\ui\libdexui.dll libs\ui\libdexui.c || exit /b 1
 
-echo [5/6] libs\egui\libegui.dll
+echo [5/7] libs\egui\libegui.dll
 "%ZIG%" cc %COMMON% -lcomctl32 -luser32 -lgdi32 -lwinmm -lshell32 -o libs\egui\libegui.dll libs\egui\libegui.c || exit /b 1
 
-echo [6/6] libs\gal\libdexxgal.dll
+echo [6/7] libs\gal\libdexxgal.dll
 "%ZIG%" cc %COMMON% -lgdi32 -luser32 -lwinmm -lmsimg32 -o libs\gal\libdexxgal.dll libs\gal\libdexxgal.c || exit /b 1
 
+REM dexgame = modular 2D game engine (M1: D3D11 renderer).
+REM NOTE: no d3dcompiler import library is needed -- shaders are compiled at
+REM runtime by loading d3dcompiler_47.dll (a Windows system DLL) via LoadLibrary.
+REM (zig ships d3d11/dxgi/dwrite import libs but NOT d3dcompiler; see dg_draw.c)
+echo [7/7] libs\dexgame\libdexgame.dll
+"%ZIG%" cc %COMMON% -I libs\dexgame -ld3d11 -ldxgi -luser32 -lgdi32 -lole32 -luuid -lwinmm ^
+  -o libs\dexgame\libdexgame.dll ^
+  libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_api.c || exit /b 1
+
 echo.
-echo Done. Rebuilt 6 native libraries.
+echo Done. Rebuilt 7 native libraries.
 echo Cache dirs _zigcache\ and _zigtmp\ are excluded by .gitignore.
 endlocal

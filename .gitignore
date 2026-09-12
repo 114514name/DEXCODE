@@ -76,6 +76,9 @@ _native_test*
 !libs/ui/libdexui.dll
 !libs/egui/libegui.dll
 !libs/gal/libdexxgal.dll
+# dexgame:模块化 2D 游戏引擎。注意它**有**构建脚本(build_libs.bat 的第 7 项),
+# 但为与其余 6 个库保持一致仍然入库(否则新 clone 的 test_dexgame.py 会 skip)。
+!libs/dexgame/libdexgame.dll
 # 旧版 C 自绘 GAL 编辑器:tests/test_editor.py 驱动它做 .galscene 往返,
 # 缺少构建脚本(仅有 tools/legacy_galedit_c/galedit.cpp),故连同 exe 一起入库。
 !tools/legacy_galedit_c/galedit.exe

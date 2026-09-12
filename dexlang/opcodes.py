@@ -35,7 +35,13 @@ NATIVE_FIXED_SIZE = 6
 #
 # 两个上限分开命名,避免把「老 ABI 的 3」和「数组 ABI 的 8」搞混。
 MAX_NATIVE_ARITY = 3          # 直接 ABI 的上限
-MAX_NATIVE_ARGS = 8           # 值数组 ABI 的上限(必须与 vm.c 的 MAX_NATIVE_ARGS 一致)
+# 值数组 ABI 的上限。这个数字只是 vm.c 里 param_types 数组的容量,**不是格式约束**
+# (字节码里 arity 本来就是 u8、表条目本来就是变长的 6+arity),所以调大它不需要改
+# 格式、不影响旧字节码;只有手写/篡改的 .dexbc 用到超出老 VM 上限的 arity 时,
+# 老 VM 会在加载期明确报 "native arity N too large"。
+# 取 16 是因为引擎 API 存在天然很宽的函数(如
+# eng_draw_uv(tex,x,y,w,h,u0,v0,u1,v1,color) 有 10 个)。
+MAX_NATIVE_ARGS = 16
 
 # 原生函数表里 ret_type 字节的高位用来标记调用约定。
 # 之所以能这么用:ret_type 的有效值只有 0..3(NAT_VOID/INT/FLOAT/STR),高位是空的。

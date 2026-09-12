@@ -1,0 +1,73 @@
+# dexgame_static.dexdef — dexgame 游戏引擎接口(静态内嵌版)
+#
+# 由 dexgame.dexdef 生成,唯一区别是下面的 `refer static`:编译时把
+# libdexgame.dll 的字节内嵌进 .dexbc,运行时无需外部 DLL 文件。
+# 改接口后请重跑生成脚本,不要手工编辑本文件。
+#
+# 用法:
+#   include "dexgame";
+#   eng_init("我的游戏", 1280, 720, 1);
+#   while eng_running() {
+#       eng_frame_begin();
+#       eng_rect(10, 10, 100, 50, 0xFFFF0000);
+#       eng_frame_end();
+#   }
+#   eng_shutdown();
+#
+# 注:
+#   - 本文件使用**值数组调用约定**(abi value_array)。原生侧签名为
+#     int64_t eng_xxx(const DexValue *args, int argc);
+#     这样参数个数可以超过 3(eng_draw_uv 有 10 个参数)。
+#     详见 docs/SPEC.md 4.5 与 libs/dexgame/dexvalue.h。
+#   - 帧循环由 C 侧拥有:frame_begin 抽消息/清屏,frame_end 提交并 Present。
+#   - 任何失败都会返回负数,原因用 eng_last_error() 取(**不静默失败**)。
+#   - 颜色统一为 0xAARRGGBB。
+
+abi value_array;
+refer static "libdexgame.dll";
+
+# ---- 生命周期 ----
+extern func eng_init(title: string, w: int, h: int, vsync: int) -> int;
+extern func eng_init_offscreen(w: int, h: int) -> int;
+extern func eng_shutdown() -> int;
+extern func eng_running() -> int;
+extern func eng_request_close() -> int;
+extern func eng_version() -> int;
+
+# ---- 帧 ----
+extern func eng_frame_begin() -> int;
+extern func eng_frame_end() -> int;
+extern func eng_frame_index() -> int;
+extern func eng_now_ms() -> int;
+extern func eng_width() -> int;
+extern func eng_height() -> int;
+extern func eng_set_clear_color(color: int) -> int;
+extern func eng_set_vsync(on: int) -> int;
+extern func eng_set_target_fps(fps: int) -> int;
+
+# ---- 纹理 ----
+extern func eng_tex_load(path: string) -> int;
+extern func eng_tex_solid(w: int, h: int, color: int) -> int;
+extern func eng_tex_free(tex: int) -> int;
+extern func eng_tex_valid(tex: int) -> int;
+extern func eng_tex_width(tex: int) -> int;
+extern func eng_tex_height(tex: int) -> int;
+
+# ---- 绘制 ----
+# 注:DexLang 编译器**精确校验参数个数**(没有可选尾参),所以这里必须把每个形参都
+# 声明出来。要按纹理原始尺寸绘制,用 eng_tex_width/eng_tex_height 取尺寸后传入。
+extern func eng_draw(tex: int, x: float, y: float, w: float, h: float, color: int) -> int;
+extern func eng_draw_uv(tex: int, x: float, y: float, w: float, h: float, u0: float, v0: float, u1: float, v1: float, color: int) -> int;
+extern func eng_rect(x: float, y: float, w: float, h: float, color: int) -> int;
+
+# ---- 颜色辅助 ----
+# DexLang 没有位移运算,无法自行从 r/g/b/a 拼出 0xAARRGGBB,故提供此函数。
+extern func eng_rgba(r: int, g: int, b: int, a: int) -> int;
+
+# ---- 测试 / 调试 ----
+extern func eng_pixel(x: int, y: int) -> int;
+extern func eng_save_bmp(path: string) -> int;
+extern func eng_last_error() -> string;
+extern func eng_clear_error() -> int;
+extern func eng_gpu_name() -> string;
+extern func eng_vram_mb() -> int;

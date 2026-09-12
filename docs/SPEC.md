@@ -93,15 +93,19 @@ extern func dex_hello() -> string;
 |---|---|---|
 | 声明 | `extern func ...`(不写 `abi` 即默认) | `.dexdef` 顶部写一行 `abi value_array;` |
 | C 侧签名 | 实参逐个展开:`int f(int a, double b, const char *c)` | `int64_t f(const DexValue *args, int argc)` |
-| 参数个数上限 | **3** | **8** |
+| 参数个数上限 | **3** | **16** |
 | 类型组合 | 受 VM 手写分发表限制,支持的组合见 `native_sig_supported` | 无限制(类型由每个元素的标签在运行时携带) |
 | 主要使用者 | 现有 6 个库(std/math/img/ui/egui/gal) | 新库(如 dexgame 引擎) |
 | 返回字符串 | 借用 + VM 复制(`xstrdup`) | **同一契约**,不变 |
 
 **为什么直接 ABI 只到 3**:`vm/vm.c` 的 NCALL 分发是按「arity × 参数类型组合」手写的
 分支表,组合数按 3^N 增长(arity 4 就是 81 条),写不下去。值数组 ABI 把实参装进一个
-带标签的数组,分发与类型组合解耦,故可以放心开到 8(`MAX_NATIVE_ARGS`,即 `param_types`
-的存储上限)。
+带标签的数组,分发与类型组合解耦,故上限只取决于一个**存储常量**
+`MAX_NATIVE_ARGS`(`param_types` 数组容量,当前 **16**)。
+
+这个常量**不是格式约束**:字节码里 `arity` 本来就是 u8、原生函数表条目本来就是变长的
+`6 + arity`,所以调大它不需要改格式、不影响旧字节码。M1 期间它从 8 提到 16,原因很具体:
+引擎的 `eng_draw_uv(tex,x,y,w,h,u0,v0,u1,v1,color)` 天然有 10 个参数。
 
 **`DexValue` 定义**(原生库只依赖这个类型,不应依赖 VM 内部结构):
 
@@ -121,13 +125,13 @@ typedef struct {
 #### 4.5.2 arity 上限的强制点
 
 上限常量在 `dexlang/opcodes.py`:`MAX_NATIVE_ARITY = 3`(直接 ABI)与
-`MAX_NATIVE_ARGS = 8`(值数组 ABI)。校验分布:
+`MAX_NATIVE_ARGS = 16`(值数组 ABI)。校验分布:
 
 - **解析期**:`defparser.parse_def()`(按文件级 `abi` 选上限,与 `abi` 声明的位置无关)
   与 `parse_sig()`(汇编文本的 `.native` 行,上限由当前 `.abi` 指令决定)
 - **汇编期**:`assembler.assemble()` 再校验一次
 - **加载期**:`vm.c` 拒绝 `arity > MAX_NATIVE_ARGS`(`param_types` 容量)
-- **调用期**:直接 ABI 的 arity 4..8 报 `unsupported native arity`(只有手写/篡改的
+- **调用期**:直接 ABI 的 arity 4..16 报 `unsupported native arity`(只有手写/篡改的
   `.dexbc` 可能走到这里)
 
 超过直接 ABI 上限的报错会提示改用 `abi value_array;`。
@@ -231,7 +235,7 @@ VM: foo_free(p)          ← 用原生原始指针释放原生缓冲区
 **原生函数表**:每个 = 6 字节固定 + arity 字节参数类型
 - `name_idx` u16(函数名常量)
 - `lib_idx` u16(库表索引)
-- `arity` u8(0..8;上限取决于调用约定,见 4.5)
+- `arity` u8(0..16;上限取决于调用约定,见 4.5)
 - `ret_type` u8(低 7 位 = 返回类型:`0`void `1`int `2`float `3`string;
   **位 7** = 调用约定:`0` 直接 ABI,`1` 值数组 ABI —— 见 4.5.3。该位在旧字节码里恒为 0)
 - `param_types` arity 字节(同上类型码)
