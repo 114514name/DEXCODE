@@ -29,10 +29,10 @@
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
-| **游戏引擎** | `libs/dexgame/`(~1500 行,3 个 .c) | 模块化 2D 引擎:**D3D11 批渲染**,见 `docs/DEXGAME_DESIGN.md`。当前 M1(渲染核心) |
+| **游戏引擎** | `libs/dexgame/`(~3100 行,5 个 .c + 4 个 .h) | 模块化 2D 引擎:**D3D11 批渲染** + 实体/组件/场景,见 `docs/DEXGAME_DESIGN.md`。当前 M2(实体与组件) |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(22 个测试文件 + `_tmpdir.py`,~6900 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(23 个测试文件 + `_tmpdir.py`,~7700 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -47,7 +47,7 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:782 项通过 / 0 失败** —— 22 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- **测试:915 项通过 / 0 失败** —— 23 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
 - 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
   二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
@@ -83,10 +83,11 @@ python tests/test_memmodel.py    # 44  内存模型(P0–P3 + FFI 契约)
 python tests/test_editor.py      # 18  旧版 C 编辑器 .galscene 往返 + 导出链路
 python tests/test_abi.py         # 37  原生调用「值数组 ABI」(M0.5)
 python tests/test_dexgame.py     # 59  dexgame 引擎 D3D11 渲染核心(M1,含像素断言)
+python tests/test_scene.py       # 133 dexgame 实体/组件/JSON 场景(M2,含像素断言)
 ```
 
-合计 **153 个测试函数 / 763 处 `check()` 调用**;实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **782 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **181 个测试函数 / 899 处 `check()` 调用**;实际执行数随平台与是否构建
+`vm.exe` 而变,本机实测 **915 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -206,6 +207,12 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | 引擎宿主进程的 DPI 只能设一次 | `SetProcessDpiAwarenessContext` 必须在**创建任何窗口之前**调用,且清单设过就再设会失败 | `dg_gfx_init_window` 里尽早调用并**忽略失败**(E_ACCESSDENIED 不算错);客户区尺寸要用 `AdjustWindowRectExForDpi` 算,否则 150% 缩放下会偏小 |
 | **`zig cc -shared` 会往当前目录丢 import library**(M1) | lld 为 `-shared` 链接生成导入库,且**按第一个输入文件命名**:多文件的 dexgame 于是把 `dg_gfx.lib` 扔在了**仓库根**(单文件的 6 个库则是 `libs/*/lib<名>.lib`,已入库)。它不被 gitignore 覆盖,污染工作树 | 传 `-Wl,--out-implib=_zigtmp\dexgame.lib` 把它引到 gitignored 目录(`build_libs.bat` 已这么做)。我们运行时用 LoadLibrary,不需要导入库 |
 | **DLL 重建不可复现,exe 可以**(M1) | 连续两次 `build_libs.bat` 编出的 DLL 哈希不同:PE `TimeDateStamp` 每次都变,设 `SOURCE_DATE_EPOCH` 也无效(实测)。而 `build-vm` 的三个 exe 逐字节可复现 | 重建库文件后出现二进制 diff 是**正常的**,与代码改动无关;判断"某次改动是否影响二进制"只能靠 exe 那边。见 §2 构建小节 |
+| **游标式 JSON 迭代器的契约**(M2) | `djr_key`/`djr_arr_more` **只报告"到头了",不代劳收尾**;而且**必须自己消费元素之间的逗号**。第一版两处都写错(声明"不消费 `}`/`]`"却让调用方再收尾;数组迭代器不消费 `,`),症状是 `scene JSON: line 25: expected '{'` —— 报错点离病因十万八千里 | 契约写在 `dg_json.h` 的注释里,调用方必须调 `djr_obj_end`/`djr_arr_end`。**报错信息带上"实际看到的字符"**(`expected '{', found ','`)后一眼定位。片切数组时 `objs_len` 必须**包含**收尾的 `]`,否则子解析器的 `djr_arr_end` 找不到它 |
+| **跳过未知值时不能借 `djr_string`**(M2) | `djr_skip_value` 里用 `djr_string(r, dump, sizeof dump)`(cap=2)跳过字符串,于是**任何长度 ≥ 2 的未知字符串字段**都让整个场景加载失败:`scene JSON: string too long (cap 2)`。向前兼容测试(未知字段值 `"ignored"`)当场抓住 | 单独写一个**不复制内容**的 `djr_skip_string`。规则:`skip` 系列永远不能依赖任何固定缓冲 |
+| `dg_error` 是**覆盖**式 | 失败路径上后写的 `dg_error` 会盖掉前面更具体的原因(如"贴图路径不存在"),用户只看到含糊的上层消息 | 只在**原因还空着**时兜底:`if (!dg_last_error()[0]) dg_error(...)`。判断"某个失败是否带得出原因"只能靠测试断言原因内容,不能只看返回码 |
+| **引擎自己算 uv 时也必须遵守单纹素规则**(M2) | M1 只在 `eng_draw_uv`(调用方给 uv)上定了这条,但 `eng_draw_scene` 从 Sprite 的源矩形算 uv 时又踩了一遍:单纹素精灵放大 4 倍后纯绿变成 `0xFF20FF20`(红色渗进来) | 规则落到引擎内部:跨多纹素用**区域边界**,单纹素(`sw/sh ≤ 1`)退化到**纹素中心**。`test_scene.py::test_sprite_texel_rule` 锁住并实测了两者差异(边界 uv 得 `0xFF20FF20`,纹素中心得 `0xFF00FF00`) |
+| **JSON 里的 `parent` 是场景内索引,不是实体 id**(M2) | 实体 id 高位是世代号。写场景时拿运行时 id 直接和槽位数比较 → `parent` 恒写成 `-1`,层级在往返后**静默丢失**(只有像素断言才发现) | 写:先给活实体编 `index_of[]`,用 `dg_ent_idx(id)` 取出索引再查表。读:`on_load` 钩子经 `id_map` 把索引重映射为**新的**实体 id。`test_scene.py::test_json_shape` 同时断言"是索引 0"和"不是实体 id" |
+| 加载失败会留下半成品场景(M2) | `dg_scene_from_json` 直接返回 -1,但已经创建的实体/组件留在池子里 —— 调用方拿到失败却又多出一堆东西(测试里就出现过"加载失败但计数 = 1") | `dg_scene_parse`(内部)+ `dg_scene_from_json`(外壳:失败即 `dg_object_clear()`)。**注册表/加载器一类的 API 都要这样:失败后状态必须回到调用前** |
 
 ---
 
@@ -262,6 +269,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | M2 完成:设计文档新增 §4.3 纹理采样规则、§5.4 M2 落地实况、§7.5 手写 JSON 的实现与代价,里程碑表同步;本文件同步测试基线、新增 6 条 M2 陷阱、§7 待办推进 |
+| (本次 M2) | **dexgame 引擎 M2:实体与组件**。`dg_scene.c`(实体池 + 代际句柄 + 6 种内置组件 + 描述符表 + 层级世界坐标 + 场景 JSON 读写 + 从组件渲染)与 `dg_json.c/h`(手写流式 JSON 读写,含未知值跳过);`eng_*` 33 → **58** 个函数;新增 `tests/test_scene.py`(133 项,含像素断言/往返/向前兼容/双 VM)。**零字节码格式改动**(纯库改动) |
 | (本次 docs) | M1 完成:SPEC 的 arity 上限 8→16 与"存储常量而非格式约束"说明;本文件同步测试基线、新增 5 条 M1 陷阱、§3.5/§5.1 更新、待办推进 |
 | (本次 M1) | **dexgame 引擎 M1:D3D11 渲染核心**。新增 `libs/dexgame/`(dg_gfx/dg_draw/dg_api + dexvalue.h/dg_guids.h,~1500 行):flip 交换链、PER_MONITOR_AWARE_V2、2D 精灵批渲染、stb_image、代际句柄、`eng_last_error` 失败带原因、离屏渲染 + 像素回读/BMP 落盘(测试通道)。`MAX_NATIVE_ARGS` 8→16(eng_draw_uv 有 10 参)。新增 `tests/test_dexgame.py`(59 项)与 `examples/dexgame/demo_m1.dex`(实测 164.6fps@165Hz) |
 | (本次 docs) | M0.5 完成:SPEC 4.5 重写为两套调用约定 + 新增 4.5.1–4.5.3;本文件同步测试基线、新增两条陷阱、§3.5 与 §5.1 更新、待办推进 |
@@ -307,11 +316,21 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 - ✅ **M0.5 已完成**:原生调用「值数组 ABI」落地(零格式/版号改动、两个 VM 同步)。
 - ✅ **M1 已完成**(渲染核心):`libs/dexgame/` 可用 —— D3D11 flip 交换链、
   PER_MONITOR_AWARE_V2、2D 精灵批渲染、stb_image、代际句柄、失败带原因、
-  离屏渲染+像素断言通道。`eng_*` 共 33 个函数(值数组 ABI)。
+  离屏渲染+像素断言通道。`eng_*` 33 个函数(值数组 ABI)。
   实测示例 `examples/dexgame/demo_m1.dex` 跑 **164.6 fps @165Hz 垂直同步**
   (240 帧墙钟 1.82s,与 240/165=1.45s 吻合)—— 即**没有被锁死在 60Hz**。
-  **下一刀是 M2**:实体池 + Unity 式组件挂载 + 变换层级 + 描述符驱动的 JSON 场景读写;
-  文字(DirectWrite + 字形图集)与相机/层级排序也归在 M1b,可与 M2 并行。
+- ✅ **M2 已完成**(实体与组件):实体池 + **代际句柄** + 6 种内置组件
+  (transform/sprite/camera/animation/collider/body)+ 描述符表自省 +
+  位置层级世界坐标 + **JSON 场景读写**(含"未知组件/字段被跳过"的向前兼容)+
+  从组件渲染(相机、layer/order 稳定排序)。`eng_*` 共 **58** 个函数,
+  `tests/test_scene.py` 133 项(像素断言 + 往返 + 双 VM 一致),**零字节码格式改动**。
+  - 已知简化:层级只做**位置**继承(`eng_world_x/y`),旋转/缩放继承与缓存待有需求再做;
+    相机约定是"(x,y) = 屏幕左上角的世界坐标"(见设计文档 §4.3/§5.4)。
+  - 顺带修掉两条自己踩的坑:单纹素精灵的 uv 必须取纹素中心;场景加载失败不留半成品。
+- **下一刀是 M3**:物理 L1–L3 —— 查询原语(AABB/圆/胶囊、point/ray/sweep)、
+  空间哈希宽相、固定步长(建议 120Hz)+ **move-and-slide** 运动学、瓦片地图碰撞。
+  `collider`/`body` 两张字段表 M2 已经建好(目前只是**数据**),M3 往里填行为即可。
+  文字(DirectWrite + 字形图集)仍归 M1b,可与 M3 并行。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。
