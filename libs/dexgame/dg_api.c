@@ -23,6 +23,7 @@
 static uint32_t g_clear_color = DG_RGB(20, 20, 28);
 static int64_t  g_frame_index = 0;
 static int      g_target_fps = 0;      /* 0 = 不限速(靠 VSync) */
+static int64_t  g_last_frame_ms = 0;   /* 上一帧的时间戳(算 dt 给物理用)*/
 
 /* ---------- 生命周期 ---------- */
 int64_t eng_init(const DexValue *a, int n) {
@@ -34,6 +35,7 @@ int64_t eng_init(const DexValue *a, int n) {
     if (dg_gfx_init_window(title, w, h, vsync)) return -1;
     if (dg_draw_init()) { dg_gfx_shutdown(); return -1; }
     dg_scene_init();
+    dg_phys_init();
     g_frame_index = 0;
     return 0;
 }
@@ -45,6 +47,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
     if (dg_gfx_init_offscreen(w, h)) return -1;
     if (dg_draw_init()) { dg_gfx_shutdown(); return -1; }
     dg_scene_init();
+    dg_phys_init();
     g_frame_index = 0;
     return 0;
 }
@@ -52,6 +55,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
 int64_t eng_shutdown(const DexValue *a, int n) {
     (void)a; (void)n;
     dg_clear_error();
+    dg_phys_shutdown();
     dg_scene_shutdown();
     dg_draw_shutdown();
     dg_gfx_shutdown();
@@ -75,6 +79,14 @@ int64_t eng_frame_begin(const DexValue *a, int n) {
     dg_clear_error();
     dg_gfx_pump();
     if (!dg_gfx_running()) return 0;
+    /* 物理默认**自动**推进:用墙钟 dt 喂固定步长累加器。手动模式
+       (eng_physics_set_auto(0))下由用户自己调 eng_physics_step()。 */
+    if (dg_phys_get_auto()) {
+        const int64_t now = dg_gfx_now_ms();
+        const double dt = g_last_frame_ms ? (double)(now - g_last_frame_ms) / 1000.0 : 0.0;
+        g_last_frame_ms = now;
+        dg_phys_advance(dt);
+    }
     dg_gfx_bind_target();
     dg_gfx_clear(g_clear_color);
     dg_draw_frame_begin();
@@ -409,6 +421,291 @@ int64_t eng_field_persist(const DexValue *a, int n) {
     const int k = dg_comp_kind(dv_str_or(a, n, 0, ""));
     if (k < 0) return -1;
     return dg_comp_field_persist(k, (int)dv_int_or(a, n, 1, -1));
+}
+
+/* ============================================================
+   物理(M3):固定步长 / 查询 / 运动 / 瓦片
+   ============================================================ */
+
+/* ---------- 世界设置 ---------- */
+int64_t eng_physics_set_auto(const DexValue *a, int n) {
+    dg_clear_error();
+    dg_phys_set_auto((int)dv_int_or(a, n, 0, 1));
+    return dg_phys_get_auto();
+}
+
+int64_t eng_physics_set_gravity(const DexValue *a, int n) {
+    dg_clear_error();
+    dg_phys_set_gravity((float)dv_float_or(a, n, 0, 0.0), (float)dv_float_or(a, n, 1, 980.0));
+    return 0;
+}
+
+int64_t eng_physics_set_step(const DexValue *a, int n) {
+    dg_clear_error();
+    const double hz = dv_float_or(a, n, 0, 120.0);
+    if (hz < 1.0) { dg_error("physics step %g Hz is too low (min 1)", hz); return -1; }
+    dg_phys_set_step_hz((float)hz);
+    return 0;
+}
+
+int64_t eng_physics_step(const DexValue *a, int n) {
+    dg_clear_error();
+    const double dt = dv_float_or(a, n, 0, 1.0 / 120.0);
+    if (dt < 0.0) { dg_error("physics step dt %g < 0", dt); return -1; }
+    return dg_phys_advance(dt);
+}
+
+int64_t eng_physics_step_once(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    return dg_phys_step_once();
+}
+
+int64_t eng_physics_pause(const DexValue *a, int n) {
+    dg_clear_error();
+    dg_phys_set_pause((int)dv_int_or(a, n, 0, 0));
+    return 0;
+}
+
+/* 注意:浮点返回值必须用 double 签名(见 eng_get_f 的说明)—— 写成 int64_t 会把
+   双精度位模式当成 float 读,调用方拿到的是垃圾(实测 5.2e-315)。 */
+double eng_physics_alpha(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return (double)dg_phys_alpha();
+}
+
+int64_t eng_physics_substeps(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return dg_phys_last_substeps();
+}
+
+double eng_dt(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return (double)dg_phys_frame_dt();
+}
+
+double eng_time(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return dg_phys_time();
+}
+
+/* ---------- 运动 ---------- */
+int64_t eng_move(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_move needs (object, dx, dy)"); return -1; }
+    int hx = 0, hy = 0;
+    const int32_t rc = dg_phys_move((uint32_t)dv_int(&a[0]), (float)dv_float(&a[1]),
+                                    (float)dv_float(&a[2]), &hx, &hy);
+    if (rc < 0) return -1;
+    return rc;                       /* 位掩码:1 = X 向受阻,2 = Y 向受阻 */
+}
+
+int64_t eng_on_ground(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_phys_on_ground((uint32_t)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+
+int64_t eng_on_wall(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_phys_on_wall((uint32_t)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+
+int64_t eng_on_ceiling(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_phys_on_ceiling((uint32_t)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+
+int64_t eng_set_velocity(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_set_velocity needs (object, vx, vy)"); return -1; }
+    const uint32_t obj = (uint32_t)dv_int(&a[0]);
+    if (dg_set_f(obj, "body", "vx", dv_float(&a[1]))) return -1;
+    if (dg_set_f(obj, "body", "vy", dv_float(&a[2]))) return -1;
+    dg_phys_wake(obj);
+    return 0;
+}
+
+double eng_velocity_x(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_get_f((uint32_t)dv_int_or(a, n, 0, 0), "body", "vx");
+}
+
+double eng_velocity_y(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_get_f((uint32_t)dv_int_or(a, n, 0, 0), "body", "vy");
+}
+
+int64_t eng_body_wake(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_body_wake needs an object"); return -1; }
+    dg_phys_wake((uint32_t)dv_int(&a[0]));
+    return 0;
+}
+
+int64_t eng_body_sleeping(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_get_i((uint32_t)dv_int_or(a, n, 0, 0), "body", "sleeping") ? 1 : 0;
+}
+
+/* ---------- 查询(游标式:语言没有数组)---------- */
+int64_t eng_query_rect(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 4) { dg_error("eng_query_rect needs (x, y, w, h[, mask])"); return -1; }
+    return dg_phys_query_rect((float)dv_float(&a[0]), (float)dv_float(&a[1]),
+                              (float)dv_float(&a[2]), (float)dv_float(&a[3]),
+                              (int32_t)dv_int_or(a, n, 4, 0));
+}
+
+int64_t eng_query_circle(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_query_circle needs (cx, cy, r[, mask])"); return -1; }
+    return dg_phys_query_circle((float)dv_float(&a[0]), (float)dv_float(&a[1]),
+                                (float)dv_float(&a[2]), (int32_t)dv_int_or(a, n, 3, 0));
+}
+
+int64_t eng_query_point(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_query_point needs (x, y[, mask])"); return -1; }
+    return dg_phys_query_point((float)dv_float(&a[0]), (float)dv_float(&a[1]),
+                               (int32_t)dv_int_or(a, n, 2, 0));
+}
+
+int64_t eng_query_next(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_query_next needs a cursor"); return 0; }
+    return dg_phys_query_next((int32_t)dv_int(&a[0]));
+}
+
+int64_t eng_query_count(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_query_count needs a cursor"); return -1; }
+    return dg_phys_query_count((int32_t)dv_int(&a[0]));
+}
+
+int64_t eng_query_at(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_query_at needs (cursor, index)"); return 0; }
+    return dg_phys_query_at((int32_t)dv_int(&a[0]), (int32_t)dv_int(&a[1]));
+}
+
+int64_t eng_query_reset(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_query_reset needs a cursor"); return -1; }
+    return dg_phys_query_reset((int32_t)dv_int(&a[0]));
+}
+
+int64_t eng_query_end(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_query_end needs a cursor"); return -1; }
+    return dg_phys_query_end((int32_t)dv_int(&a[0]));
+}
+
+int64_t eng_overlap(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_overlap needs (objectA, objectB)"); return -1; }
+    return dg_phys_overlap((uint32_t)dv_int(&a[0]), (uint32_t)dv_int(&a[1]));
+}
+
+/* ---------- 射线 / 扫掠(结果槽)---------- */
+int64_t eng_raycast(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 5) { dg_error("eng_raycast needs (x, y, dx, dy, dist, mask, ignore)"); return -1; }
+    return dg_phys_raycast((float)dv_float(&a[0]), (float)dv_float(&a[1]),
+                           (float)dv_float(&a[2]), (float)dv_float(&a[3]),
+                           (float)dv_float(&a[4]), (int32_t)dv_int_or(a, n, 5, 0),
+                           (uint32_t)dv_int_or(a, n, 6, 0));
+}
+
+int64_t eng_sweep_box(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 6) { dg_error("eng_sweep_box needs (x, y, hw, hh, dx, dy, mask, ignore)"); return -1; }
+    return dg_phys_sweep_box((float)dv_float(&a[0]), (float)dv_float(&a[1]),
+                             (float)dv_float(&a[2]), (float)dv_float(&a[3]),
+                             (float)dv_float(&a[4]), (float)dv_float(&a[5]),
+                             (int32_t)dv_int_or(a, n, 6, 0),
+                             (uint32_t)dv_int_or(a, n, 7, 0));
+}
+
+int64_t eng_hit_obj(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return dg_phys_hit()->obj;
+}
+double eng_hit_x(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_phys_hit()->x; }
+double eng_hit_y(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_phys_hit()->y; }
+double eng_hit_nx(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_phys_hit()->nx; }
+double eng_hit_ny(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_phys_hit()->ny; }
+double eng_hit_t(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_phys_hit()->t; }
+int64_t eng_hit_tile(const DexValue *a, int n) { (void)a; (void)n; return dg_phys_hit()->tile; }
+
+/* ---------- 渲染插值开关 ---------- */
+int64_t eng_render_set_interp(const DexValue *a, int n) {
+    dg_clear_error();
+    dg_phys_set_interp((int)dv_int_or(a, n, 0, 1));
+    return dg_phys_get_interp();
+}
+
+/* ---------- 瓦片地图 ---------- */
+static DgTilemap *eng_tilemap_arg(const DexValue *a, int n, const char *who) {
+    if (n < 1) { dg_error("%s needs an object", who); return NULL; }
+    DgTilemap *t = (DgTilemap *)dg_comp_get((uint32_t)dv_int(&a[0]), DG_C_TILEMAP);
+    if (!t) dg_error("object %d has no 'tilemap'", (int)dv_int(&a[0]));
+    return t;
+}
+
+int64_t eng_tilemap_load_csv(const DexValue *a, int n) {
+    dg_clear_error();
+    if (!eng_tilemap_arg(a, n, "eng_tilemap_load_csv")) return -1;
+    if (n < 2) { dg_error("eng_tilemap_load_csv needs (object, text)"); return -1; }
+    return dg_tilemap_load_csv((uint32_t)dv_int(&a[0]), dv_str(&a[1]));
+}
+
+int64_t eng_tilemap_load_file(const DexValue *a, int n) {
+    dg_clear_error();
+    if (!eng_tilemap_arg(a, n, "eng_tilemap_load_file")) return -1;
+    if (n < 2) { dg_error("eng_tilemap_load_file needs (object, path)"); return -1; }
+    return dg_tilemap_load_file((uint32_t)dv_int(&a[0]), dv_str(&a[1]));
+}
+
+int64_t eng_tilemap_save_csv(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_tilemap_save_csv needs (object, path)"); return -1; }
+    return dg_tilemap_save_csv((uint32_t)dv_int(&a[0]), dv_str(&a[1]));
+}
+
+int64_t eng_tilemap_tile(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_tilemap_tile needs (object, col, row)"); return -1; }
+    return dg_tilemap_tile((uint32_t)dv_int(&a[0]), (int32_t)dv_int(&a[1]), (int32_t)dv_int(&a[2]));
+}
+
+int64_t eng_tilemap_cols(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_tilemap_cols((uint32_t)dv_int_or(a, n, 0, 0));
+}
+
+int64_t eng_tilemap_rows(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_tilemap_rows((uint32_t)dv_int_or(a, n, 0, 0));
+}
+
+int64_t eng_tilemap_set_solid(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_tilemap_set_solid needs (object, tile, solid)"); return -1; }
+    return dg_tilemap_set_solid((uint32_t)dv_int(&a[0]), (int32_t)dv_int(&a[1]),
+                                (int)dv_int(&a[2]));
+}
+
+int64_t eng_tilemap_is_solid(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_tilemap_is_solid needs (object, tile)"); return 0; }
+    return dg_tilemap_is_solid((uint32_t)dv_int(&a[0]), (int32_t)dv_int(&a[1])) ? 1 : 0;
+}
+
+int64_t eng_tilemap_solid_at(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_tilemap_solid_at needs (object, worldX, worldY)"); return 0; }
+    return dg_tilemap_solid_at((uint32_t)dv_int(&a[0]), (float)dv_float(&a[1]),
+                               (float)dv_float(&a[2])) ? 1 : 0;
 }
 
 /* ---------- 颜色辅助 ----------

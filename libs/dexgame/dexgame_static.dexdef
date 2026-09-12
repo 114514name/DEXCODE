@@ -102,6 +102,69 @@ extern func eng_field_name(comp: string, index: int) -> string;
 extern func eng_field_type(comp: string, index: int) -> int;
 extern func eng_field_persist(comp: string, index: int) -> int;
 
+# ---- 物理(M3)----
+# 固定步长(默认 120Hz)+ 累加器;默认由 eng_frame_begin() 自动推进,
+# eng_physics_set_auto(0) 后改由用户每帧调 eng_physics_step(dt)。
+extern func eng_physics_set_auto(on: int) -> int;
+extern func eng_physics_set_gravity(gx: float, gy: float) -> int;
+extern func eng_physics_set_step(hz: float) -> int;
+extern func eng_physics_step(dt: float) -> int;
+extern func eng_physics_step_once() -> int;
+extern func eng_physics_pause(on: int) -> int;
+extern func eng_physics_alpha() -> float;
+extern func eng_physics_substeps() -> int;
+extern func eng_dt() -> float;
+extern func eng_time() -> float;
+
+# 运动:轴分离的 move-and-slide。返回位掩码(1 = X 向受阻,2 = Y 向受阻)。
+extern func eng_move(obj: int, dx: float, dy: float) -> int;
+extern func eng_on_ground(obj: int) -> int;
+extern func eng_on_wall(obj: int) -> int;
+extern func eng_on_ceiling(obj: int) -> int;
+extern func eng_set_velocity(obj: int, vx: float, vy: float) -> int;
+extern func eng_velocity_x(obj: int) -> float;
+extern func eng_velocity_y(obj: int) -> float;
+extern func eng_body_wake(obj: int) -> int;
+extern func eng_body_sleeping(obj: int) -> int;
+
+# 查询是**游标式**(DexLang 没有数组):begin 拿游标,next 逐个取(0 = 结束),
+# 用完必须 end。mask = 0 表示不做 layer 筛选。
+extern func eng_query_rect(x: float, y: float, w: float, h: float, mask: int) -> int;
+extern func eng_query_circle(cx: float, cy: float, r: float, mask: int) -> int;
+extern func eng_query_point(x: float, y: float, mask: int) -> int;
+extern func eng_query_next(cursor: int) -> int;
+extern func eng_query_count(cursor: int) -> int;
+extern func eng_query_at(cursor: int, index: int) -> int;
+extern func eng_query_reset(cursor: int) -> int;
+extern func eng_query_end(cursor: int) -> int;
+extern func eng_overlap(a: int, b: int) -> int;
+
+# 射线/扫掠:返回 1/0,命中详情在**结果槽**里(每次查询都覆盖它)。
+extern func eng_raycast(x: float, y: float, dx: float, dy: float, dist: float, mask: int, ignore: int) -> int;
+extern func eng_sweep_box(x: float, y: float, hw: float, hh: float, dx: float, dy: float, mask: int, ignore: int) -> int;
+extern func eng_hit_obj() -> int;
+extern func eng_hit_tile() -> int;
+extern func eng_hit_x() -> float;
+extern func eng_hit_y() -> float;
+extern func eng_hit_nx() -> float;
+extern func eng_hit_ny() -> float;
+extern func eng_hit_t() -> float;
+
+# 有 body 的实体默认做渲染插值(120Hz 物理 + 165Hz 渲染不插值会顿)。
+extern func eng_render_set_interp(on: int) -> int;
+
+# 瓦片地图:图块数据不进场景 JSON(可能几万格),只存 path;字符串加载的图要
+# 自己用 eng_tilemap_save_csv() 落盘。非空格子默认实心,可用 set_solid 改。
+extern func eng_tilemap_load_csv(obj: int, text: string) -> int;
+extern func eng_tilemap_load_file(obj: int, path: string) -> int;
+extern func eng_tilemap_save_csv(obj: int, path: string) -> int;
+extern func eng_tilemap_tile(obj: int, col: int, row: int) -> int;
+extern func eng_tilemap_cols(obj: int) -> int;
+extern func eng_tilemap_rows(obj: int) -> int;
+extern func eng_tilemap_set_solid(obj: int, tile: int, solid: int) -> int;
+extern func eng_tilemap_is_solid(obj: int, tile: int) -> int;
+extern func eng_tilemap_solid_at(obj: int, wx: float, wy: float) -> int;
+
 # ---- 颜色辅助 ----
 # DexLang 没有位移运算,无法自行从 r/g/b/a 拼出 0xAARRGGBB,故提供此函数。
 extern func eng_rgba(r: int, g: int, b: int, a: int) -> int;

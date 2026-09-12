@@ -84,7 +84,7 @@ echo [7/7] libs\dexgame\libdexgame.dll
   -Wl,--out-implib=_zigtmp\dexgame.lib ^
   -o libs\dexgame\libdexgame.dll ^
   libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_scene.c ^
-  libs\dexgame\dg_json.c libs\dexgame\dg_api.c || exit /b 1
+  libs\dexgame\dg_json.c libs\dexgame\dg_phys.c libs\dexgame\dg_api.c || exit /b 1
 
 echo.
 echo Done. Rebuilt 7 native libraries.

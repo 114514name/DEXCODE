@@ -1,0 +1,174 @@
+// examples/dexgame/demo_m3.dex — dexgame M3 物理演示
+//
+// 演示内容:瓦片地图(CSV 生成 + 批量渲染 + 网格碰撞)、固定步长物理、
+//           重力/弹性/休眠、轴分离 move-and-slide、游标式范围查询。
+// 运行:  python main.py run examples/dexgame/demo_m3.dex
+//        (或先 compile 再直接跑 vm.exe,不需要 Python)
+//
+// 操作:跑固定帧数后自动退出(无人值守也能验证);关闭窗口会立即退出。
+// 一期还没有输入接口(M4),所以"操作"是脚本化的:玩家左右巡逻 + 定时起跳。
+
+include "dexgame";
+
+let COLS = 15;
+let ROWS = 8;
+let TILE = 64.0;                       // 世界单位(像素)与图集无关:图集只有 2x2 纹素
+
+if eng_init("dexgame M3 演示", 960, 512, 1) != 0 {
+    print "eng_init 失败: " + eng_last_error();
+} else {
+    print "GPU: " + eng_gpu_name();
+    print "物理步长(Hz): 120,重力 980 px/s²";
+
+    // ---- 用循环"画"一张地图:最后一行是地板,中间两条平台 ----
+    let csv = "";
+    let r = 0;
+    while (r < ROWS) {
+        let c = 0;
+        while (c < COLS) {
+            let v = -1;
+            if (r == ROWS - 1) { v = 0; }                       // 地板
+            if (r == 5) { if (c < 6) { v = 1; } }               // 左下平台
+            if (r == 3) { if (c > 8) { if (c < 13) { v = 2; } } } // 右上平台
+            csv = csv + v;
+            if (c < COLS - 1) { csv = csv + ","; }
+            c = c + 1;
+        }
+        csv = csv + "\n";
+        r = r + 1;
+    }
+
+    let map = eng_object_new();
+    eng_attach(map, "transform");
+    eng_attach(map, "tilemap");
+    eng_set_s(map, "tilemap", "tex_path", "tests/fixtures/atlas2x2.png");
+    eng_set_i(map, "tilemap", "atlas_tile", 1);
+    eng_set_i(map, "tilemap", "atlas_cols", 2);
+    eng_set_f(map, "tilemap", "tw", TILE);
+    eng_set_f(map, "tilemap", "th", TILE);
+    if eng_tilemap_load_csv(map, csv) != 0 {
+        print "瓦片地图加载失败: " + eng_last_error();
+    }
+    print "地图: " + eng_tilemap_cols(map) + " x " + eng_tilemap_rows(map) + " 格";
+
+    // ---- 玩家:动态 AABB(挂在 transform 上,渲染靠 sprite)----
+    let tex_player = eng_tex_solid(16, 24, 0xFF66E066);
+    let player = eng_object_new();
+    eng_attach(player, "transform");
+    eng_attach(player, "sprite");
+    eng_attach(player, "collider");
+    eng_attach(player, "body");
+    eng_set_s(player, "sprite", "tex_path", "tests/fixtures/atlas2x2.png");
+    eng_set_f(player, "sprite", "sx", 1.0);       // 绿色纹素
+    eng_set_f(player, "sprite", "sy", 0.0);
+    eng_set_f(player, "sprite", "sw", 1.0);
+    eng_set_f(player, "sprite", "sh", 1.0);
+    eng_set_f(player, "sprite", "px", 0.0);
+    eng_set_f(player, "sprite", "py", 0.0);
+    eng_set_f(player, "sprite", "layer", 5);
+    eng_set_f(player, "collider", "hw", 8.0);     // 16x24 的碰撞盒
+    eng_set_f(player, "collider", "hh", 12.0);
+    eng_set_f(player, "collider", "ox", 8.0);     // 碰撞盒左上角对齐渲染位置
+    eng_set_f(player, "collider", "oy", 12.0);
+    eng_set_i(player, "body", "motion", 2);       // dynamic
+    eng_set_f(player, "body", "friction", 0.0);
+    eng_set_f(player, "body", "restitution", 0.0);
+    eng_set_f(player, "transform", "x", 100.0);
+    eng_set_f(player, "transform", "y", 0.0);
+
+    // ---- 一个会弹的球:圆形碰撞体 + 弹性 ----
+    let ball = eng_object_new();
+    eng_attach(ball, "transform");
+    eng_attach(ball, "sprite");
+    eng_attach(ball, "collider");
+    eng_attach(ball, "body");
+    eng_set_s(ball, "sprite", "tex_path", "tests/fixtures/atlas2x2.png");
+    eng_set_f(ball, "sprite", "sx", 0.0);
+    eng_set_f(ball, "sprite", "sy", 1.0);         // 蓝色纹素
+    eng_set_f(ball, "sprite", "sw", 1.0);
+    eng_set_f(ball, "sprite", "sh", 1.0);
+    eng_set_f(ball, "sprite", "px", 0.0);
+    eng_set_f(ball, "sprite", "py", 0.0);
+    eng_set_f(ball, "sprite", "layer", 6);
+    eng_set_i(ball, "collider", "kind", 1);       // 圆
+    eng_set_f(ball, "collider", "hw", 12.0);
+    eng_set_f(ball, "collider", "ox", 12.0);
+    eng_set_f(ball, "collider", "oy", 12.0);
+    eng_set_i(ball, "body", "motion", 2);
+    eng_set_f(ball, "body", "restitution", 0.75);
+    eng_set_f(ball, "transform", "x", 400.0);
+    eng_set_f(ball, "transform", "y", 60.0);
+
+    eng_set_clear_color(0xFF101018);
+
+    let frames = 0;
+    let max_frames = 300;                    // 约 2 秒 @165Hz
+    let dir = 1.0;
+    let jump_wait = 0;
+    let jumps = 0;
+    let reported = 0;
+    let t0 = eng_now_ms();
+
+    while eng_running() && frames < max_frames {
+        if eng_frame_begin() == 0 {
+            frames = max_frames;             // 窗口被关闭
+        } else {
+            // ---- 脚本化"输入":巡逻 + 每 60 帧跳一次 ----
+            let speed = 150.0;
+            if frames % 150 > 74 { dir = -1.0; } else { dir = 1.0; }
+            if eng_on_wall(player) == 1 { dir = dir * -1.0; }
+            if jump_wait == 0 {
+                if eng_on_ground(player) == 1 {
+                    eng_set_velocity(player, speed * dir, -520.0);
+                    jump_wait = 60;
+                    jumps = jumps + 1;
+                }
+            } else {
+                eng_set_velocity(player, speed * dir, eng_velocity_y(player));
+                jump_wait = jump_wait - 1;
+            }
+
+            // ---- 查询:数一下玩家周围 160x160 内有多少碰撞体 ----
+            if frames == 100 {
+                let q = eng_query_rect(eng_world_x(player) - 80.0, eng_world_y(player) - 80.0,
+                                       160.0, 160.0, 0);
+                print "玩家周围命中 " + eng_query_count(q) + " 个碰撞体";
+                eng_query_end(q);
+                // 往下打一条射线,看看脚下是什么(第 7 个参数 = 忽略自己,
+                // 否则射线从玩家体内出发会命中玩家自己)
+                let hit = eng_raycast(eng_world_x(player) + 8.0, eng_world_y(player) + 12.0,
+                                      0.0, 1.0, 200.0, 0, player);
+                if hit == 1 {
+                    print "脚下 " + eng_hit_t() + " 像素处有东西(地形瓦片=" + eng_hit_tile() + ")";
+                } else {
+                    print "脚下 200 像素内没有东西";
+                }
+            }
+
+            // ---- 物理每帧自动推进(eng_frame_begin 里做的)----
+            let drawn = eng_draw_scene();
+
+            // ---- HUD:纯色矩形 + 一帧一次的状态输出 ----
+            eng_rect(0.0, 0.0, 240.0, 46.0, 0x80000000);
+            if frames % 30 == 0 {
+                print "f=" + frames + " 玩家=(" + eng_world_x(player) + "," + eng_world_y(player)
+                      + ") 落地=" + eng_on_ground(player)
+                      + " 球y=" + eng_world_y(ball)
+                      + " 子步=" + eng_physics_substeps()
+                      + " alpha=" + eng_physics_alpha()
+                      + " 跳=" + jumps
+                      + " 绘制=" + drawn;
+                reported = reported + 1;
+            }
+            eng_frame_end();
+            frames = frames + 1;
+        }
+    }
+
+    let ms = eng_now_ms() - t0;
+    if ms > 0 { print "实跑 " + frames + " 帧 / " + ms + " ms"; }
+    print "玩家最终速度(" + eng_velocity_x(player) + ", " + eng_velocity_y(player) + ")";
+    print "球最终速度(" + eng_velocity_x(ball) + ", " + eng_velocity_y(ball) + ")";
+    eng_shutdown();
+    print "done";
+}

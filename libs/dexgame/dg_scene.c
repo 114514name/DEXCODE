@@ -21,6 +21,7 @@
 #include "dexgame.h"
 #include "dg_json.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,8 +64,17 @@ uint32_t dg_object_new(void) {
 
 int32_t dg_object_count(void) { return g_live_count; }
 
+int dg_scene_collect_objects(uint32_t *out, int cap) {
+    int n = 0;
+    for (int32_t i = 1; i <= DG_MAX_OBJECTS && n < cap; i++)
+        if (g_ents[i].live) out[n++] = (g_ents[i].gen << 16) | (uint32_t)i;
+    return n;
+}
+
 /* ============================ 字段描述符 ============================ */
 static void dg_comp_on_unload(int kind, void *comp, int32_t *id_map, int n);
+/* 从文件把瓦片网格装进给定组件(不含实体查询,on_load 也要用) */
+static int  dg_tilemap_load_path(DgTilemap *t, const char *path);
 
 /* ============================ 组件池 ============================ */
 #define DG_MAX_COMPS 4096
@@ -85,23 +95,9 @@ typedef struct {
 static DgPool g_pools[DG_C_COUNT];
 static int   g_pools_ready = 0;
 
-/* ============================ 组件结构 ============================ */
-typedef struct { float x, y, rot, sx, sy; int32_t parent; } DgTransform;
-typedef struct {
-    char    tex_path[DG_PATH_MAX];
-    int32_t texture;                 /* 运行时 */
-    float   sx, sy, sw, sh;          /* 源矩形;sw/sh = 0 表示整张 */
-    float   px, py;
-    int32_t tint;
-    int32_t flip;
-    int32_t layer, order;
-} DgSprite;
-typedef struct { float x, y, zoom, rot; int32_t active; } DgCamera;
-typedef struct { int32_t first, count; float fps, time; int32_t loop; } DgAnimation;
-/* Collider/Body 在 M2 只是**数据**:让场景能预先带上物理属性,M3 才有东西可读。*/
-typedef struct { int32_t kind; float hw, hh, ox, oy; int32_t is_trigger, layer, mask; } DgCollider;
-typedef struct { int32_t motion; float vx, vy, gravity_scale, friction, restitution;
-                 int32_t sleeping; } DgBody;
+/* ============================ 组件结构 ============================
+   结构体定义在 dexgame.h(dg_phys.c 也要看);这里只留字段表。
+   collider/body 的行为在 dg_phys.c,tilemap 的数据与渲染在本文件。 */
 
 static const DgField TR_FIELDS[] = {
     { "x",      DG_F_FLOAT, 1, 0, offsetof(DgTransform, x) },
@@ -159,6 +155,27 @@ static const DgField BODY_FIELDS[] = {
     { "friction",      DG_F_FLOAT, 1, 0, offsetof(DgBody, friction) },
     { "restitution",   DG_F_FLOAT, 1, 0, offsetof(DgBody, restitution) },
     { "sleeping",      DG_F_INT,   1, 0, offsetof(DgBody, sleeping) },
+    /* 上一固定步的位置 + 接触状态 —— 渲染插值与物理用,不进 JSON */
+    { "px",            DG_F_FLOAT, 0, 0, offsetof(DgBody, px) },
+    { "py",            DG_F_FLOAT, 0, 0, offsetof(DgBody, py) },
+    { "stepped",       DG_F_INT,   0, 0, offsetof(DgBody, stepped) },
+    { "flags",         DG_F_INT,   0, 0, offsetof(DgBody, flags) },
+};
+static const DgField TILE_FIELDS[] = {
+    { "path",       DG_F_STR,   1, (uint16_t)sizeof(((DgTilemap *)0)->path),
+      offsetof(DgTilemap, path) },
+    { "tex_path",   DG_F_STR,   1, (uint16_t)sizeof(((DgTilemap *)0)->tex_path),
+      offsetof(DgTilemap, tex_path) },
+    { "texture",    DG_F_INT,   0, 0, offsetof(DgTilemap, texture) },
+    { "cols",       DG_F_INT,   0, 0, offsetof(DgTilemap, cols) },
+    { "rows",       DG_F_INT,   0, 0, offsetof(DgTilemap, rows) },
+    { "tw",         DG_F_FLOAT, 1, 0, offsetof(DgTilemap, tw) },
+    { "th",         DG_F_FLOAT, 1, 0, offsetof(DgTilemap, th) },
+    { "atlas_tile", DG_F_INT,   1, 0, offsetof(DgTilemap, atlas_tile) },
+    { "atlas_cols", DG_F_INT,   1, 0, offsetof(DgTilemap, atlas_cols) },
+    { "layer",      DG_F_INT,   1, 0, offsetof(DgTilemap, layer) },
+    { "order",      DG_F_INT,   1, 0, offsetof(DgTilemap, order) },
+    { "visible",    DG_F_INT,   1, 0, offsetof(DgTilemap, visible) },
 };
 
 #define NFIELDS(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -192,6 +209,24 @@ static void dg_comp_defaults(int kind, void *c) {
         ((DgBody *)c)->friction = 0.6f;
         ((DgBody *)c)->restitution = 0.2f;
         break;
+    case DG_C_COLLIDER:
+        /* 默认 8x8 的 AABB,第 0 层、与所有层碰撞(mask=0 表示不筛选) */
+        ((DgCollider *)c)->kind = DG_SHAPE_AABB;
+        ((DgCollider *)c)->hw = 4.0f;
+        ((DgCollider *)c)->hh = 4.0f;
+        ((DgCollider *)c)->layer = 1;
+        break;
+    case DG_C_TILEMAP: {
+        DgTilemap *t = (DgTilemap *)c;
+        t->texture = -1;
+        t->tw = 16.0f;
+        t->th = 16.0f;
+        t->atlas_tile = 16;
+        t->atlas_cols = 8;
+        t->visible = 1;
+        memset(t->solid, -1, sizeof t->solid);      /* -1 = 未指定:非空即实心 */
+        break;
+    }
     default:
         break;
     }
@@ -206,6 +241,7 @@ void dg_scene_init(void) {
         { "animation", DG_C_ANIMATION, ANIM_FIELDS,NFIELDS(ANIM_FIELDS),(int)sizeof(DgAnimation) },
         { "collider",  DG_C_COLLIDER,  COL_FIELDS, NFIELDS(COL_FIELDS), (int)sizeof(DgCollider) },
         { "body",      DG_C_BODY,      BODY_FIELDS,NFIELDS(BODY_FIELDS),(int)sizeof(DgBody) },
+        { "tilemap",   DG_C_TILEMAP,   TILE_FIELDS,NFIELDS(TILE_FIELDS),(int)sizeof(DgTilemap) },
     };
     for (size_t i = 0; i < sizeof(DEF) / sizeof(DEF[0]); i++) {
         DgPool *p = &g_pools[DEF[i].k];
@@ -234,6 +270,9 @@ void dg_scene_init(void) {
 }
 
 void dg_scene_shutdown(void) {
+    /* 瓦片网格是 malloc 的,先释放(否则重建场景会泄漏) */
+    for (int i = 0; i < g_pools[DG_C_TILEMAP].count; i++)
+        free(((DgTilemap *)(g_pools[DG_C_TILEMAP].data + (size_t)i * g_pools[DG_C_TILEMAP].stride))->tiles);
     for (int k = 0; k < DG_C_COUNT; k++) {
         free(g_pools[k].data);   g_pools[k].data = NULL;
         free(g_pools[k].owner);  g_pools[k].owner = NULL;
@@ -242,13 +281,14 @@ void dg_scene_shutdown(void) {
     g_pools_ready = 0;
     memset(g_ents, 0, sizeof g_ents);
     g_live_count = 0;
+    dg_phys_invalidate();
 }
 
 int dg_comp_kind(const char *name) {
     if (!name || !g_pools_ready) return -1;
     for (int k = 1; k < DG_C_COUNT; k++)
         if (g_pools[k].name && strcmp(g_pools[k].name, name) == 0) return k;
-    dg_error("unknown component '%s' (have: transform/sprite/camera/animation/collider/body)",
+    dg_error("unknown component '%s' (have: transform/sprite/camera/animation/collider/body/tilemap)",
              name ? name : "(null)");
     return -1;
 }
@@ -303,6 +343,7 @@ void *dg_comp_add(uint32_t obj, int kind) {
     p->owner[s] = ei;
     p->slot[ei] = s;
     p->used[ei] = 1;
+    dg_phys_invalidate();
     return c;
 }
 
@@ -328,6 +369,7 @@ int32_t dg_comp_remove(uint32_t obj, int kind) {
     p->owner[s] = 0;
     p->slot[ei] = -1;
     p->used[ei] = 0;
+    dg_phys_invalidate();
     return 0;
 }
 
@@ -340,6 +382,7 @@ int32_t dg_object_free(uint32_t obj) {
     g_ents[ei].live = 0;
     /* gen 保持不变:下次创建时 +1,所以指向本对象的旧句柄永远失效 */
     g_live_count--;
+    dg_phys_invalidate();
     return 0;
 }
 
@@ -376,6 +419,7 @@ int32_t dg_set_f(uint32_t obj, const char *comp, const char *field, double v) {
     const DgField *f = dg_field(k, field);
     if (!f || dg_field_check(f, 1)) return -1;
     *(float *)((uint8_t *)c + f->offset) = (float)v;
+    dg_phys_after_set(obj, k, f->name);      /* 位置/速度变了要让宽相与休眠失效 */
     return 0;
 }
 
@@ -387,6 +431,7 @@ int32_t dg_set_i(uint32_t obj, const char *comp, const char *field, int64_t v) {
     const DgField *f = dg_field(k, field);
     if (!f || dg_field_check(f, 0)) return -1;
     *(int32_t *)((uint8_t *)c + f->offset) = (int32_t)v;
+    dg_phys_after_set(obj, k, f->name);
     return 0;
 }
 
@@ -405,7 +450,15 @@ int32_t dg_set_s(uint32_t obj, const char *comp, const char *field, const char *
         DgSprite *s = (DgSprite *)c;
         s->texture = s->tex_path[0] ? dg_tex_load_cached(s->tex_path) : -1;
         if (s->texture < 0) return -1;     /* 路径错了要立刻报,不能等渲染时才失败 */
+    } else if (k == DG_C_TILEMAP && strcmp(f->name, "tex_path") == 0) {
+        DgTilemap *t = (DgTilemap *)c;
+        t->texture = t->tex_path[0] ? dg_tex_load_cached(t->tex_path) : -1;
+        if (t->texture < 0) return -1;
+    } else if (k == DG_C_TILEMAP && strcmp(f->name, "path") == 0) {
+        /* 直接给数据文件路径:立刻装网格,别等到渲染/碰撞才发现路径是错的 */
+        if (v && v[0] && dg_tilemap_load_path((DgTilemap *)c, v)) return -1;
     }
+    dg_phys_after_set(obj, k, f->name);
     return 0;
 }
 
@@ -480,6 +533,12 @@ static void dg_comp_on_unload(int kind, void *comp, int32_t *id_map, int n) {
     if (kind == DG_C_SPRITE) {
         DgSprite *s = (DgSprite *)comp;
         s->texture = -1;
+    } else if (kind == DG_C_TILEMAP) {
+        DgTilemap *t = (DgTilemap *)comp;
+        t->texture = -1;
+        free(t->tiles);                 /* 网格是 malloc 的,槽位会被复用 */
+        t->tiles = NULL;
+        t->cols = t->rows = 0;
     }
 }
 
@@ -505,6 +564,19 @@ static int dg_comp_on_load(int kind, void *comp, const int32_t *id_map, int n) {
     case DG_C_ANIMATION:
         ((DgAnimation *)comp)->time = 0.0f;
         break;
+    case DG_C_TILEMAP: {
+        DgTilemap *t = (DgTilemap *)comp;
+        t->texture = -1;
+        t->tiles = NULL;
+        t->cols = t->rows = 0;
+        if (t->tex_path[0]) {
+            t->texture = dg_tex_load_cached(t->tex_path);
+            if (t->texture < 0) return -1;
+        }
+        /* 网格数据不进 JSON(它可能有几万格),只存 path;这里按 path 装回来 */
+        if (t->path[0] && dg_tilemap_load_path(t, t->path)) return -1;
+        break;
+    }
     default:
         break;
     }
@@ -795,13 +867,308 @@ int32_t dg_scene_load(const char *path) {
 }
 
 /* ============================ 从组件渲染 ============================ */
-typedef struct { uint32_t obj; int32_t layer, order, seq; } DgDrawable;
+typedef struct { uint32_t obj; int32_t layer, order, seq; int32_t tile; } DgDrawable;
 
 static int dg_cmp_drawable(const void *a, const void *b) {
     const DgDrawable *x = (const DgDrawable *)a, *y = (const DgDrawable *)b;
     if (x->layer != y->layer) return x->layer - y->layer;
     if (x->order != y->order) return x->order - y->order;
     return x->seq - y->seq;                     /* 稳定 */
+}
+
+/* 绘制位置 = 父链世界坐标 + 自己位置的插值值。
+   物理以固定步长跑(默认 120Hz),渲染帧率更高,不插值就会看到"有的帧没动";
+   有 body 的实体默认按 alpha 在上一固定步与当前位置之间插值。 */
+static void dg_draw_pos(uint32_t id, float *out_x, float *out_y) {
+    float wx, wy;
+    dg_world_xy(id, &wx, &wy);
+    const DgTransform *t = (const DgTransform *)dg_comp_get(id, DG_C_TRANSFORM);
+    float ix, iy;
+    if (t && dg_phys_lerp_pos(id, t->x, t->y, &ix, &iy)) {
+        /* 把"父链贡献"换掉:world = 父链 + 自己的插值位置 */
+        *out_x = (wx - t->x) + ix;
+        *out_y = (wy - t->y) + iy;
+    } else {
+        *out_x = wx;
+        *out_y = wy;
+    }
+}
+
+/* ============================ 瓦片地图 ============================
+   数据**不进 JSON**(一张 128x128 的图有几万格,写进场景文件既大又难读):
+   组件只存 `path`,网格由 dg_tilemap_load_path / load_csv 装进 C 侧。
+   碰撞(实心判定)由 dg_phys.c 通过 dg_tilemap_each_solid_in 使用。 */
+
+/* 解析 CSV:空白/逗号/分号分隔的整数。**负数 = 空格子**,0 及以上 = 图集索引
+   (注意:0 是合法图块,所以不能用 0 表示空 —— 这与"瓦片 id 从 0 开始"一致)。
+   行长度可以不一致(按最长行补齐,短行留空)—— 手写地图时很实用。 */
+static int dg_tilemap_parse_csv(DgTilemap *t, const char *text) {
+    int cap_cols = 64, cap_rows = 64;
+    int16_t *grid = (int16_t *)malloc((size_t)cap_cols * cap_rows * sizeof(int16_t));
+    if (!grid) { dg_error("out of memory parsing tilemap"); return -1; }
+    for (int i = 0; i < cap_cols * cap_rows; i++) grid[i] = -1;
+
+    int cols = 0, rows = 0, col = 0;
+    const char *p = text;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+        if (*p == '\n') {                       /* 换行 = 换行,列数取最大 */
+            if (col > cols) cols = col;
+            rows++; col = 0;
+            p++;
+            continue;
+        }
+        if (*p == ',' || *p == ';') { p++; continue; }
+        /* 解析一个整数 */
+        char *end = NULL;
+        long v = strtol(p, &end, 10);
+        if (end == p) {
+            dg_error("tilemap CSV: unexpected char '%c' at row %d col %d", *p, rows, col);
+            free(grid);
+            return -1;
+        }
+        p = end;
+        if (rows >= cap_rows || col >= cap_cols) {
+            const int nc = cap_cols * 2, nr = cap_rows * 2;
+            int16_t *ng = (int16_t *)malloc((size_t)nc * nr * sizeof(int16_t));
+            if (!ng) { dg_error("out of memory growing tilemap"); free(grid); return -1; }
+            for (int i = 0; i < nc * nr; i++) ng[i] = -1;
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < cap_cols; c++)
+                    ng[(size_t)r * nc + c] = grid[(size_t)r * cap_cols + c];
+            free(grid);
+            grid = ng;
+            cap_cols = nc; cap_rows = nr;
+        }
+        if (v > 32767) { dg_error("tilemap CSV: tile id %ld is too large (max 32767)", v); free(grid); return -1; }
+        grid[(size_t)rows * cap_cols + col] = (int16_t)(v < 0 ? -1 : v);
+        col++;
+    }
+    if (col > cols) cols = col;
+    if (col > 0 || rows == 0) rows++;          /* 最后一行没有换行符也要算 */
+
+    /* 解析时用 cap_cols 当行距(便于扩容),存储用 cols 当行距(与读取端一致)——
+       这里压紧成 cols*rows,否则读取端会按 cols 索引到错位的格子。 */
+    int16_t *final = (int16_t *)malloc((size_t)(cols > 0 ? cols : 1) * (size_t)(rows > 0 ? rows : 1) * sizeof(int16_t));
+    if (!final) { dg_error("out of memory finalizing tilemap"); free(grid); return -1; }
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++)
+            final[(size_t)r * cols + c] = (c < cap_cols) ? grid[(size_t)r * cap_cols + c] : (int16_t)-1;
+    free(grid);
+
+    free(t->tiles);
+    t->tiles = final;
+    t->cols = cols;
+    t->rows = rows;
+    dg_phys_invalidate();
+    return 0;
+}
+
+static int dg_tilemap_load_path(DgTilemap *t, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { dg_error("cannot open tilemap '%s'", path); return -1; }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (n < 0) { fclose(f); dg_error("cannot size tilemap '%s'", path); return -1; }
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (!buf) { fclose(f); dg_error("out of memory reading tilemap '%s'", path); return -1; }
+    const size_t got = fread(buf, 1, (size_t)n, f);
+    fclose(f);
+    buf[got] = '\0';
+    const int rc = dg_tilemap_parse_csv(t, buf);
+    free(buf);
+    return rc;
+}
+
+static DgTilemap *dg_tilemap_of(uint32_t obj) {
+    DgTilemap *t = (DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t) dg_error("object %u has no 'tilemap'", obj);
+    return t;
+}
+
+int32_t dg_tilemap_load_csv(uint32_t obj, const char *text) {
+    DgTilemap *t = dg_tilemap_of(obj);
+    if (!t) return -1;
+    if (!text) { dg_error("tilemap CSV text is null"); return -1; }
+    return dg_tilemap_parse_csv(t, text);
+}
+
+int32_t dg_tilemap_load_file(uint32_t obj, const char *path) {
+    DgTilemap *t = dg_tilemap_of(obj);
+    if (!t) return -1;
+    if (!path || !path[0]) { dg_error("tilemap path is empty"); return -1; }
+    if (dg_tilemap_load_path(t, path)) return -1;
+    snprintf(t->path, sizeof t->path, "%s", path);
+    return 0;
+}
+
+int32_t dg_tilemap_save_csv(uint32_t obj, const char *path) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t) { dg_error("object %u has no 'tilemap'", obj); return -1; }
+    if (!t->tiles) { dg_error("tilemap has no grid loaded"); return -1; }
+    FILE *f = fopen(path, "wb");
+    if (!f) { dg_error("cannot write tilemap '%s'", path); return -1; }
+    for (int r = 0; r < t->rows; r++) {
+        for (int c = 0; c < t->cols; c++) {
+            if (c) fputc(',', f);
+            fprintf(f, "%d", (int)t->tiles[(size_t)r * t->cols + c]);
+        }
+        fputc('\n', f);
+    }
+    fclose(f);
+    return 0;
+}
+
+int32_t dg_tilemap_tile(uint32_t obj, int32_t col, int32_t row) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t) { dg_error("object %u has no 'tilemap'", obj); return -1; }
+    if (!t->tiles) { dg_error("tilemap has no grid loaded"); return -1; }
+    if (col < 0 || row < 0 || col >= t->cols || row >= t->rows) {
+        dg_error("tile (%d,%d) out of range %dx%d", col, row, t->cols, t->rows);
+        return -1;
+    }
+    return t->tiles[(size_t)row * t->cols + col];
+}
+
+int32_t dg_tilemap_cols(uint32_t obj) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    return t ? t->cols : -1;
+}
+int32_t dg_tilemap_rows(uint32_t obj) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    return t ? t->rows : -1;
+}
+
+int32_t dg_tilemap_set_solid(uint32_t obj, int32_t tile, int on) {
+    DgTilemap *t = dg_tilemap_of(obj);
+    if (!t) return -1;
+    if (tile < 0 || tile > 255) { dg_error("tile id %d out of range 0..255", tile); return -1; }
+    t->solid[tile] = on ? 1 : 0;
+    dg_phys_invalidate();
+    return 0;
+}
+
+int32_t dg_tilemap_is_solid(uint32_t obj, int32_t tile) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t) { dg_error("object %u has no 'tilemap'", obj); return 0; }
+    if (tile < 0 || tile > 255) return 0;          /* 空/越界都不是实心 */
+    return t->solid[tile] < 0 ? 1 : t->solid[tile]; /* 默认:非空即实心 */
+}
+
+/* 世界坐标 → 瓦片坐标需要知道地图的原点(实体世界坐标) */
+static void dg_tilemap_origin(uint32_t obj, const DgTilemap *t, float *ox, float *oy) {
+    float wx = 0.0f, wy = 0.0f;
+    dg_world_xy(obj, &wx, &wy);
+    *ox = wx;
+    *oy = wy;
+    (void)t;
+}
+
+int32_t dg_tilemap_solid_at(uint32_t obj, float wx, float wy) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t || !t->tiles) return 0;
+    float ox, oy;
+    dg_tilemap_origin(obj, t, &ox, &oy);
+    const int c = (int)floorf((wx - ox) / (t->tw > 0.0f ? t->tw : 1.0f));
+    const int r = (int)floorf((wy - oy) / (t->th > 0.0f ? t->th : 1.0f));
+    if (c < 0 || r < 0 || c >= t->cols || r >= t->rows) return 0;
+    const int tile = t->tiles[(size_t)r * t->cols + c];
+    if (tile < 0 || tile > 255) return 0;
+    return t->solid[tile] < 0 ? 1 : t->solid[tile];
+}
+
+int32_t dg_tilemap_each_tile(uint32_t obj, void *user, DgTileFn fn) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t) { dg_error("object %u has no 'tilemap'", obj); return -1; }
+    if (!t->tiles) return 0;
+    float ox, oy;
+    dg_tilemap_origin(obj, t, &ox, &oy);
+    int32_t n = 0;
+    for (int r = 0; r < t->rows; r++)
+        for (int c = 0; c < t->cols; c++) {
+            const int tile = t->tiles[(size_t)r * t->cols + c];
+            if (tile < 0) continue;
+            fn(user, ox + (float)c * t->tw, oy + (float)r * t->th, t->tw, t->th, tile);
+            n++;
+        }
+    return n;
+}
+/* 遍历与给定世界矩形相交的瓦片;solid_only=1 时只给实心的(碰撞热路径),
+   =0 时给所有非空格子(渲染)。 */
+static int32_t dg_tilemap_each_in(uint32_t obj, float x, float y, float w, float h,
+                                  int solid_only, void *user, DgTileFn fn) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t || !t->tiles) return 0;
+    float ox, oy;
+    dg_tilemap_origin(obj, t, &ox, &oy);
+    const float tw = t->tw > 0.0f ? t->tw : 1.0f;
+    const float th = t->th > 0.0f ? t->th : 1.0f;
+    int c0 = (int)floorf((x - ox) / tw), c1 = (int)floorf((x + w - ox) / tw);
+    int r0 = (int)floorf((y - oy) / th), r1 = (int)floorf((y + h - oy) / th);
+    if (c0 < 0) c0 = 0;
+    if (r0 < 0) r0 = 0;
+    if (c1 >= t->cols) c1 = t->cols - 1;
+    if (r1 >= t->rows) r1 = t->rows - 1;
+    int32_t n = 0;
+    for (int r = r0; r <= r1; r++)
+        for (int c = c0; c <= c1; c++) {
+            const int tile = t->tiles[(size_t)r * t->cols + c];
+            if (tile < 0 || tile > 255) continue;
+            if (solid_only && t->solid[tile] == 0) continue;
+            fn(user, ox + (float)c * tw, oy + (float)r * th, tw, th, tile);
+            n++;
+        }
+    return n;
+}
+
+int32_t dg_tilemap_each_solid_in(uint32_t obj, float x, float y, float w, float h,
+                                 void *user, DgTileFn fn) {
+    return dg_tilemap_each_in(obj, x, y, w, h, 1, user, fn);
+}
+
+/* --- 瓦片绘制回调:把命中的瓦片变成四边形 --- */
+typedef struct {
+    const DgTilemap *t;
+    int tw, th;              /* 图集像素尺寸 */
+    float zx, cx, cy;
+} DgTileDrawCtx;
+
+static void dg_tile_emit(void *user, float x, float y, float w, float h, int32_t tile) {
+    DgTileDrawCtx *ctx = (DgTileDrawCtx *)user;
+    const int at = ctx->t->atlas_tile > 0 ? ctx->t->atlas_tile : 16;
+    const int acols = ctx->t->atlas_cols > 0 ? ctx->t->atlas_cols : 1;
+    const int sx = (tile % acols) * at, sy = (tile / acols) * at;
+    /* uv 规则与 dg_draw_scene 一致:跨多纹素用区域边界,单纹素退化到纹素中心 */
+    const float half = 0.5f;
+    float u0, u1, v0, v1;
+    if (at <= 1) {
+        u0 = u1 = ((float)sx + half) / (float)ctx->tw;
+        v0 = v1 = ((float)sy + half) / (float)ctx->th;
+    } else {
+        u0 = (float)sx / (float)ctx->tw;
+        u1 = (float)(sx + at) / (float)ctx->tw;
+        v0 = (float)sy / (float)ctx->th;
+        v1 = (float)(sy + at) / (float)ctx->th;
+    }
+    const float dx = (x - ctx->cx) * ctx->zx, dy = (y - ctx->cy) * ctx->zx;
+    dg_draw_quad(ctx->t->texture, dx, dy, w * ctx->zx, h * ctx->zx, u0, v0, u1, v1,
+                 (uint32_t)DG_RGB(255, 255, 255));
+}
+
+int32_t dg_tilemap_draw(uint32_t obj, const float *view) {
+    const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
+    if (!t || !t->tiles || t->texture < 0 || !t->visible) return 0;
+    const int tw = dg_tex_width((int)t->texture), th = dg_tex_height((int)t->texture);
+    if (tw <= 0 || th <= 0) return 0;
+    DgTileDrawCtx ctx;
+    ctx.t = t;
+    ctx.tw = tw;
+    ctx.th = th;
+    ctx.zx = view[4];
+    ctx.cx = view[0];
+    ctx.cy = view[1];
+    return dg_tilemap_each_in(obj, view[0], view[1], view[2], view[3], 0, &ctx, dg_tile_emit);
 }
 
 int32_t dg_draw_scene(void) {
@@ -819,22 +1186,6 @@ int32_t dg_draw_scene(void) {
         }
     }
 
-    DgDrawable list[DG_MAX_OBJECTS];
-    int n = 0;
-    for (int32_t i = 1; i <= DG_MAX_OBJECTS; i++) {
-        if (!g_ents[i].live) continue;
-        const uint32_t id = (g_ents[i].gen << 16) | (uint32_t)i;
-        const DgSprite *s = (const DgSprite *)dg_comp_get(id, DG_C_SPRITE);
-        if (!s || s->texture < 0) continue;
-        if (!dg_comp_get(id, DG_C_TRANSFORM)) continue;   /* 必须有变换才画 */
-        list[n].obj = id;
-        list[n].layer = s->layer;
-        list[n].order = s->order;
-        list[n].seq = n;
-        n++;
-    }
-    qsort(list, (size_t)n, sizeof list[0], dg_cmp_drawable);
-
     const float zx = cam ? cam->zoom : 1.0f;
     const float cx = cam ? cam->x : 0.0f;
     const float cy = cam ? cam->y : 0.0f;
@@ -842,13 +1193,46 @@ int32_t dg_draw_scene(void) {
         dg_error("camera zoom is 0");
         return -1;
     }
+    /* 可见的世界矩形 —— 瓦片层用它裁剪(大地图只画看得见的部分)。
+       view = {x, y, w, h, zoom} */
+    const float view[5] = {
+        cx, cy, (float)dg_gfx_width() / zx, (float)dg_gfx_height() / zx, zx
+    };
+
+    /* 可绘制对象:sprite 与 tilemap 一起排序(它们共用 layer/order)。
+       同一个实体可以同时贡献两者(例如"地图 + 地图上的装饰精灵"),所以用静态数组。 */
+    static DgDrawable list[DG_MAX_OBJECTS * 2];
+    int n = 0;
+    for (int32_t i = 1; i <= DG_MAX_OBJECTS; i++) {
+        if (!g_ents[i].live) continue;
+        const uint32_t id = (g_ents[i].gen << 16) | (uint32_t)i;
+        if (!dg_comp_get(id, DG_C_TRANSFORM)) continue;   /* 必须有变换才画 */
+        const DgSprite *s = (const DgSprite *)dg_comp_get(id, DG_C_SPRITE);
+        if (s && s->texture >= 0 && n < (int)(sizeof list / sizeof list[0])) {
+            list[n].obj = id; list[n].layer = s->layer; list[n].order = s->order;
+            list[n].seq = n; list[n].tile = 0;
+            n++;
+        }
+        const DgTilemap *t = (const DgTilemap *)dg_comp_get(id, DG_C_TILEMAP);
+        if (t && t->visible && t->texture >= 0 && n < (int)(sizeof list / sizeof list[0])) {
+            list[n].obj = id; list[n].layer = t->layer; list[n].order = t->order;
+            list[n].seq = n; list[n].tile = 1;
+            n++;
+        }
+    }
+    qsort(list, (size_t)n, sizeof list[0], dg_cmp_drawable);
 
     int drawn = 0;
     for (int k = 0; k < n; k++) {
         const uint32_t id = list[k].obj;
+        if (list[k].tile) {
+            const int32_t nt = dg_tilemap_draw(id, view);
+            if (nt > 0) drawn += nt;
+            continue;
+        }
         const DgSprite *s = (const DgSprite *)dg_comp_get(id, DG_C_SPRITE);
         float wx, wy;
-        dg_world_xy(id, &wx, &wy);
+        dg_draw_pos(id, &wx, &wy);
 
         const int tw = dg_tex_width((int)s->texture);
         const int th = dg_tex_height((int)s->texture);

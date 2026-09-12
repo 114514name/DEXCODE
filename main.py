@@ -106,8 +106,21 @@ def cmd_run(args):
     if vm is None:
         print("未找到 C VM,请先运行: python main.py build-vm", file=sys.stderr)
         return 1
+    bc_path = os.path.abspath(args.bc)
+    # 允许直接跑 .dex 源码(编译到临时 .dexbc)—— 示例的注释一直这么写,
+    # 但老版本只接受字节码,直接报 "not a valid DEXC bytecode file"。
+    if bc_path.endswith(".dex"):
+        source = read_text(bc_path)
+        tokens = Lexer(source, bc_path).tokenize()
+        ast = Parser(tokens, bc_path).parse_program()
+        unit = compile_program(ast, source_path=bc_path,
+                               include_dirs=getattr(args, "include_dirs", None) or [])
+        for w in unit.warnings:
+            print(f"warning: {w}", file=sys.stderr)
+        bc_path = bc_path[:-4] + ".dexbc"
+        write_bytes(bc_path, assemble(unit.to_program()))
     try:
-        rc = subprocess.run([vm, os.path.abspath(args.bc)], check=False)
+        rc = subprocess.run([vm, bc_path], check=False)
         return rc.returncode
     except OSError as e:
         print(f"运行 VM 失败: {e}", file=sys.stderr)
@@ -337,8 +350,11 @@ def main(argv=None):
     p.add_argument("-o", help="输出汇编路径")
     p.set_defaults(func=cmd_disasm)
 
-    p = sub.add_parser("run", help="用 C VM 执行字节码")
-    p.add_argument("bc", help="字节码文件 (.dexbc)")
+    p = sub.add_parser("run", help="用 C VM 执行字节码(.dex 会先自动编译)")
+    p.add_argument("bc", help="字节码文件 (.dexbc)或源码 (.dex)")
+    p.add_argument("-L", "--lib-dir", action="append", default=[DEFAULT_LIBS],
+                   dest="include_dirs", metavar="DIR",
+                   help="跑 .dex 时的 include 搜索目录(默认 libs/,可多次指定)")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("build-vm", help="编译 C 字节码解释器")
