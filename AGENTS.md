@@ -28,10 +28,11 @@
 | 语言前端 + 汇编器 | `dexlang/`(14 文件 ~3320 行) | 词法/语法/编译/汇编/反汇编/`.dexdef` 解析 |
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
-| 原生库(6 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` |
+| 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
+| **游戏引擎** | `libs/dexgame/`(~1500 行,3 个 .c) | 模块化 2D 引擎:**D3D11 批渲染**,见 `docs/DEXGAME_DESIGN.md`。当前 M1(渲染核心) |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(21 个测试文件 + `_tmpdir.py`,~6500 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(22 个测试文件 + `_tmpdir.py`,~6900 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -46,7 +47,7 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:722 项通过 / 0 失败** —— 21 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- **测试:782 项通过 / 0 失败** —— 22 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
 - 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
   二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
@@ -80,11 +81,12 @@ python tests/test_vm_versions.py # 13  三个 VM 变体 + release 打包
 python tests/test_robust.py      # 24  健壮性(畸形字节码/循环对象/整型边界)
 python tests/test_memmodel.py    # 44  内存模型(P0–P3 + FFI 契约)
 python tests/test_editor.py      # 18  旧版 C 编辑器 .galscene 往返 + 导出链路
-python tests/test_abi.py         # 36  原生调用「值数组 ABI」(M0.5)
+python tests/test_abi.py         # 37  原生调用「值数组 ABI」(M0.5)
+python tests/test_dexgame.py     # 59  dexgame 引擎 D3D11 渲染核心(M1,含像素断言)
 ```
 
-合计 **144 个测试函数 / 704 处 `check()` 调用**;实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **722 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **153 个测试函数 / 763 处 `check()` 调用**;实际执行数随平台与是否构建
+`vm.exe` 而变,本机实测 **782 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -93,7 +95,7 @@ python tests/test_abi.py         # 36  原生调用「值数组 ABI」(M0.5)
 
 ```bash
 python main.py build-vm     # 构建 vm.exe / vmnc.exe / galrun.exe
-build_libs.bat              # 构建 6 个原生库 DLL(需要 ziglang)
+build_libs.bat              # 构建 7 个原生库 DLL(需要 ziglang)
 ```
 
 ### 当前内存行为(不读 MEMORY_DESIGN 容易误判)
@@ -159,11 +161,16 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 - 二进制(`vm/*.exe`、`libs/*/lib*.dll`、`tools/legacy_galedit_c/galedit.exe`)
   刻意入库:仓库缺少部分构建脚本时,不入库会导致 clone 后无法运行示例与测试。
 - **原生 arity 上限有两个来源,别搞混**(见 SPEC 4.5):`dexlang/opcodes.py` 的
-  `MAX_NATIVE_ARITY = 3`(直接 ABI)与 `MAX_NATIVE_ARGS = 8`(值数组 ABI)。
-  要功能上放宽,得让 `.dexdef` 声明 `abi value_array;`,不是改常量。
+  `MAX_NATIVE_ARITY = 3`(直接 ABI)与 `MAX_NATIVE_ARGS = 16`(值数组 ABI)。
+  要功能上放宽到 3 参以上,得让 `.dexdef` 声明 `abi value_array;`,不是改常量。
   `vm/vm.c` 的 `MAX_NATIVE_ARGS` 是同一件事的 C 侧副本,两边必须一致。
+  **后者只是存储常量,不是格式约束**(字节码里 arity 本就是 u8、表条目本就是变长的
+  `6+arity`),所以调大它不需要改格式、不影响旧字节码 —— M1 就把它从 8 提到了 16,
+  因为 `eng_draw_uv` 有 10 个参数。
 - **`.dexdef` 的 `abi` 是文件级指令**:一行影响该文件全部 `extern`,可出现在任意位置
   (解析完再统一校验),同一文件只能出现一次。
+- **DexLang 没有位移运算**(词法器里没有 `<<`/`>>`),所以从 r/g/b/a 拼颜色必须借
+  原生辅助(`eng_rgba`)。写引擎/库 API 时别假设用户能自己位运算。
 
 ---
 
@@ -185,6 +192,11 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | 受限沙箱阻断 Git 出站 | 沙箱(仅工作区写)下 `git ls-remote`/`push` 报 `sh.exe: couldn't create signal pipe, Win32 error 5`,HTTPS 则报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS` —— 看起来像 Git 坏了或没凭据,其实只是沙箱不放行出站 | 这两条都是**沙箱**造成,不是 Git 或凭据问题;提权后同一命令即恢复正常。诊断时先用 `git ls-remote <url>` 判定「通道是否通」「仓库是否存在」 |
 | **常量池把 int `N` 与 float `N.0` 合并**(M0.5 时发现并修复) | `assembler.cidx()` 原先**只按值**当键,踩中 Python 的 `0 == 0.0` 且 `hash(0) == hash(0.0)`,于是 `print 0;` 与 `print 0.0;` 共用同一条常量,后出现的那一个拿到**错误的类型标签**。潜伏很久没暴露:直接 ABI 会按声明的参数类型做 int/float 互转,VM 的算术也对两者很宽容 | 键改成 `("int"|"float"|"str", value)`。值数组 ABI 让**类型标签变得可观测**,这个 bug 才浮出来 —— 是新 ABI 的**前置修复**。回归测试:`test_abi.py::test_const_pool_types` 与 `abi_tags` 断言 |
 | 新 ABI 只在「类型标签可观测」时才暴露老 bug | 双 VM 一致性断言把上面那条抓了出来(`arr_greet("", 0, 0.0)` 的 `0.0` 在 C VM 成了 int) | 加 ABI/内存布局类改动时,**必须**同时加双 VM 逐行对比断言,否则 pyvm 与 C VM 会静默分叉 |
+| **`-ld3dcompiler` 链不上**(M1) | zig 只提供 d3d11/dxgi/dwrite 等少数 Windows 导入库,`d3dcompiler` **没有**:`error: unable to find dynamic system library 'd3dcompiler'` | 运行时 `LoadLibraryA("d3dcompiler_47.dll")` + `GetProcAddress("D3DCompile")`(系统自带该 DLL)。反而更自包含 —— 不依赖任何导入库。见 `dg_draw.c` 的 `dg_d3dcompile()` |
+| **`IID_xxx` 未定义**(M1) | 只 include 头文件时 `lld-link: error: undefined symbol: IID_IDWriteFactory` —— 因为 GUID 符号本应由导入库提供,而 zig 不提供 dwrite/dxgi 的导入库 | 在 `libs/dexgame/dg_guids.h` 里**显式写死**用到的那几个 GUID(比 `#include <initguid.h>` 更可预测,只需付出实际用到的) |
+| **库往 stdout 打印**(M1) | 引擎初始化时 `printf` 一行 GPU 信息,结果把游戏的输出污染了 —— `test_dexgame.py` 的按行断言全部错位(5 项失败),而 DLL 本身完全正常 | **库不写 stdout**。改成按需查询(`eng_gpu_name()`/`eng_vram_mb()`)。写任何库时都该这样:输出是调用方的地盘 |
+| **图集边缘渗漏**(M1) | 单纹素源用 `u0..u1` 覆盖整个纹素时,线性过滤会掺进邻居(实测纯绿变成 `0xff04ff04`) | 半纹素内缩:单纹素源直接用**纹素中心**(退化区间 `u0==u1`),即 `u=(x+0.5)/W`。`test_dexgame.py::test_atlas_png` 锁住这个约定 —— 将来做图集助手时要在库里自动完成内缩 |
+| 引擎宿主进程的 DPI 只能设一次 | `SetProcessDpiAwarenessContext` 必须在**创建任何窗口之前**调用,且清单设过就再设会失败 | `dg_gfx_init_window` 里尽早调用并**忽略失败**(E_ACCESSDENIED 不算错);客户区尺寸要用 `AdjustWindowRectExForDpi` 算,否则 150% 缩放下会偏小 |
 
 ---
 
@@ -205,6 +217,9 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
   两次扩展的共同思路都是**借用未使用的位/尾部空间**,而不是升版号 ——
   因为 `vm.c` 的版本检查是严格相等(`data[4] != VERSION`),升版号会让所有现存
   `.dexbc` 立刻失效。
+- **推论:M1 把 `MAX_NATIVE_ARGS` 从 8 提到 16 也没动格式**。它只是 `param_types`
+  数组的容量。这条可作为以后判断"某个改动要不要动格式"的判据:**看字节码里有没有
+  承载它的字段**(arity 是 u8、表条目本就是变长的 `6+arity`),有就不用动。
 
 ### 5.2 两个 VM 必须语义一致
 
@@ -238,6 +253,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | M1 完成:SPEC 的 arity 上限 8→16 与"存储常量而非格式约束"说明;本文件同步测试基线、新增 5 条 M1 陷阱、§3.5/§5.1 更新、待办推进 |
+| (本次 M1) | **dexgame 引擎 M1:D3D11 渲染核心**。新增 `libs/dexgame/`(dg_gfx/dg_draw/dg_api + dexvalue.h/dg_guids.h,~1500 行):flip 交换链、PER_MONITOR_AWARE_V2、2D 精灵批渲染、stb_image、代际句柄、`eng_last_error` 失败带原因、离屏渲染 + 像素回读/BMP 落盘(测试通道)。`MAX_NATIVE_ARGS` 8→16(eng_draw_uv 有 10 参)。新增 `tests/test_dexgame.py`(59 项)与 `examples/dexgame/demo_m1.dex`(实测 164.6fps@165Hz) |
 | (本次 docs) | M0.5 完成:SPEC 4.5 重写为两套调用约定 + 新增 4.5.1–4.5.3;本文件同步测试基线、新增两条陷阱、§3.5 与 §5.1 更新、待办推进 |
 | (本次 M0.5) | **原生调用「值数组 ABI」**:`.dexdef` 加 `abi value_array;` 文件级指令,原生侧收 `(const DexValue*, int)`,arity 上限 3→8;借 `ret_type` 的 bit7 标记,**零格式改动、零版号改动**;两个 VM 同步;顺带修 **常量池把 int N 与 float N.0 合并**的既有 bug。新增 `tests/test_abi.py`(36 项)与 `tests/fixtures/libabiarr.{c,dll,dexdef}` |
 | (本次 docs) | 新增 `docs/DEXGAME_DESIGN.md`(dexgame 决策记录 / ABI 方案 / 里程碑);本文件接入该文档、更新 zig 缓存陷阱行与待办 |
@@ -278,15 +295,19 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 按 `M0.5 ABI 扩展 → M1 D3D11 渲染核心 → M2 场景与实体 → M3 物理 → M4 接口层` 推进;
 可视化 IDE(产品 B)在引擎可独立发布之后再动。
 
-- ✅ **M0.5 已完成**:原生调用「值数组 ABI」落地(arity 3→8、零格式/版号改动、两个 VM
-  同步、新增 36 项测试)。**下一刀是 M1**:D3D11 设备/交换链/flip 模型/DPI 感知/
-  2D 批渲染/纹理图集/DirectWrite 文字。
+- ✅ **M0.5 已完成**:原生调用「值数组 ABI」落地(零格式/版号改动、两个 VM 同步)。
+- ✅ **M1 已完成**(渲染核心):`libs/dexgame/` 可用 —— D3D11 flip 交换链、
+  PER_MONITOR_AWARE_V2、2D 精灵批渲染、stb_image、代际句柄、失败带原因、
+  离屏渲染+像素断言通道。`eng_*` 共 33 个函数(值数组 ABI)。
+  实测示例 `examples/dexgame/demo_m1.dex` 跑 **164.6 fps @165Hz 垂直同步**
+  (240 帧墙钟 1.82s,与 240/165=1.45s 吻合)—— 即**没有被锁死在 60Hz**。
+  **下一刀是 M2**:实体池 + Unity 式组件挂载 + 变换层级 + 描述符驱动的 JSON 场景读写;
+  文字(DirectWrite + 字形图集)与相机/层级排序也归在 M1b,可与 M2 并行。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。
-- M1 起要注意的两个实测约束:显示器 **2560×1600 @165Hz**(一帧预算 6.06 ms,不能用
-  `Sleep(16)` 控帧)、系统 **150% DPI 缩放**(必须 `PER_MONITOR_AWARE_V2`,否则画面被
-  拉伸再放大而糊掉)。
+- 两个已实测并已落实的约束:显示器 **2560×1600 @165Hz**(已用 flip + Present(1,0) 控帧,
+  **没有**用 Sleep(16))、系统 **150% DPI 缩放**(已设 PER_MONITOR_AWARE_V2)。
 
 以下是既有项目的零散待办,按价值排序:
 
