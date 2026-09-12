@@ -123,13 +123,13 @@ tools/dexc/dexc.exe compile examples/fib.dex     # 与 main.py compile 产物逐
 tools/dexc/dexc.exe run examples/fib.dex         # 编译并交给 vm.exe 运行
 tools/dexc/dexc.exe disasm fib.dexbc -o fib.dxasm
 
-# 9. (可选)DexStudio 可视化 IDE(产品 B:B1 工具链 + B2 宿主 + B3 场景 + B4 逻辑 + B5 编译/运行已完成)
+# 9. (可选)DexStudio 可视化 IDE(产品 B:B1–B6 已完成:工具链 / 宿主 / 场景 / 逻辑 / 编译运行 / 资源与自动保存)
 python main.py build-dexstudio                   # 构建模型 DLL + 两个宿主
 dexstudio/host/dexstudio.exe                     # 开 IDE 窗口(HTML/CSS/JS 前端)
 dexstudio/host/dexstudio.exe --project mygame    # 直接打开一个项目
 dexstudio/host/dexstudio.exe --selftest          # 不开窗口跑一遍模型自测
 dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'   # 跑单条命令
-python tests/test_dexstudio.py                   # 251 项(含 WebView2 整条链 + 页面自测)
+python tests/test_dexstudio.py                   # 279 项(含 WebView2 整条链 + 页面自测)
 dexstudio/host/dexstudio.exe --wv-selftest      # 窗口放屏幕外,断言界面自测 21 项全过
 ```
 
@@ -159,6 +159,9 @@ vm/vm.exe game.dexbc                      # 直接运行
 诊断被解析成行列号,在输出面板里点一下就能跳到「代码」页签并在那一行闪一下;
 「运行」用无控制台版 VM 开**独立游戏窗口**(可「停止」)。代码页签的高亮是自写的
 词法着色(零第三方 JS)。
+**B6 补上了资源与自动保存**:`res/` 资源面板(缩略图/试听走虚拟主机,点图片就设成
+选中实体的贴图)、每 30 秒一次**整包**自动保存(场景 + 瓦片 CSV + 逻辑图)、
+上次没正常退出时给一条「恢复 / 丢弃」提示 —— 不擅自恢复。
 
 ### 🎮 GAL 视觉小说(蓝图编辑器)
 
@@ -418,7 +421,7 @@ python tests/test_audio.py       # 81 项:dexgame 音频(XAudio2 + 手写 WAV �
 python tests/test_text.py        # 46 项:dexgame 文字(DirectWrite + 字形图集)
 python tests/test_examples.py    # 30 项:examples/dexgame/*.dex 编译守卫
 python tests/test_dexc.py        # 478 项:纯 C 工具链 dexc 与 Python 前端逐字节一致
-python tests/test_dexstudio.py   # 251 项:DexStudio 模型层 + 逻辑图 + 编译/运行 + CLI + WebView2 + 页面自测
+python tests/test_dexstudio.py   # 279 项:DexStudio 模型层 + 逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源 + CLI + WebView2 + 页面自测
 # 其余:test_call / test_module / test_img / test_ui / test_egui / test_gal /
 #       test_designer / test_editor / test_nopydep / test_vm_versions
 ```
