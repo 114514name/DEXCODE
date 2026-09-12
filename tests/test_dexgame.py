@@ -136,7 +136,7 @@ def test_offscreen():
     check("运行退出码 0", rc == 0, err[:200])
     if rc != 0:
         return
-    check("eng_version = 1", lines[0] == "1", lines[:1])
+    check("eng_version = 2(库版本:M2)", lines[0] == "2", lines[:1])
     check("init_offscreen 返回 0", lines[1] == "0", lines[1:2])
     check("宽度 = 32", lines[2] == "32", lines[2:3])
     check("高度 = 16", lines[3] == "16", lines[3:4])

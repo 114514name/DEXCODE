@@ -69,7 +69,7 @@ echo [5/7] libs\egui\libegui.dll
 echo [6/7] libs\gal\libdexxgal.dll
 "%ZIG%" cc %COMMON% -lgdi32 -luser32 -lwinmm -lmsimg32 -o libs\gal\libdexxgal.dll libs\gal\libdexxgal.c || exit /b 1
 
-REM dexgame = modular 2D game engine (M1: D3D11 renderer).
+REM dexgame = modular 2D game engine (M1 renderer + M2 entities/components/scene).
 REM NOTE 1: no d3dcompiler import library is needed -- shaders are compiled at
 REM   runtime by loading d3dcompiler_47.dll (a Windows system DLL) via LoadLibrary.
 REM   (zig ships d3d11/dxgi/dwrite import libs but NOT d3dcompiler; see dg_draw.c)
@@ -83,7 +83,8 @@ echo [7/7] libs\dexgame\libdexgame.dll
 "%ZIG%" cc %COMMON% -I libs\dexgame -ld3d11 -ldxgi -luser32 -lgdi32 -lole32 -luuid -lwinmm ^
   -Wl,--out-implib=_zigtmp\dexgame.lib ^
   -o libs\dexgame\libdexgame.dll ^
-  libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_api.c || exit /b 1
+  libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_scene.c ^
+  libs\dexgame\dg_json.c libs\dexgame\dg_api.c || exit /b 1
 
 echo.
 echo Done. Rebuilt 7 native libraries.

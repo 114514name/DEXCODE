@@ -33,6 +33,7 @@ int64_t eng_init(const DexValue *a, int n) {
     const int vsync = (int)dv_int_or(a, n, 3, 1);
     if (dg_gfx_init_window(title, w, h, vsync)) return -1;
     if (dg_draw_init()) { dg_gfx_shutdown(); return -1; }
+    dg_scene_init();
     g_frame_index = 0;
     return 0;
 }
@@ -43,6 +44,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
     const int h = (int)dv_int_or(a, n, 1, 64);
     if (dg_gfx_init_offscreen(w, h)) return -1;
     if (dg_draw_init()) { dg_gfx_shutdown(); return -1; }
+    dg_scene_init();
     g_frame_index = 0;
     return 0;
 }
@@ -50,6 +52,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
 int64_t eng_shutdown(const DexValue *a, int n) {
     (void)a; (void)n;
     dg_clear_error();
+    dg_scene_shutdown();
     dg_draw_shutdown();
     dg_gfx_shutdown();
     return 0;
@@ -225,6 +228,189 @@ int64_t eng_save_bmp(const DexValue *a, int n) {
     return dg_gfx_save_bmp(dv_str(&a[0]));
 }
 
+/* ============================================================
+   实体 / 组件 / 场景(M2)
+   ============================================================ */
+
+int64_t eng_object_new(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    return (int64_t)dg_object_new();
+}
+
+int64_t eng_object_free(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_object_free needs an object id"); return -1; }
+    return dg_object_free((uint32_t)dv_int(&a[0]));
+}
+
+int64_t eng_object_alive(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_object_alive((uint32_t)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+
+int64_t eng_object_count(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return dg_object_count();
+}
+
+int64_t eng_scene_clear(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    return dg_object_clear();
+}
+
+/* 组件名用字符串(如 "sprite"),便于生成的代码与 IDE 可读;
+   名字解析失败会 dg_error 列出可用名字。 */
+int64_t eng_attach(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_attach needs (object, component)"); return -1; }
+    const int k = dg_comp_kind(dv_str(&a[1]));
+    if (k < 0) return -1;
+    return dg_comp_add((uint32_t)dv_int(&a[0]), k) ? 0 : -1;
+}
+
+int64_t eng_detach(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_detach needs (object, component)"); return -1; }
+    const int k = dg_comp_kind(dv_str(&a[1]));
+    if (k < 0) return -1;
+    return dg_comp_remove((uint32_t)dv_int(&a[0]), k);
+}
+
+int64_t eng_has(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_has needs (object, component)"); return 0; }
+    const int k = dg_comp_kind(dv_str(&a[1]));
+    if (k < 0) return 0;
+    return dg_comp_get((uint32_t)dv_int(&a[0]), k) ? 1 : 0;
+}
+
+int64_t eng_set_i(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 4) { dg_error("eng_set_i needs (object, component, field, value)"); return -1; }
+    return dg_set_i((uint32_t)dv_int(&a[0]), dv_str(&a[1]), dv_str(&a[2]), dv_int(&a[3]));
+}
+
+int64_t eng_set_f(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 4) { dg_error("eng_set_f needs (object, component, field, value)"); return -1; }
+    return dg_set_f((uint32_t)dv_int(&a[0]), dv_str(&a[1]), dv_str(&a[2]), dv_float(&a[3]));
+}
+
+int64_t eng_set_s(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 4) { dg_error("eng_set_s needs (object, component, field, value)"); return -1; }
+    return dg_set_s((uint32_t)dv_int(&a[0]), dv_str(&a[1]), dv_str(&a[2]), dv_str(&a[3]));
+}
+
+int64_t eng_get_i(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_get_i needs (object, component, field)"); return -1; }
+    return dg_get_i((uint32_t)dv_int(&a[0]), dv_str(&a[1]), dv_str(&a[2]));
+}
+
+const char *eng_get_s(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_get_s needs (object, component, field)"); return ""; }
+    return dg_get_s((uint32_t)dv_int(&a[0]), dv_str(&a[1]), dv_str(&a[2]));
+}
+
+const char *eng_scene_json(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    const char *t = dg_scene_to_json();
+    return t ? t : "";
+}
+
+/* 注意:浮点返回值必须用 double 签名 —— 值数组 ABI 只规定**入参**是 DexValue 数组,
+   返回值仍按 .dexdef 声明的类型(int/float/string/void)。所以这里返回 double。 */
+double eng_get_f(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 3) { dg_error("eng_get_f needs (object, component, field)"); return 0.0; }
+    return dg_get_f((uint32_t)dv_int(&a[0]), dv_str(&a[1]), dv_str(&a[2]));
+}
+
+double eng_world_x(const DexValue *a, int n) {
+    dg_clear_error();
+    double x = 0.0, y = 0.0;
+    if (dg_world_pos((uint32_t)dv_int_or(a, n, 0, 0), &x, &y)) return 0.0;
+    return x;
+}
+
+double eng_world_y(const DexValue *a, int n) {
+    dg_clear_error();
+    double x = 0.0, y = 0.0;
+    if (dg_world_pos((uint32_t)dv_int_or(a, n, 0, 0), &x, &y)) return 0.0;
+    return y;
+}
+
+int64_t eng_draw_scene(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    return dg_draw_scene();
+}
+
+int64_t eng_scene_save(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1 || a[0].tag != DEXV_STR) { dg_error("eng_scene_save expects a path string"); return -1; }
+    return dg_scene_save(dv_str(&a[0]));
+}
+
+int64_t eng_scene_load(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1 || a[0].tag != DEXV_STR) { dg_error("eng_scene_load expects a path string"); return -1; }
+    return dg_scene_load(dv_str(&a[0]));
+}
+
+int64_t eng_scene_load_json(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1 || a[0].tag != DEXV_STR) { dg_error("eng_scene_load_json expects a string"); return -1; }
+    return dg_scene_from_json(dv_str(&a[0]));
+}
+
+/* 描述符表的自省 —— 节点式 IDE 要靠它生成属性面板,
+   所以这里不是"调试糖",而是产品 B 的接口。 */
+int64_t eng_comp_count(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return DG_C_COUNT - 1;
+}
+
+const char *eng_comp_name_at(const DexValue *a, int n) {
+    dg_clear_error();
+    const int i = (int)dv_int_or(a, n, 0, -1);
+    if (i < 1 || i >= DG_C_COUNT) { dg_error("component index %d out of range 1..%d", i, DG_C_COUNT - 1); return ""; }
+    return dg_comp_name(i);
+}
+
+int64_t eng_field_count(const DexValue *a, int n) {
+    dg_clear_error();
+    const int k = dg_comp_kind(dv_str_or(a, n, 0, ""));
+    if (k < 0) return -1;
+    return dg_comp_field_count(k);
+}
+
+const char *eng_field_name(const DexValue *a, int n) {
+    dg_clear_error();
+    const int k = dg_comp_kind(dv_str_or(a, n, 0, ""));
+    if (k < 0) return "";
+    return dg_comp_field_name(k, (int)dv_int_or(a, n, 1, -1));
+}
+
+int64_t eng_field_type(const DexValue *a, int n) {
+    dg_clear_error();
+    const int k = dg_comp_kind(dv_str_or(a, n, 0, ""));
+    if (k < 0) return -1;
+    return dg_comp_field_type(k, (int)dv_int_or(a, n, 1, -1));
+}
+
+int64_t eng_field_persist(const DexValue *a, int n) {
+    dg_clear_error();
+    const int k = dg_comp_kind(dv_str_or(a, n, 0, ""));
+    if (k < 0) return -1;
+    return dg_comp_field_persist(k, (int)dv_int_or(a, n, 1, -1));
+}
+
 /* ---------- 颜色辅助 ----------
    DexLang **没有位移运算**(词法器里没有 << >>),所以用户无法从 r/g/b/a 拼出
    0xAARRGGBB —— 这个辅助是必需的,不是可选糖。 */
@@ -260,8 +446,8 @@ int64_t eng_clear_error(const DexValue *a, int n) {
     return 0;
 }
 
-/* 版本号:宿主与库不同步时便于排查 */
+/* 库版本号:宿主与库不同步时便于排查。1 = M1(仅渲染),2 = M2(+实体/组件/场景) */
 int64_t eng_version(const DexValue *a, int n) {
     (void)a; (void)n;
-    return 1;   /* M1 */
+    return 2;
 }

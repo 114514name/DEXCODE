@@ -227,6 +227,39 @@ int dg_tex_load_file(const char *path) {
     return id;
 }
 
+/* ---------- 按路径的纹理缓存 ----------
+   现有 gal 每帧重新解码图片(见 AGENTS §4 列的坑),这里必须避免:
+   同一路径只解码一次。缓存**不持有引用计数** —— 若句柄被显式释放,下次命中时
+   检测到失效就重载,调用方的语义因此仍然正确。 */
+#define DG_TEX_CACHE_MAX 256
+typedef struct { char path[DG_PATH_MAX]; int id; } DgTexCacheEnt;
+static DgTexCacheEnt g_tex_cache[DG_TEX_CACHE_MAX];
+static int g_tex_cache_n = 0;
+
+int dg_tex_load_cached(const char *path) {
+    if (!path || !path[0]) { dg_error("empty texture path"); return -1; }
+    for (int i = 0; i < g_tex_cache_n; i++) {
+        if (strcmp(g_tex_cache[i].path, path) != 0) continue;
+        if (dg_tex_valid(g_tex_cache[i].id)) return g_tex_cache[i].id;
+        const int id = dg_tex_load_file(path);      /* 句柄已失效:重载并更新 */
+        g_tex_cache[i].id = id;
+        return id;
+    }
+    const int id = dg_tex_load_file(path);
+    if (id < 0) return -1;
+    if (g_tex_cache_n >= DG_TEX_CACHE_MAX) {
+        dg_error("texture cache full (%d entries); '%s' loaded but not cached",
+                 DG_TEX_CACHE_MAX, path);
+        return id;
+    }
+    snprintf(g_tex_cache[g_tex_cache_n].path, DG_PATH_MAX, "%s", path);
+    g_tex_cache[g_tex_cache_n].id = id;
+    g_tex_cache_n++;
+    return id;
+}
+
+void dg_tex_cache_clear(void) { g_tex_cache_n = 0; }
+
 /* ---------- 管线对象 ---------- */
 static int g_draw_ready = 0;
 static ID3D11VertexShader      *g_vs = NULL;
@@ -360,6 +393,7 @@ int dg_draw_init(void) {
 }
 
 void dg_draw_shutdown(void) {
+    dg_tex_cache_clear();
     if (g_white_tex > 0) { dg_tex_free(g_white_tex); g_white_tex = 0; }
     for (int i = 0; i < DG_MAX_TEXTURES; i++) {
         if (g_texs[i].srv) { g_texs[i].srv->lpVtbl->Release(g_texs[i].srv); g_texs[i].srv = NULL; }
