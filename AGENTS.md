@@ -32,7 +32,7 @@
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
 | **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **168** 个函数(含为 IDE 加的 `eng_object_id_at`/`eng_set_view`)。见 `docs/DEXGAME_DESIGN.md` |
 | **纯 C 工具链(产品 B 地基)** | `tools/dexc/`(7 个 .c + 1 个 .h,~3700 行) | **dexc.exe**:lexer/parser/compiler/assembler/disassembler/asmtext/.dexdef 全部从 Python 移植到 C,与 Python 前端**逐字节一致**(`tests/test_dexc.py` 478 项,拿全仓库 34 个 .dex + 一批故意写错的源码对照字节码/汇编文本/错误/警告)。编译这一步从此不需要 Python —— `dexc.exe` + `vm.exe` 即可完成"源码 → 可运行游戏" |
-| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 7 个 C 文件 ~2600 行 + `web/` 5 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/视图/瓦片/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。**B3 场景 + B4 逻辑 + B5 编译/运行 + B6 资源/自动保存已完成**。场景编辑:视口(引擎离屏渲染 → 虚拟主机 → `<canvas>`,平移/缩放/网格/吸附/框选/拖动)、层级树、自省生成的属性面板、图层、瓦片刷子、复制粘贴、快照式撤销(含瓦片 CSV)。逻辑编辑:UE 蓝图式节点图(22 种面向 dexgame 的节点,**目录/引脚/校验/生成全在 C**),生成 `scripts/logic.dex` 交给 `dexc.exe`;一键编译(诊断带行列)+ **独立窗口运行/停止** + 代码页签(自写高亮);`res/` 资源面板(缩略图走虚拟主机)+ **整包自动保存 + 崩溃恢复提示**。测试:ctypes 调模型 + 无窗口 CLI + WebView2 离屏自测 + 前端 `node --check` + **页面自测**(`tests/test_dexstudio.py` **279 项**,页面 58 项)。见 `docs/DEXGAME_DESIGN.md` §9 |
+| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 7 个 C 文件 ~2600 行 + `web/` 5 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/视图/瓦片/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。**B3 场景 + B4 逻辑 + B5 编译/运行 + B6 资源/自动保存 + B7 打包已完成(产品 B 全部里程碑)**。场景编辑:视口(引擎离屏渲染 → 虚拟主机 → `<canvas>`,平移/缩放/网格/吸附/框选/拖动)、层级树、自省生成的属性面板、图层、瓦片刷子、复制粘贴、快照式撤销(含瓦片 CSV)。逻辑编辑:UE 蓝图式节点图(22 种面向 dexgame 的节点,**目录/引脚/校验/生成全在 C**),生成 `scripts/logic.dex` 交给 `dexc.exe`;一键编译(诊断带行列)+ **独立窗口运行/停止** + 代码页签(自写高亮);`res/` 资源面板(缩略图走虚拟主机)+ **整包自动保存 + 崩溃恢复提示**;**前端资源内嵌进 exe**(发布形态 = exe + WebView2Loader.dll + libdexgame.dll + README)。测试:ctypes 调模型 + 无窗口 CLI + WebView2 离屏自测 + 前端 `node --check` + **页面自测 + 干净目录发布形态**(`tests/test_dexstudio.py` **284 项**,页面 58 项)。见 `docs/DEXGAME_DESIGN.md` §9 |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
 | 测试 | `tests/`(30 个测试文件 + `_tmpdir.py`,~12900 行) | 全部是**手写 check() 脚本**,不用 pytest |
@@ -94,10 +94,10 @@ python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解�
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
 python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
-python tests/test_dexstudio.py   # 279 DexStudio 模型/逻辑图/编译运行/资源与自动保存 + 前端资源 + CLI + WebView2 + 页面自测
+python tests/test_dexstudio.py   # 284 DexStudio 模型/逻辑图/编译运行/资源自动保存 + 前端资源 + CLI + WebView2 + 发布形态 + 页面自测
 ```
 
-合计 **30 个脚本 / 232 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
+合计 **30 个脚本 / 233 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
 **实测执行数 > 静态调用数**);实际执行数随平台与是否构建 `vm.exe` 而变。
 本文件不逐条维护各项数字,以实际运行为准(改动后请把上面这行数字顺手改掉)。
 
@@ -110,7 +110,8 @@ python tests/test_dexstudio.py   # 279 DexStudio 模型/逻辑图/编译运行/�
 python main.py build-vm        # 构建 vm.exe / vmnc.exe / galrun.exe
 build_libs.bat                 # 构建 7 个原生库 DLL(需要 ziglang)
 python main.py build-dexc      # 构建纯 C 工具链 tools/dexc/dexc.exe
-python main.py build-dexstudio # 构建 DexStudio(模型 DLL + 两个宿主 + 复制 WebView2Loader)
+python main.py build-dexstudio # 构建 DexStudio(含把 web/ 内嵌成 ds_embed.c)
+python main.py package-dexstudio  # 打包发布目录 dist/DexStudio(exe + 两个 DLL + README)
 ```
 
 **可复现性:VM 的二进制度可复现,库的 DLL 不可复现。** 实测:
@@ -199,19 +200,20 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 ## 4. 已知陷阱(踩过并记录)
 
-**完整表格见 `docs/PITFALLS.md`**(M0.5 → B6,60+ 条)。
+**完整表格见 `docs/PITFALLS.md`**(M0.5 → B7,60+ 条)。
 这里只留最近一阶段的几条,免得本文件超出工作区指令预算被截断。
 
 | 陷阱 | 现象 | 应对 |
 |------|------|------|
-| **WebView2 的接口是异步就绪的,顺序错了白页且无报错**(B2) | `SetVirtualHostNameToFolderMapping`(虚拟主机映射)要经 `ICoreWebView2_3`,而 webview 要等**控制器创建完成**才有;第一版在"控制器还没就绪"时直接跳过映射,之后仍然 `Navigate("https://dexstudio.local/index.html")` → 导航"成功"、页面白、没有任何错误信息 | 导航请求先**存起来**(folder/host/page),控制器就绪后**先映射再导航**;另外注册 `NavigationCompleted` 处理器把 `WebErrorStatus` 记进 `wv->err`,失败才带得出原因 |
-| **撤销 = 场景快照 → 实体 id 会变**(B2) | 撤销/重做是把整份场景 JSON 恢复回去,实体因此被**重新创建**,而引擎的 id 带世代号 → 旧的 id 立刻失效。表现为"撤销之后 UI 里什么都点不动" | IDE 在每次撤销/重做后必须**重新拉取实体列表**(前端 `guard()` 就是这么做的);测试里要按名字重新 `entity.find`。想保留选中项就按名字重选 |
 | **`free()` 一个数组内元素 = 堆损坏**(B3) | 撤销栈从 `char*` 改成结构体 `UndoEntry{char *scene; Dsj *csv;}` 之后,清栈时仍然写 `undo_free_entry(&m->undo[i])` —— 栈里的条目是 **malloc 数组的元素**,不是各自分配的;`free` 一个**内指针**立刻堆损坏 `0xC0000374`。而且崩在**销毁模型**时(`--selftest`/测试一启动就死),离病因很远;表现还是“什么输出都没有”(stdout 块缓冲,异常退出就丢了) | 把释放拆成两个函数:`undo_free_contents(e)`(只放 `scene`/`csv`)与 `undo_free_entry(e)`(内容 + `free(e)` 本身)。**凡“栈/池/数组里的元素”都只能用 contents 版**。诊断手法:用 ctypes 逐条命令做二分(`_probe2.py` 那种),比读代码快得多 |
 | **引擎的 `set_s` 把“清空路径”当失败**(B3) | `comp.set(sprite.tex_path, "")` 返回 -1 并带原因(其实字段已经写进去了):引擎是“先写字段再尝试加载,加载不到就报错”,而空路径必然加载不到。IDE 的属性面板于是显示一个**假的错误**,`entity.duplicate` 复制一个没有贴图的精灵也直接失败 | 引擎侧改成“**只有路径非空**且加载失败才算错”(`if (t->tex_path[0] && t->texture < 0) return -1;`,sprite 与 tilemap 各一处)。判据:凡是“设了就立刻加载”的字段,**清空**必须是合法操作 |
 | **注释里写 `*/` 会把块注释提前关掉**(B5,JS 版) | 在 JS 块注释里写一个嵌套的结束符, 内层结束符直接闭合注释, 后面中文变成代码 → 页面白屏 + 一条看不懂的 SyntaxError(C 侧 B2 踩过同款) | 注释里别出现结束符。**已加自动守卫**:`test_dexstudio.py::test_web_assets` 对每个前端 `.js` 跑 `node --check` |
 | **编译/运行这类子进程要两头都管住**(B5) | ① `CreateProcess` 捕获输出时,若自己留着管道写端,`ReadFile` 永远等不到 EOF(挂死);② 独立窗口运行若只存 pid,关掉 IDE 就会留下**孤儿游戏进程** | ① 立刻 `CloseHandle(wr)`, 再读干管道;② 进程**句柄**留在模型里,`build.stop` 收、`ds_model_destroy` 也收(`ds_run_kill`)。测试断言“stop 之后 status.running 为假” |
 | **模态文件对话框会把无人值守流程挂死**(B6) | `res.pick` 弹的是模态对话框;测试/离屏自测只要调到它就是无限等待(实测挂到 120s 超时) | 给命令留不弹窗的路:`res.pick {dry:1}`。测试只用 dry。**凡是会阻塞的 UI 调用都要有可注入的不阻塞入口** |
 | **有没有未保存改动不能只看脏标记**(B6) | 恢复判据若写成有 autosave.json 就提示,那每次正常存盘后都会再提示一次(存盘不删自动保存文件) | 判据用**时间**:自动保存比场景文件**新** ⇒ 上次没正常收尾。正常保存后提示自然消失(测试用 os.utime 把场景改旧/改新来锁) |
+
+| **发布形态下不能假设 exe 旁边有可写的兄弟目录**(B7) | 两处默认路径都写成 `exe_dir/../..\_zigtmp\...`(开发目录布局):① `--selftest` 的临时项目在干净目录里直接失败;② 没有项目时的**预览图目录** → 渲染图解码成 `0×0`、视口空白(看着像引擎坏了)。**这两个都是打包测试抓出来的**,在仓库里跑永远发现不了 | 统一走 `ds_temp_dir()`(`%LOCALAPPDATA%\DexStudio` → `%TEMP%` → exe 同目录)。判据:凡是**写文件**的默认位置都不能依赖"exe 旁边还有别的目录",并且要专门测"拷到干净目录"的形态 |
+| **前端资源内嵌 + 磁盘优先**(B7) | 只内嵌不找磁盘 → 开发时改一行 JS 都要重编 exe;只找磁盘不内嵌 → 发布出去没有 `web/` 就是白页 | 先找 `--web` → exe 同目录 `web/` → `exe/../../dexstudio/web`,**都找不到**才用内嵌的那份,解包到 `%LOCALAPPDATA%\DexStudio\web-<内容哈希>`(哈希进目录名 ⇒ 换版本自动换目录) |
 
 > 加新陷阱时:**写进 `docs/PITFALLS.md` 的表尾**,再把本节的最后一条挤出去。
 
@@ -296,7 +298,7 @@ python main.py build-dexstudio                 # 构建
 dexstudio/host/dexstudio.exe --selftest        # 模型自测(14 项)
 dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'
 dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外;等 ui.ready 后再让页面自测
-python tests/test_dexstudio.py                 # 279 项(ctypes + 逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源 + CLI + WebView2 + 页面自测)
+python tests/test_dexstudio.py                 # 284 项(ctypes + 逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源 + CLI + WebView2 + 发布形态 + 页面自测)
 ```
 
 **命令一览**(全部走 `ds_command`,前端与测试用的是同一批):
@@ -332,6 +334,7 @@ python tests/test_dexstudio.py                 # 279 项(ctypes + 逻辑图 + �
 
 | 提交 | 内容 |
 |------|------|
+| (本次 B7) | **DexStudio B7:打包(前端资源内嵌 + 发布形态)**。新增 `tools/embed_web.py`(把 `dexstudio/web/*` 生成成 `dexstudio/host/ds_embed.c`:字节数组 + 表 + 内容哈希)与 `main.py package-dexstudio`(产出 `dist/DexStudio/`:exe + WebView2Loader.dll + libdexgame.dll + README.txt)。宿主找前端目录的顺序改成 `--web` → exe 同目录 `web/` → `exe/../../dexstudio/web` → **内嵌资源**(解包到 `%LOCALAPPDATA%\DexStudio\web-<哈希>` 再映射),于是发布出去**不需要 `web/` 目录**,而开发期仍然优先用磁盘上的那份。顺带修两个只在发布形态暴露的真问题:`--selftest` 的临时项目与「没有项目时的预览图目录」原本都写成 `exe_dir/../..\_zigtmp\...`,干净目录里不可写(视口渲染图解码成 `0×0`)—— 统一走新的 `ds_temp_dir()`。**测**:`tests/test_dexstudio.py` 279 → **284 项**,新增 `test_packaged_exe()`(把三个文件拷到**没有 `web/`** 的干净临时目录,跑 `--selftest` 与 `--wv-selftest`,后者含页面自测 58 项)。**零字节码格式改动** |
 | (本次 B6) | **DexStudio B6:资源管理 + 自动保存/崩溃恢复**。新增 `dexstudio/host/ds_res.c`(~470 行)。**资源**:`res.list/import/pick/delete/rename` —— 导入是**复制**且同名报错不覆盖,资源名不许带路径(挡 `../`),`res.pick {dry:1}` 让自动测试不必弹模态对话框;缩略图/试听走虚拟主机 `dexstudio-proj.local`(与视口预览同一机制)。**自动保存**:`autosave.tick` 只在脏时写,存的是**整包**(场景 JSON + 场景引用的外部文件 = 瓦片 CSV / 逻辑图)到 `<root>/.dexstudio/autosave.json`,复用撤销那套快照原语;`recover.status/apply/discard` 的判据是"自动保存比场景文件新"(上次没正常收尾),`app.info` 多报 `recoverable`/`autosave_seq`,正常存盘后提示自然消失。前端:左栏资源面板(点图片=设选中实体的 `sprite.tex_path`、点声音=试听、右键=改名/删除)、顶栏下的恢复提示条(恢复/丢弃,不擅自恢复)、`startAutosave()` 每 30 秒敲一次(**策略在 C,节拍由 UI 带**)。**测**:`tests/test_dexstudio.py` 251 → **279 项**(B6 28 项),页面自测 48 → **58 项**(含 `fetch('https://dexstudio-proj.local/project.json')` 真拿到 200)。**零字节码格式改动** |
 | (本次 B5) | **DexStudio B5:一键编译 + 独立窗口运行 + 输出面板 + 代码页签**。新增 `dexstudio/host/ds_run.c`(~580 行)与前端 `code.js`/`highlight.js`。`build.compile` = 存盘 + **重生成逻辑图** + `dexc.exe`,把 stdout/stderr 解析成结构化诊断(`{level,phase,line,col,msg}`,两种格式都认:`[parser]error at L:C:` 与 `warning: … at L:C`),失败不留字节码;`build.run detach:1` 用 **vmnc.exe**(无控制台)开独立游戏窗口,`wait:1` 用 vm.exe 收输出(无人值守);`build.stop`/`build.status` + **销毁模型自动收进程**(不留孤儿);`project.scripts`/`file.read` 供代码页签。工具路径按 绝对 → exe 同目录 → 仓库根 → cwd 解析。前端:代码页签(文件下拉/源码/编译/运行/停止/输出面板,诊断可点跳行并闪一下)、**自写的 DexLang 词法高亮**(决策 #9,零第三方 JS)、顶栏 F3/Ctrl+B/F5。**测**:`tests/test_dexstudio.py` 201 → **251 项**(B5 25 项 + 前端资源 25 项,后者对每个 `.js` 跑 `node --check` —— 注释里 `*/` 那类语法错的守卫),页面自测 34 → **48 项**(含「点诊断真的切到代码模式」)。**零字节码格式改动** |
 | (本次 B4) | **DexStudio B4:逻辑编辑器(节点图 → DexLang 代码)**。新增 `dexstudio/host/ds_graph.c`(~1200 行)与 `dexstudio/web/graph.js`(~600 行)。**图 = JSON DOM**(`scripts/logic.json`),节点目录在 C 里定义一次、`graph.types` 交给前端自省(与属性面板靠 `comp.schema` 同一套路);**22 种面向 dexgame 的节点**(事件/流程/动作/条件),不是 bluedit 那套 GAL 词汇 —— 复用它的架构(引脚分 exec/value、输出扇出、按 exec 链展开、界面自省),但在三处刻意更严:**输入口独占**(不靠连线顺序决定语义)、**禁环**(exec 与数据都查)、**失败必带原因**(bluedit 几乎全是静默 return)。命令 `graph.types/new/info/save/generate/node.add/node.remove/node.set/node.move/link/unlink`;生成的 `logic_start/logic_update/logic_draw` **都收 `dt: float`**,`on_action`/`on_key` 生成成 update 里的 `eng_action_pressed` 轮询,事件按 `(y,x,id)` 排序 → **同一份图永远生成同一份代码**。撤销快照推广成"场景 JSON + 不在场景里的文本文件(路径→内容)",逻辑图与瓦片 CSV 共用(取内存里的图,不是磁盘旧文件)。`project.new` 顺带写出空的 `logic.json`/`logic.dex`,模板 `main.dex` include "logic"。**测**:`tests/test_dexstudio.py` 152 → **201 项**(逻辑图模型 24 + 代码生成 13 + **行为 6**:造图→生成→dexc 编译→vm 跑 4 帧→断言 `x=20/y=7/vy=0`);页面自测 21 → **34 项**,且**不破坏用户已有的图**。**零字节码格式改动** |
@@ -485,10 +488,15 @@ python tests/test_dexstudio.py                 # 279 项(ctypes + 逻辑图 + �
     名字不许带路径)+ 缩略图/试听走虚拟主机;自动保存是**整包**(场景 + 瓦片 CSV + 逻辑图),
     恢复判据用"自动保存比场景新"。验收证据:`tests/test_dexstudio.py` **279 项**全过,
     页面自测 **58 项**全过。细节与已知简化见 `docs/DEXGAME_DESIGN.md` §9.6。
-  - 里程碑:B1 工具链 ✅ → B2 宿主骨架 ✅ → B3 场景编辑器 ✅ → B4 逻辑编辑器 ✅ →
-    B5 编译/运行/代码页签 ✅ → B6 资源与自动保存 ✅ → **B7 打包单 exe**
-    (内嵌前端资源 + 发布说明:干净目录里双击 exe 能新建项目、编辑、运行)。
-  - 下一步就是 **B7**。
+  - ✅ **B7 已完成(打包)**:前端资源内嵌进 exe + `package-dexstudio`;
+    发布形态 = `dexstudio.exe` + `WebView2Loader.dll` + `libdexgame.dll` + `README.txt`。
+    验收证据:`test_packaged_exe()` 在**没有 `web/`** 的干净目录里跑通 `--selftest`(14 项)
+    与 `--wv-selftest`(**页面自测 58 项全过**)。细节见 `docs/DEXGAME_DESIGN.md` §9.7。
+  - ✅ **产品 B(B1–B7)全部完成** —— 14 项决策逐条落地:纯 C 工具链 / WebView2 宿主 /
+    蓝图式逻辑图 / 完整场景编辑器 + 瓦片刷子 / 一键编译 + 独立窗口运行 + 错误定位 /
+    编辑器基础功能(撤销重做、复制粘贴、框选、网格吸附、中文界面、自动保存与崩溃恢复)/
+    自写代码高亮 / 模型层在 C 并可测 / 固定项目结构 / `dexstudio/` / 地基先行 / 自动提交推送。
+    全量测试 **30 脚本 / 2125 项通过,0 失败**(其中 DexStudio 284 项)。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。

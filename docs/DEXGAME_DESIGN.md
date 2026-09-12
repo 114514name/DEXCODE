@@ -28,6 +28,7 @@
 | 产品 B: B4 逻辑编辑器 | ✅ 完成 | 节点图(22 种面向 dexgame 的节点)→ DexLang 源码:生成的代码能编译、能跑出断言过的行为;`tests/test_dexstudio.py` **201 项** + 页面自测 **34 项**;见 §9.4 |
 | 产品 B: B5 编译/运行/代码页签 | ✅ 完成 | 一键编译(**诊断带行列**,失败不留字节码)+ 独立窗口运行(vmnc,可停)+ 输出面板可点跳行 + 自写 DexLang 高亮;`tests/test_dexstudio.py` **251 项** + 页面自测 **48 项**;见 §9.5 |
 | 产品 B: B6 资源与自动保存 | ✅ 完成 | `res.*`(导入/列表/改名/删除,缩略图走虚拟主机)+ 整包自动保存 + 崩溃恢复提示;`tests/test_dexstudio.py` **279 项** + 页面自测 **58 项**;见 §9.6 |
+| 产品 B: B7 打包 | ✅ 完成 | 前端资源内嵌进 exe + `package-dexstudio` 打包命令 + 干净目录验证;`tests/test_dexstudio.py` **284 项**;见 §9.7 |
 
 **M2 期间对本文设计的三处修正**(以代码为准):
 
@@ -606,9 +607,9 @@ IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
 | **B4** ✅ | 逻辑编辑器:节点图(事件/条件/动作)+ 生成 `.dex` 源码 | ✅ 见 §9.4:生成的 `.dex` 由 `dexc.exe` 编译、再由 `vm.exe` 跑 4 帧,断言 `x=20 / y=7 / vy=0`(**行为**断言,不是「能编译」就算);图存得下读得回、改图能撤销;页面自测 34 项(切模式/画布尺寸/节点面板/画布像素里有节点与连线/属性面板/生成落盘) |
 | **B5** ✅ | 生成 + 运行 + 输出面板 + 错误定位 + 代码页签(自写高亮) | ✅ 见 §9.5:一键 = 存盘 + 重生成逻辑图 + `dexc.exe` 编译;诊断由 C 解析成 `{level,phase,line,col,msg}`,输出面板点一下跳到代码页签并在那一行闪一下;"运行"用 **vmnc.exe**(无控制台)开独立游戏窗口,"停止"能收掉(`build.status` 可查 pid/退出码);高亮是自写的词法着色(零第三方 JS) |
 | **B6** ✅ | 项目与资源管理:新建/打开项目、`res/` 导入、图集预览、自动保存/崩溃恢复 | ✅ 见 §9.6:`res.list/import/pick/delete/rename`(缩略图/试听走虚拟主机);**整包**自动保存(场景 + 瓦片 CSV + 逻辑图)→ `.dexstudio/autosave.json`;`app.info.recoverable` + 恢复提示条(恢复/丢弃,不擅自恢复);新建 → 导入资源 → 存盘 → 重开内容一致;崩溃(自动保存比场景新)能恢复出两个实体 |
-| **B7** | 打包:单 exe(内嵌前端资源)+ 发布说明 | 干净目录里双击 exe 能新建项目、编辑、运行示例 |
+| **B7** ✅ | 打包:单 exe(内嵌前端资源)+ 发布说明 | ✅ 见 §9.7:**前端资源编译进 exe**;`python main.py package-dexstudio` 产出 `dist/DexStudio/`(exe + WebView2Loader.dll + libdexgame.dll + README);测试把这三个文件拷到**干净临时目录**(里面没有 `web/`)再跑 `--selftest` 与 `--wv-selftest`,两项都全过 —— 页面自测 58 项全过就是「内嵌资源可用」的证据 |
 
-产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 1932+ 项**)。
+产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 2125 项**)。
 
 ### 9.3 B3 落地实况(与 §9.1 的差异以此为准)
 
@@ -941,6 +942,63 @@ B6 那 28 项覆盖:资源列表/导入/重名不覆盖/源不存在/改名/删�
 - 崩溃恢复只覆盖"当前场景 + 当前图";多场景项目里其它场景的改动要靠各自存盘。
 
 ---
+
+### 9.7 B7 落地实况(打包)
+
+**发布形态 = 三个文件**
+
+```
+DexStudio/
+  dexstudio.exe         IDE 本体(模型层 + 宿主 + **前端 HTML/CSS/JS 全部内嵌**)
+  WebView2Loader.dll    WebView2 加载器(微软的,必须单独放 —— 它是系统组件的入口)
+  libdexgame.dll        游戏引擎(视口预览与「运行」都要它)
+  README.txt            用法与依赖说明(打包时自动写出)
+```
+
+`python main.py package-dexstudio` 一次性产出这个目录(默认 `dist/DexStudio`,`dist/` 已
+gitignore)。**"单 exe"指的是 IDE 不需要 Python、不需要旁边摆 `web/` 目录**;
+引擎 DLL 是游戏本身的一部分,和"运行游戏需要 `vm.exe`"是一回事。
+
+**前端资源怎么进 exe 的**
+
+1. `python main.py build-dexstudio` 先跑 `tools/embed_web.py`,把 `dexstudio/web/*`
+   生成成 `dexstudio/host/ds_embed.c`(每个文件一段字节数组 + 一张表 + 内容哈希);
+2. 宿主启动时按 `--web` → `exe同目录/web` → `exe/../../dexstudio/web` 找前端目录,
+   **都找不到就用内嵌的那份**,解包到 `%LOCALAPPDATA%\DexStudio\web-<哈希>\` 再映射进
+   WebView2。哈希变了就换目录,所以升级之后不会读到旧文件。
+3. 开发期仍然优先用磁盘上的 `web/`(`--web` 或 exe 同目录)—— 改了前端刷新就能看,
+   不用重编 exe。
+
+**验收证据(这一项是"发布形态"的硬证据)**
+
+```bash
+python main.py package-dexstudio      # → dist/DexStudio/{exe, WebView2Loader.dll, libdexgame.dll, README.txt}
+python tests/test_dexstudio.py        # 284 项,含 test_packaged_exe()
+```
+
+`test_packaged_exe()` 把这三个文件拷进**干净临时目录**(并断言里面**没有** `web/`),
+然后在那个目录里跑:
+
+- `--selftest` → 14 项全过(模型自测;临时项目现在放缓存目录,不再依赖 `exe/../..`);
+- `--wv-selftest` → 起窗口 + 加载**内嵌**前端 + 页面自测 **58 项全过**。
+
+**这个测试当场抓出两个真问题**(都已修,记进 `docs/PITFALLS.md`):
+
+1. `--selftest` 的临时项目原本放在 `exe_dir/../..\_zigtmp\ds_selftest` —— 发布形态下
+   那个路径不存在/不可写,自测直接失败;
+2. 没有项目时的**预览图目录**同样回退到 `exe_dir/../..\_zigtmp\ds_preview` ——
+   于是"渲染图解码成 0×0"、视口空白(页面上看着像引擎坏了)。
+
+两处都改成走新的 `ds_temp_dir()`(`%LOCALAPPDATA%\DexStudio`,回退 `%TEMP%`,
+最后才是 exe 同目录)。**判据:凡是"写文件"的默认路径,都不能假设 exe 旁边有可写的兄弟目录。**
+
+**已知简化(B7 一期)**
+
+- 没有安装包(不做 Inno Setup/MSI):发布就是"拷三个文件"。
+- `libdexgame.dll` 需要跟着走;不给它做版本共存/并排(side-by-side)加载。
+- 内嵌资源是**未压缩**的(前端一共几十 KB,压不压无所谓);没做增量更新 —— 换版本
+  就是换哈希目录,旧的留在缓存里(可手工删)。
+- 新项目/打开项目走的是输入框(prompt)而不是系统文件夹选择器。
 
 ---
 
