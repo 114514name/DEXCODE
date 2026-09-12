@@ -38,6 +38,7 @@ int64_t eng_init(const DexValue *a, int n) {
     dg_scene_init();
     dg_phys_init();
     dg_input_init();
+    dg_audio_init();
     g_frame_index = 0;
     return 0;
 }
@@ -51,6 +52,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
     dg_scene_init();
     dg_phys_init();
     dg_input_init();
+    dg_audio_init();
     g_frame_index = 0;
     return 0;
 }
@@ -59,6 +61,7 @@ int64_t eng_shutdown(const DexValue *a, int n) {
     (void)a; (void)n;
     dg_clear_error();
     dg_input_shutdown();
+    dg_audio_shutdown();
     dg_phys_shutdown();
     dg_scene_shutdown();
     dg_draw_shutdown();
@@ -851,6 +854,88 @@ int64_t eng_input_clear(const DexValue *a, int n) {
     dg_clear_error();
     dg_input_clear();
     return 0;
+}
+
+/* ============================================================
+   音频(M4):XAudio2
+   ============================================================ */
+int64_t eng_audio_ok(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return dg_audio_ok() ? 1 : 0;
+}
+int64_t eng_audio_set_master_volume(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_audio_set_master_volume needs a volume 0..1"); return -1; }
+    return dg_audio_set_master_volume((float)dv_float(&a[0]));
+}
+double eng_audio_master_volume(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return (double)dg_audio_master_volume();
+}
+int64_t eng_sound_load(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_sound_load needs a path"); return -1; }
+    return dg_audio_load_cached(dv_str(&a[0]));
+}
+int64_t eng_sound_free(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_sound_free needs a sound id"); return -1; }
+    return dg_audio_free((int32_t)dv_int(&a[0]));
+}
+double eng_sound_duration(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_duration((int32_t)dv_int_or(a, n, 0, 0));
+}
+int64_t eng_sound_sample_rate(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_sample_rate((int32_t)dv_int_or(a, n, 0, 0));
+}
+int64_t eng_sound_channels(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_channels((int32_t)dv_int_or(a, n, 0, 0));
+}
+int64_t eng_sound_bits(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_bits((int32_t)dv_int_or(a, n, 0, 0));
+}
+const char *eng_sound_path(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_path((int32_t)dv_int_or(a, n, 0, 0));
+}
+int64_t eng_sound_count(const DexValue *a, int n) { (void)a; (void)n; return dg_audio_count(); }
+
+int64_t eng_sound_play(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_sound_play needs (sound[, loop, volume])"); return -1; }
+    return dg_audio_play((int32_t)dv_int(&a[0]), (int)dv_int_or(a, n, 1, 0),
+                         (float)dv_float_or(a, n, 2, 1.0));
+}
+int64_t eng_voice_stop(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_voice_stop needs a voice id"); return -1; }
+    return dg_audio_stop((int32_t)dv_int(&a[0]));
+}
+int64_t eng_voice_playing(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_voice_playing((int32_t)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+int64_t eng_voice_set_volume(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_voice_set_volume needs (voice, volume)"); return -1; }
+    return dg_audio_voice_set_volume((int32_t)dv_int(&a[0]), (float)dv_float(&a[1]));
+}
+int64_t eng_voice_sound(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_audio_voice_sound((int32_t)dv_int_or(a, n, 0, 0));
+}
+int64_t eng_audio_playing_count(const DexValue *a, int n) {
+    (void)a; (void)n;
+    return dg_audio_playing_count();
+}
+int64_t eng_audio_stop_all(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    return dg_audio_stop_all();
 }
 
 /* ---------- 颜色辅助 ----------

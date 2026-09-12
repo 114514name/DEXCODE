@@ -185,6 +185,16 @@ static const DgField BODY_FIELDS[] = {
     { "stepped",       DG_F_INT,   0, 0, offsetof(DgBody, stepped) },
     { "flags",         DG_F_INT,   0, 0, offsetof(DgBody, flags) },
 };
+static const DgField AUDIO_FIELDS[] = {
+    { "path",          DG_F_STR,   1, (uint16_t)sizeof(((DgAudio *)0)->path),
+      offsetof(DgAudio, path) },
+    { "volume",        DG_F_FLOAT, 1, 0, offsetof(DgAudio, volume) },
+    { "loop",          DG_F_INT,   1, 0, offsetof(DgAudio, loop) },
+    { "play_on_start", DG_F_INT,   1, 0, offsetof(DgAudio, play_on_start) },
+    { "handle",        DG_F_INT,   0, 0, offsetof(DgAudio, handle) },
+    { "voice",         DG_F_INT,   0, 0, offsetof(DgAudio, voice) },
+    { "playing",       DG_F_INT,   0, 0, offsetof(DgAudio, playing) },
+};
 static const DgField TILE_FIELDS[] = {
     { "path",       DG_F_STR,   1, (uint16_t)sizeof(((DgTilemap *)0)->path),
       offsetof(DgTilemap, path) },
@@ -240,6 +250,11 @@ static void dg_comp_defaults(int kind, void *c) {
         ((DgCollider *)c)->hh = 4.0f;
         ((DgCollider *)c)->layer = 1;
         break;
+    case DG_C_AUDIO:
+        ((DgAudio *)c)->volume = 1.0f;
+        ((DgAudio *)c)->handle = -1;
+        ((DgAudio *)c)->voice = 0;
+        break;
     case DG_C_TILEMAP: {
         DgTilemap *t = (DgTilemap *)c;
         t->texture = -1;
@@ -266,6 +281,7 @@ void dg_scene_init(void) {
         { "collider",  DG_C_COLLIDER,  COL_FIELDS, NFIELDS(COL_FIELDS), (int)sizeof(DgCollider) },
         { "body",      DG_C_BODY,      BODY_FIELDS,NFIELDS(BODY_FIELDS),(int)sizeof(DgBody) },
         { "tilemap",   DG_C_TILEMAP,   TILE_FIELDS,NFIELDS(TILE_FIELDS),(int)sizeof(DgTilemap) },
+        { "audio",     DG_C_AUDIO,     AUDIO_FIELDS,NFIELDS(AUDIO_FIELDS),(int)sizeof(DgAudio) },
     };
     for (size_t i = 0; i < sizeof(DEF) / sizeof(DEF[0]); i++) {
         DgPool *p = &g_pools[DEF[i].k];
@@ -312,7 +328,7 @@ int dg_comp_kind(const char *name) {
     if (!name || !g_pools_ready) return -1;
     for (int k = 1; k < DG_C_COUNT; k++)
         if (g_pools[k].name && strcmp(g_pools[k].name, name) == 0) return k;
-    dg_error("unknown component '%s' (have: transform/sprite/camera/animation/collider/body/tilemap)",
+    dg_error("unknown component '%s' (have: transform/sprite/camera/animation/collider/body/tilemap/audio)",
              name ? name : "(null)");
     return -1;
 }
@@ -481,6 +497,14 @@ int32_t dg_set_s(uint32_t obj, const char *comp, const char *field, const char *
     } else if (k == DG_C_TILEMAP && strcmp(f->name, "path") == 0) {
         /* 直接给数据文件路径:立刻装网格,别等到渲染/碰撞才发现路径是错的 */
         if (v && v[0] && dg_tilemap_load_path((DgTilemap *)c, v)) return -1;
+    } else if (k == DG_C_AUDIO && strcmp(f->name, "path") == 0) {
+        /* 设了声音路径就立刻解码(路径错了要现在报,不要等到播放) */
+        DgAudio *a = (DgAudio *)c;
+        a->handle = (v && v[0]) ? dg_audio_load_cached(v) : -1;
+        if (v && v[0] && a->handle < 0) return -1;
+    } else if (k == DG_C_AUDIO && strcmp(f->name, "volume") == 0) {
+        DgAudio *a = (DgAudio *)c;
+        if (a->voice > 0) dg_audio_voice_set_volume(a->voice, a->volume);
     }
     dg_phys_after_set(obj, k, f->name);
     return 0;
@@ -563,6 +587,12 @@ static void dg_comp_on_unload(int kind, void *comp, int32_t *id_map, int n) {
         free(t->tiles);                 /* 网格是 malloc 的,槽位会被复用 */
         t->tiles = NULL;
         t->cols = t->rows = 0;
+    } else if (kind == DG_C_AUDIO) {
+        DgAudio *a = (DgAudio *)comp;
+        if (a->voice > 0) dg_audio_stop(a->voice);
+        a->voice = 0;
+        a->playing = 0;
+        a->handle = -1;
     }
 }
 
@@ -588,6 +618,22 @@ static int dg_comp_on_load(int kind, void *comp, const int32_t *id_map, int n) {
     case DG_C_ANIMATION:
         ((DgAnimation *)comp)->time = 0.0f;
         break;
+    case DG_C_AUDIO: {
+        DgAudio *a = (DgAudio *)comp;
+        a->voice = 0;
+        a->playing = 0;
+        a->handle = -1;
+        if (a->path[0]) {
+            a->handle = dg_audio_load_cached(a->path);
+            if (a->handle < 0) return -1;
+            if (a->play_on_start) {
+                a->voice = dg_audio_play(a->handle, a->loop, a->volume);
+                if (a->voice < 0) return -1;
+                a->playing = 1;
+            }
+        }
+        break;
+    }
     case DG_C_TILEMAP: {
         DgTilemap *t = (DgTilemap *)comp;
         t->texture = -1;

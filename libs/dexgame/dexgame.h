@@ -35,6 +35,7 @@ enum {
     DG_C_COLLIDER,
     DG_C_BODY,
     DG_C_TILEMAP,
+    DG_C_AUDIO,
     DG_C_COUNT
 };
 
@@ -90,6 +91,17 @@ typedef struct {
     int32_t layer, order, visible;
     int8_t  solid[256];              /* -1 = 未指定(非空即实心),0/1 = 显式指定 */
 } DgTilemap;
+
+/* 音频源(组件版):场景里能带声音。handle/voice/playing 都是运行时。 */
+typedef struct {
+    char    path[DG_PATH_MAX];
+    float   volume;
+    int32_t loop;
+    int32_t play_on_start;
+    int32_t handle;                  /* 运行时:声音资源 id */
+    int32_t voice;                   /* 运行时:播放实例 id(0 = 没在放)*/
+    int32_t playing;                 /* 运行时 */
+} DgAudio;
 
 /* 碰撞形状种类(与 DgCollider.kind 一致) */
 enum { DG_SHAPE_AABB = 0, DG_SHAPE_CIRCLE = 1, DG_SHAPE_CAPSULE = 2 };
@@ -375,6 +387,30 @@ int   dg_input_action_bound(const char *name);
 int   dg_input_action_count(void);
 const char *dg_input_action_name(int i);
 int   dg_input_action_code(const char *name, int slot);
+
+/* ---------- dg_audio.c(M4:声音)---------- */
+void   dg_audio_init(void);
+void   dg_audio_shutdown(void);
+int    dg_audio_ok(void);            /* 0 = 设备不可用(没声卡);播放会失败并给原因 */
+
+int32_t dg_audio_load_cached(const char *path);   /* 按路径缓存,返回声音 id */
+int32_t dg_audio_free(int32_t sound);
+double  dg_audio_duration(int32_t sound);         /* 秒 */
+int32_t dg_audio_sample_rate(int32_t sound);
+int32_t dg_audio_channels(int32_t sound);
+int32_t dg_audio_bits(int32_t sound);
+const char *dg_audio_path(int32_t sound);
+int32_t dg_audio_count(void);
+
+int32_t dg_audio_play(int32_t sound, int loop, float volume);   /* 返回播放实例 id */
+int32_t dg_audio_stop(int32_t voice);
+int32_t dg_audio_voice_playing(int32_t voice);
+int32_t dg_audio_voice_set_volume(int32_t voice, float volume);
+int32_t dg_audio_voice_sound(int32_t voice);
+int32_t dg_audio_playing_count(void);
+int32_t dg_audio_stop_all(void);
+int32_t dg_audio_set_master_volume(float volume);
+float   dg_audio_master_volume(void);
 
 /* ---------- 屏幕 ↔ 世界(dg_scene.c;鼠标坐标换算要用) ---------- */
 int32_t dg_scene_active_camera(float *x, float *y, float *zoom);

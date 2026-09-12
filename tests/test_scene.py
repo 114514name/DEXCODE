@@ -257,7 +257,7 @@ eng_shutdown();
     check("运行退出码 0", rc == 0, err[:200])
     if rc != 0:
         return
-    check("组件种类数 = 7(M3 起含 tilemap)", L[0] == "7", L[0:1])
+    check("组件种类数 = 8(M4 起含 audio)", L[0] == "8", L[0:1])
     check("第 1 种是 transform", L[1] == "n1=[transform]", L[1:2])
     check("第 2 种是 sprite", L[2] == "n2=[sprite]", L[2:3])
     check("越界索引返回空串", L[3] == "n99=[]", repr(L[3]))

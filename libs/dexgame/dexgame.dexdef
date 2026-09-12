@@ -208,6 +208,29 @@ extern func eng_input_feed_mouse(x: float, y: float) -> int;
 extern func eng_input_feed_wheel(delta: int) -> int;
 extern func eng_input_clear() -> int;
 
+# ---- 音频(M4,XAudio2)----
+# 声音资源按**路径缓存**(eng_sound_load 同一路径返回同一个 id);播放返回"播放实例"id,
+# 同一个声音可以同时响多次(脚步/子弹)。没有声卡时 eng_audio_ok() 返回 0,
+# 播放调用会失败并给出原因,不会崩。
+extern func eng_audio_ok() -> int;
+extern func eng_audio_set_master_volume(volume: float) -> int;
+extern func eng_audio_master_volume() -> float;
+extern func eng_sound_load(path: string) -> int;
+extern func eng_sound_free(sound: int) -> int;
+extern func eng_sound_duration(sound: int) -> float;
+extern func eng_sound_sample_rate(sound: int) -> int;
+extern func eng_sound_channels(sound: int) -> int;
+extern func eng_sound_bits(sound: int) -> int;
+extern func eng_sound_path(sound: int) -> string;
+extern func eng_sound_count() -> int;
+extern func eng_sound_play(sound: int, loop: int, volume: float) -> int;
+extern func eng_voice_stop(voice: int) -> int;
+extern func eng_voice_playing(voice: int) -> int;
+extern func eng_voice_set_volume(voice: int, volume: float) -> int;
+extern func eng_voice_sound(voice: int) -> int;
+extern func eng_audio_playing_count() -> int;
+extern func eng_audio_stop_all() -> int;
+
 # ---- 颜色辅助 ----
 # DexLang 没有位移运算,无法自行从 r/g/b/a 拼出 0xAARRGGBB,故提供此函数。
 extern func eng_rgba(r: int, g: int, b: int, a: int) -> int;
