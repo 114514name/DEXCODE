@@ -29,10 +29,10 @@
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
-| **游戏引擎** | `libs/dexgame/`(~6300 行,8 个 .c + 4 个 .h) | 模块化 2D 引擎:**D3D11 批渲染** + 实体/组件/场景 + 物理/瓦片地图 + 输入/主循环 + **音频(XAudio2)**,见 `docs/DEXGAME_DESIGN.md`。当前 M4(接口层,进行中) |
+| **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h) | 模块化 2D 引擎:**D3D11 批渲染** + 实体/组件/场景 + 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ **文字(DirectWrite)** + **静态内嵌变体**,见 `docs/DEXGAME_DESIGN.md`。当前 M4(接口层,只剩示例) |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(26 个测试文件 + `_tmpdir.py`,~9700 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(27 个测试文件 + `_tmpdir.py`,~10200 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -47,7 +47,7 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:1269 项通过 / 0 失败** —— 26 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- **测试:1323 项通过 / 0 失败** —— 27 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
 - 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
   二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
@@ -63,7 +63,7 @@
 # 逐个跑(每个都是独立脚本,退出码 0/1);也可直接跑 python _status_run2.py 之类的批处理
 python tests/test_toolchain.py   # 29  核心工具链 + C VM + 往返
 python tests/test_native.py      # 41  include/refer + .dexdef + arity 上限 + DLL 调用
-python tests/test_static.py      # 16  静态链接
+python tests/test_static.py      # 24  静态链接(含 dexgame 静态内嵌,M4-d)
 python tests/test_stdlib.py      # 36  标准库
 python tests/test_struct.py      # 18  type/结构体 + 双 VM 一致性
 python tests/test_call.py        # 12  call() 动态调用
@@ -87,10 +87,11 @@ python tests/test_scene.py       # 133 dexgame 实体/组件/JSON 场景(M2,含�
 python tests/test_phys.py        # 193 dexgame 碰撞/查询/运动学/瓦片地图(M3,含像素断言)
 python tests/test_input.py       # 78  dexgame 输入/动作映射/主循环(M4-a)
 python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解析,M4-b)
+python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 ```
 
-合计 **208 个测试函数 / 1250 处 `check()` 调用**;实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **1269 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **214 个测试函数 / 1306 处 `check()` 调用**;实际执行数随平台与是否构建
+`vm.exe` 而变,本机实测 **1323 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -230,6 +231,9 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **语言没有全局变量 → 回调拿不到主程序的 `let`**(M4) | 主程序里 `let st = eng_object_new();`,然后在 `func on_update()` 里用 `st` → 编译期直接报 `undefined variable`。**回调式 API 撞上语言的第一个硬限制** | 跨帧状态放**组件字段**里,靠 `eng_set_name(obj,"state")` + `eng_find("state")` 取回(名字本来就是 IDE 场景树要的)。别指望闭包 |
 | **`eng_dt()` 是帧间隔,不是物理步长**(M4) | 以为它能当"固定步长"用(手动物理时不调 `eng_frame_begin` 就恒为 0);另外它是**毫秒精度**的墙钟差,几帧挤在 1ms 内时是 0 | 固定步长用 `1.0 / eng_physics_set_step(hz)` 自己算;`eng_dt()` 只给"这帧该走多远"用。测试里断言 dt 前先忙等到下一毫秒 |
 | **`main.py run` 只吃字节码**(M3) | 示例头注释一直写 `python main.py run examples/dexgame/demo_m1.dex`,但 `cmd_run` 直接把参数交给 VM → `error: not a valid DEXC bytecode file`。**注释与实现对不上,谁也没测过** | `cmd_run` 现在遇到 `.dex` 会先编译成同名 `.dexbc` 再跑(并接受 `-L`)。**文档里出现的命令要真的跑一遍** |
+| **DirectWrite 的 IID 也要自己写,而且要 `-ldwrite`**(M4) | `DWriteCreateFactory(..., &IID_IDWriteFactory, ...)` 链接期报 `undefined symbol: IID_IDWriteFactory`(zig 不提供 dwrite 的 GUID 符号);另外构建 dexgame 必须显式加 `-ldwrite`(之前一直没加) | 用 `dg_guids.h` 里的 `DG_IID_IDWriteFactory`(M1 就写好了);构建脚本补 `-ldwrite`。**先写独立探针验证整条 API 链再集成** —— 探针几十行就能把"工厂/字体面/字形度量/alpha 位图"四步全验一遍,比在引擎里边调边猜快得多 |
+| **文字光栅化必须整数像素定位**(M4) | 字形位图按整数像素光栅化,quad 落在半像素上会被线性过滤糊掉 | 画字时把(笔位+墨水偏移)与(基线+墨水偏移)四舍五入到整数;配合 §4.3 的 uv 规则(区域用边界)1:1 映射才清晰。**推论:一期文字不支持子像素定位** |
+| **DexLang 没有位运算 → 测试不能拆像素通道**(M4) | 想验证"红字"写了 `(p>>16)&0xFF`,词法器直接报 `unexpected character '&'`(**也没有 `>>`**) | 用**算术恒等式**:白字 = base+cov·0x10101、红字 = base+cov·0x10000 → 两帧像素和之差必是 `cov总和×257` 的倍数(实测 3497770 = 257×13610)。写测试时最容易忘这条(库侧有 `eng_rgba` 兜底,测试里没有) |
 
 ---
 
@@ -288,6 +292,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | M4-c/M4-d 完成:设计文档 §8 补上文字实现(DirectWrite 字形 → 覆盖率位图 → 图集 → 四边形;整数像素定位;两层缓存;一期不支持换行/对齐/子像素)与静态内嵌变体,里程碑表勾掉两项;本文件同步测试基线、新增 3 条 M4 陷阱、§1/§2/§7 更新 |
+| (本次 M4-c/M4-d) | **dexgame M4-c 文字 + M4-d 静态变体**。新增 `dg_text.c`(~430 行):DirectWrite 工厂/字体面,`IDWriteGlyphRunAnalysis` 把**单个字形**光栅化成覆盖率位图(ClearType 三通道取最大值当 alpha),货架式打进 512×512 图集(`dg_tex_update_rgba` 局部上传),画字 = 白色四边形 + 顶点色 tint(**整数像素定位**);字体按(家族,字号)、字形按(字体,码点)**两层缓存**(度量不重排),UTF-8 与 **CJK** 都能显示;`eng_font_*`/`eng_text_*` 12 个函数(`eng_*` 154 → **166**)。**M4-d**:`test_static.py` 加 dexgame 覆盖 —— 400KB+ 的 DLL 内嵌进字节码,外部 DLL 改名后引擎仍能跑且离屏像素断言成立(16 → 24 项)。顺带修 `dg_audio_init` 在 offscreen 路径漏调的问题(见陷阱表) |
 | (本次 docs) | M4-b 完成:设计文档 §8 补上音频实现(XAudio2 选型、声音资源/播放实例两层模型、WAV 支持范围、无声卡时的降级、audio 组件);本文件同步测试基线、新增 3 条 M4 陷阱、§1/§2/§7 更新 |
 | (本次 M4-b) | **dexgame M4-b:音频**。新增 `dg_audio.c`(~430 行):XAudio2(运行时 LoadLibrary,COM 初始化)**声音资源按路径缓存** + **播放实例**(同一声音可同时多次播放)、手写 RIFF/WAVE 解析(8/16 位 PCM,单/双声道,拒绝非 PCM/24 位/多声道并给原因)、主音量/实例音量/停止/播放计数、`eng_audio_ok()` 设备状态(无声卡时播放**带原因失败**而不是崩)。新增 `audio` 组件(场景里能带声音,path 一设立刻解码,JSON 只存持久字段)。`eng_*` 132 → **154** 个函数。新增 `tests/test_audio.py`(81 项,含解析拒绝路径/播放状态/组件往返/双 VM)与 `tests/fixtures/make_wav.py`(+3 个 WAV 输入数据) |
 | (本次 docs) | M4-a 完成:设计文档 §8 补上**已实现**的帧循环/回调/输入/动作映射(eng_run 是语言模块而非 C 导出、按键码统一编号、合成输入),§5 的风险表补"回调拿不到局部变量";本文件同步测试基线、新增 3 条 M4 陷阱、§1/§2/§7 更新 |
@@ -379,9 +385,14 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
     手写 RIFF/WAVE 解析(8/16 位 PCM,单/双声道);`eng_sound_*`/`eng_voice_*`/`eng_audio_*`;
     **没有声卡时不崩**(`eng_audio_ok()` 暴露状态,播放带原因失败,测试据此 SKIP);
     `audio` 组件让场景能带声音(JSON 只存 path/volume/loop/play_on_start)。
-- **M4 剩余**(按建议顺序):文字(DirectWrite + 字形图集,原 M1b)→ 静态链接变体 →
-  一个完整可玩的**平台跳跃示例**(已定主题;输入/物理/瓦片/音频都已就位)。
-  做完产品 A 就能独立发布,然后才动可视化 IDE(产品 B)。
+  - **文字(M4-c 已完成)**:`dg_text.c` —— DirectWrite 字形经 `IDWriteGlyphRunAnalysis`
+    光栅化成覆盖率位图,货架式打进 512×512 图集,画字 = 四边形 + tint(整数像素定位);
+    `eng_font_load/line_height/ascent` + `eng_text_width/height/text`;字体与字形都缓存
+    (度量不重排文字),UTF-8 与**中文**都显示正常;一期不做换行/对齐/富文本/子像素定位。
+  - **静态内嵌变体(M4-d 已完成)**:`include "dexgame_static"` 把整个引擎 DLL 内嵌进
+    `.dexbc`,外部 DLL 移走也能跑(`test_static.py` 24 项,含 dexgame 离屏像素断言)。
+- **M4 只剩最后一件**:一个完整可玩的**平台跳跃示例**(主题已定;输入/物理/瓦片/
+  音频/文字全部就位)。做完产品 A 就能独立发布,然后才动可视化 IDE(产品 B)。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。

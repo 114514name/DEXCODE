@@ -21,7 +21,7 @@
 | M2 场景与实体 | ✅ 完成 | 实体池 + 代际句柄 + 6 种内置组件 + 描述符表自省 + 层级世界坐标 + JSON 往返(像素一致);`tests/test_scene.py` **133 项**;`eng_*` 由 33 → **58** 个 |
 | M2b 相机 / 层级排序 | ✅ 完成(并入 M2) | 相机约定与 (layer, order) 稳定排序都有像素断言;层级排序原计划留在 M1b,实际随 M2 一起做完 |
 | M3 物理 / 查询 / 瓦片 | ✅ 完成 | `dg_phys.c` ~1000 行:精确重叠 + 均匀网格宽相 + 游标式查询 + 射线/扫掠(结果槽)+ 固定步长 120Hz + 轴分离 move-and-slide + 渲染插值 + 瓦片地图(CSV/碰撞/裁剪渲染);`tests/test_phys.py` **193 项**;`eng_*` 58 → **105** 个;示例 `examples/dexgame/demo_m3.dex` |
-| M4 DexLang 接口层收尾 | ⬜ 未开始 | 待做:每帧回调(`on_update`/`on_draw`)、输入(键盘/鼠标/XInput + 动作映射)、音频、文字(DirectWrite + 字形图集,原 M1b)、静态链接变体、完整可玩示例 |
+| M4 DexLang 接口层收尾 | 🔶 大部分完成 | ✅ 每帧回调(`eng_run`)、✅ 输入(键盘/鼠标/XInput + 动作映射)、✅ 音频(XAudio2)、✅ 文字(DirectWrite + 字形图集)、✅ 静态内嵌变体;⬜ 只剩**一个完整可玩的平台跳跃示例** |
 
 **M2 期间对本文设计的三处修正**(以代码为准):
 
@@ -520,6 +520,40 @@ on_update, on_draw)` 用 `call("名字")` 分发 —— 与 `egui_fast.dex` 的 
 - `audio` 组件让**场景能带声音**:`path`/`volume`/`loop`/`play_on_start` 持久,
   `handle`/`voice`/`playing` 是运行时;设置 `path` 时**立刻解码**(路径错了当场报,
   不要等到播放那一刻);卸载组件/删除实体会停掉在放的实例。
+
+### 8.1d M4-c 落地实况(文字)
+
+**路线**:DirectWrite 只负责"给我字形",渲染仍走引擎自己的 D3D11 批次 —— 不用
+`IDWriteTextLayout::Draw`(那是往 GDI/DC 上画,与批次渲染是两条路)。
+
+```
+IDWriteFontFace::GetGlyphIndices + GetDesignGlyphMetrics   → 字形索引 / advance
+IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
+  GetAlphaTextureBounds(CLEARTYPE_3x1)                     → 墨水外框(可含负坐标)
+  CreateAlphaTexture(...)                                  → 3 字节/像素覆盖率位图
+  取 R/G/B 最大值当 alpha(次像素能量分在三通道里,取最大值保住笔画粗细)
+  → 货架式打进 512×512 图集(dg_tex_update_rgba 局部上传,1px 间隙防渗色)
+  → 画字 = 白色四边形 + 顶点色 tint
+```
+
+要点与代价:
+
+- **整数像素定位**:字形位图按整数像素光栅化,quad 也必须落在整数像素上,否则线性过滤
+  会把位图糊掉(配合 §4.3 的"区域用边界"规则,1:1 映射清晰)。**推论:一期文字不支持
+  子像素定位**,做平滑滚动字需要另找方案(缓存多份/2x 图集)。
+- **两层缓存**:字体按(家族, 字号)复用;字形按(字体, 码点)缓存度量与位图 ——
+  `eng_text_width` **不会**重新排版文字(现有 gal 每帧量两次文字是已知坑)。
+- 度量直接来自字体度量(`designUnitsPerEm/ascent/descent/lineGap`),所以行高与基线是
+  原生精度(16px 的 Microsoft YaHei UI:行高 20.32、ascent 16.25)。
+- UTF-8 直接解码成码点(非法字节退化成 `?` 而不是报错);CJK 走系统字体集合,
+  `中文字` 实测等宽 16px/字。
+- **一期不支持**:换行/自动折行、对齐、富文本、字距调整、独立的粗斜体选择。
+  图集满了会**明确报错**(要求减少字号种类或调大图集),不是静默丢字。
+
+**静态内嵌变体**(M4-d):`dexgame_static.dexdef` 用 `refer static "libdexgame.dll"`,
+编译时把 400KB+ 的 DLL 字节内嵌进 `.dexbc`,运行时由 VM 释放到临时目录再加载 ——
+发布产物不需要外部 DLL 文件。`tests/test_static.py` 把外部 DLL 改名后跑离屏像素断言,
+证明这条路真的通。
 
 ### 8.2 接口约定
 
