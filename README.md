@@ -70,9 +70,12 @@ DEXCODE/
                            #    galedit.exe 入库,由 tests/test_editor.py 驱动)
   tools/dexc/              # 🧰 纯 C 工具链 dexc.exe(lexer/parser/compiler/assembler/
                            #    disassembler/asmtext/.dexdef 全移植;与 Python 前端逐字节一致)
+  dexstudio/               # 🖥 DexStudio 可视化 IDE(C 宿主 + 内嵌 WebView2;模型层在 C)
+                           #    host/  ds_*.c + dexstudio.exe;web/  HTML/CSS/JS 前端
+                           #    host/third_party/webview2/   vendor 的 SDK 头 + x64 加载器
   libs/dexgame/            # 🎮 模块化 2D 游戏引擎(D3D11 批渲染 + 实体/组件/场景 JSON +
-                           #    物理/瓦片地图 + 输入/主循环 + 音频 + 文字;166 个 eng_* 函数)
-  tests/                   # 端到端测试(29 个文件 / 209 个测试函数 / 1831 项断言)
+                           #    物理/瓦片地图 + 输入/主循环 + 音频 + 文字;167 个 eng_* 函数)
+  tests/                   # 端到端测试(30 个文件 / 219 个测试函数 / 实测 1932 项断言)
   docs/quickstart.html     # 🚀 快速入门指南(新手首选,浏览器打开)
   docs/stdlib_guide.html   # 📚 标准库详解(33 个函数逐个讲解,含可运行示例)
   docs/ui_guide.html       # 🖥 WinAPI 与 UI 库教学(窗口/消息循环/事件)
@@ -118,6 +121,14 @@ python main.py build-dexc                        # 构建 tools/dexc/dexc.exe
 tools/dexc/dexc.exe compile examples/fib.dex     # 与 main.py compile 产物逐字节一致
 tools/dexc/dexc.exe run examples/fib.dex         # 编译并交给 vm.exe 运行
 tools/dexc/dexc.exe disasm fib.dexbc -o fib.dxasm
+
+# 9. (可选)DexStudio 可视化 IDE(产品 B:B1 工具链 + B2 宿主骨架已完成)
+python main.py build-dexstudio                   # 构建模型 DLL + 两个宿主
+dexstudio/host/dexstudio.exe                     # 开 IDE 窗口(HTML/CSS/JS 前端)
+dexstudio/host/dexstudio.exe --project mygame    # 直接打开一个项目
+dexstudio/host/dexstudio.exe --selftest          # 不开窗口跑一遍模型自测
+dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'   # 跑单条命令
+python tests/test_dexstudio.py                   # 91 项(含 WebView2 整条链的离屏自测)
 ```
 ```
 
@@ -364,8 +375,8 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 
 ## 测试
 
-共 **29 个测试文件 / 209 个测试函数 / 1350 处断言**（`check(...)` 调用点；实际执行数
-随平台与是否构建 `vm.exe` 而变，本机实测 **1831 项通过、0 失败**）。
+共 **30 个测试文件 / 219 个测试函数 / 1436 处断言**（`check(...)` 调用点；实际执行数
+随平台与是否构建 `vm.exe` 而变，本机实测 **1932 项通过、0 失败**）。
 
 测试用的临时目录由 `tests/_tmpdir.py` 创建，不用 `tempfile` 的目录 API —— 原因见该
 文件头部注释（`mkdtemp` 以 `0o700` 建目录，在受限沙箱里会落成「仅属主」ACL，导致该
@@ -390,6 +401,7 @@ python tests/test_audio.py       # 81 项:dexgame 音频(XAudio2 + 手写 WAV �
 python tests/test_text.py        # 46 项:dexgame 文字(DirectWrite + 字形图集)
 python tests/test_examples.py    # 30 项:examples/dexgame/*.dex 编译守卫
 python tests/test_dexc.py        # 478 项:纯 C 工具链 dexc 与 Python 前端逐字节一致
+python tests/test_dexstudio.py   # 91 项:DexStudio 模型层(ctypes)+ 宿主 CLI + WebView2 离屏自测
 # 其余:test_call / test_module / test_img / test_ui / test_egui / test_gal /
 #       test_designer / test_editor / test_nopydep / test_vm_versions
 ```

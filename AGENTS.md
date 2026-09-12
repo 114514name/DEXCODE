@@ -29,11 +29,12 @@
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
-| **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **166** 个函数。见 `docs/DEXGAME_DESIGN.md` |
+| **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **167** 个函数。见 `docs/DEXGAME_DESIGN.md` |
 | **纯 C 工具链(产品 B 地基)** | `tools/dexc/`(7 个 .c + 1 个 .h,~3700 行) | **dexc.exe**:lexer/parser/compiler/assembler/disassembler/asmtext/.dexdef 全部从 Python 移植到 C,与 Python 前端**逐字节一致**(`tests/test_dexc.py` 478 项,拿全仓库 34 个 .dex + 一批故意写错的源码对照字节码/汇编文本/错误/警告)。编译这一步从此不需要 Python —— `dexc.exe` + `vm.exe` 即可完成"源码 → 可运行游戏" |
+| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 7 个 C 文件 ~1900 行 + `web/` 3 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。测试用 ctypes 直接调模型 + 无窗口 CLI + WebView2 离屏自测(`tests/test_dexstudio.py` 91 项)。见 `docs/DEXGAME_DESIGN.md` §9 |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(29 个测试文件 + `_tmpdir.py`,~11900 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(30 个测试文件 + `_tmpdir.py`,~12900 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -48,11 +49,12 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:1831 项通过 / 0 失败** —— 29 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
-- 跟踪 197 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
-  占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
-  二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe` +
-  `tools/dexc/dexc.exe`)只有 **2.7 MB**。要让仓库瘦身,该动的是示例媒体,不是二进制。
+- **测试:1932 项通过 / 0 失败** —— 30 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- 跟踪约 210 个文件、约 38 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
+  占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),vendor 的 **WebView2 SDK 头文件**
+  占 **3 MB**(`dexstudio/host/third_party/`),而「刻意入库以便 clone 即用」的二进制
+  (`vm/*.exe` + `libs/*/lib*.dll` + `tools/dexc/dexc.exe` + `dexstudio/host/*.exe|dll`)
+  只有约 **3.4 MB**。要让仓库瘦身,该动的是示例媒体,不是二进制。
 - 版本控制**刚建立**(2026-09),此前项目无 git;历史提交从「初始导入」开始。
 - 远端 `origin` = `git@github.com:114514name/DEXCODE.git`。**本机到 `github.com:22`
   的连接会被对端直接关闭**(TCP 其实通,但握手被切断),必须走 GitHub 官方备用通道
@@ -84,18 +86,19 @@ python tests/test_memmodel.py    # 44  内存模型(P0–P3 + FFI 契约)
 python tests/test_editor.py      # 18  旧版 C 编辑器 .galscene 往返 + 导出链路
 python tests/test_abi.py         # 37  原生调用「值数组 ABI」(M0.5)
 python tests/test_dexgame.py     # 59  dexgame 引擎 D3D11 渲染核心(M1,含像素断言)
-python tests/test_scene.py       # 135 dexgame 实体/组件/JSON 场景(M2,含像素断言)
+python tests/test_scene.py       # 145 dexgame 实体/组件/JSON 场景(M2,含像素断言)
 python tests/test_phys.py        # 193 dexgame 碰撞/查询/运动学/瓦片地图(M3,含像素断言)
 python tests/test_input.py       # 78  dexgame 输入/动作映射/主循环(M4-a)
 python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解析,M4-b)
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
 python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
+python tests/test_dexstudio.py   # 91  DexStudio 模型层(ctypes)+ 宿主 CLI + WebView2 离屏自测
 ```
 
-合计 **29 个脚本 / 209 个 `def test_*` 函数 / 1350 处 `check()` 调用**(`check()` 常在
+合计 **30 个脚本 / 219 个 `def test_*` 函数 / 1436 处 `check()` 调用**(`check()` 常在
 循环里被多次调用,所以**实测执行数 > 静态调用数**);实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **1831 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+`vm.exe` 而变,本机实测 **1932 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -103,9 +106,10 @@ python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**�
 ### 构建
 
 ```bash
-python main.py build-vm     # 构建 vm.exe / vmnc.exe / galrun.exe
-build_libs.bat              # 构建 7 个原生库 DLL(需要 ziglang)
-python main.py build-dexc   # 构建纯 C 工具链 tools/dexc/dexc.exe
+python main.py build-vm        # 构建 vm.exe / vmnc.exe / galrun.exe
+build_libs.bat                 # 构建 7 个原生库 DLL(需要 ziglang)
+python main.py build-dexc      # 构建纯 C 工具链 tools/dexc/dexc.exe
+python main.py build-dexstudio # 构建 DexStudio(模型 DLL + 两个宿主 + 复制 WebView2Loader)
 ```
 
 **可复现性:VM 的二进制度可复现,库的 DLL 不可复现。** 实测:
@@ -246,6 +250,12 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **签名类型码与 `.dexdef` 类型名是两套映射**(B1) | 把 `.dexdef` 的 `type_code("int"/"float"/"string"/"void")` 复用到签名串 `'ii:i'` 上,于是 **dexc 自己 disasm 出来的 `.native … siii:i` 自己 asm 不认** —— 往返只在"含 string 参数或 arity ≥ 3"的库上断裂 | `parse_sig` 用单字母映射(`v/i/f/s`)、`parse_type` 用全名映射,各自一个函数。**往返测试要覆盖真实库(166 个原生函数),玩具例子测不出来** |
 | **PowerShell 没有 heredoc,还会吃掉 `-Wl,` 的逗号**(B1) | `python - <<'PY'` 在 PowerShell 里报"缺少文件规范"(不是 heredoc);`-Wl,-subsystem:console` 被当成 PowerShell 自己的参数(报"参数列表中缺少参量") | 要改文本就**写一个脚本文件**(write 工具)再 `python 脚本.py`;命令行里的 `-Wl,…` 必须整体加引号,或直接写进 Python 的 subprocess 参数列表 |
 | **Python 的 `repr` 得自己实现**(B1) | dexc 的错误信息(`{x!r}`)与 `.dxasm` 里的浮点文本都要求与 Python 逐字节一致:引号选择、控制字符转 `\xNN`/`\uNNNN`、浮点用**最短往返**十进制且仅当指数 < −4 或 ≥ 16 才用科学计数法 | `tools/dexc/dexc_util.c` 里写 `dx_py_repr_str`/`dx_py_repr_float`,并由 `test_dexc.py` 用 16 个边界浮点(0.0/-0.0/1e15/1e16/1e-4/1e-5/5e-324/1.797…e308…)锁住 |
+| **WebView2 注入的桥是 `chrome.webview`(全小写)**(B2) | 按文档常见写法用 `window.chrome.webView.postMessage(...)`:页面**正常渲染**、`title` 正确、导航 `ok=1`,但宿主机**一条消息都收不到** —— 表现像"桥没接通",而不是像 JS 报错 | 两个都认:`chrome.webview \|\| chrome.webView`(`dexstudio/web/index.html` 顶部内联脚本把可用实例存进 `window.__ds_bridge`)。诊断手段:`ds_wv_eval()` 让页面把 `Object.keys(window.chrome)` 报回来 —— 一眼看到实际名字是 `webview` |
+| **注释里出现 `*/` 会提前结束块注释**(B2) | 在头注释里写 `字段表来自 eng_comp_*/eng_field_* 自省`,那个 `*/` **闭合了注释**,后面整段中文变成 C 代码 → 报一堆"unknown type name",真正的病因(注释被打断)完全看不出来 | 注释里不要写 `xxx_*/yyy_*`;要写就写 `` `eng_comp_*` 与 `eng_field_*` ``。(同类:`/*` 出现在注释里只会警告,`*/` 会直接破坏代码) |
+| **`dsj_set` 接管所有权 → 复用别的树里的节点会悬垂**(B2) | 把 `entity_comps()` 返回值里的子节点直接 `dsj_set(响应, "fields", 子节点)`,随后 `dsj_free(那棵树)` 就把它释放了 → 序列化响应时读已释放内存 → **进程堆损坏 `0xC0000374`**(没有任何有用信息) | 跨树移动节点一律 `dsj_clone()`。规则:`dsj_set(o,k,v)` 之后 `v` 归 `o` 所有,原树释放前必须先克隆 |
+| **`eng_comp_name_at` 的索引是 1 基**(B2) | IDE 按 0..count-1 枚举组件名,结果**最后一个组件永远看不到**(漏掉了 `audio`),而字段 API(`field_name`/`field_type`)是 **0 基** —— 两套下标混在一个自省接口里 | `for (i = 1; i <= eng_comp_count(); i++)` 取组件名;字段用 0 基。这条在 `ds_model.c` 里有注释,`test_dexstudio.py` 断言"8 种组件都在" |
+| **WebView2 的接口是异步就绪的,顺序错了白页且无报错**(B2) | `SetVirtualHostNameToFolderMapping`(虚拟主机映射)要经 `ICoreWebView2_3`,而 webview 要等**控制器创建完成**才有;第一版在"控制器还没就绪"时直接跳过映射,之后仍然 `Navigate("https://dexstudio.local/index.html")` → 导航"成功"、页面白、没有任何错误信息 | 导航请求先**存起来**(folder/host/page),控制器就绪后**先映射再导航**;另外注册 `NavigationCompleted` 处理器把 `WebErrorStatus` 记进 `wv->err`,失败才带得出原因 |
+| **撤销 = 场景快照 → 实体 id 会变**(B2) | 撤销/重做是把整份场景 JSON 恢复回去,实体因此被**重新创建**,而引擎的 id 带世代号 → 旧的 id 立刻失效。表现为"撤销之后 UI 里什么都点不动" | IDE 在每次撤销/重做后必须**重新拉取实体列表**(前端 `guard()` 就是这么做的);测试里要按名字重新 `entity.find`。想保留选中项就按名字重选 |
 
 ---
 
@@ -297,6 +307,40 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
   (`str.find` 代替逐字符、正则挑括号、按内容缓存扫描结果);
   往这条路径加东西时请注意复杂度。
 
+### 5.4 DexStudio 的分层(产品 B:模型在 C,视图在 JS)
+
+```
+dexstudio/web/           HTML/CSS/JS:只做视图与交互(视口、树、属性面板…)
+      ↑↓  WebView2 的 postMessage(唯一通道,请求/响应用 id 配对)
+dexstudio/host/ds_webview.c   WebView2 封装(运行时加载 Loader、虚拟主机映射、导航、eval)
+dexstudio/host/ds_main.c      窗口宿主 + 无窗口 CLI(--command / --selftest / --wv-selftest)
+dexstudio/host/ds_model.c     模型层:项目 / 场景 / 撤销 / **命令分发** ← 全部逻辑在这
+dexstudio/host/ds_engine.c    对 libdexgame.dll 的动态绑定(值数组 ABI)
+dexstudio/host/ds_json.c      极小 JSON DOM(编辑器要"取字段、改字段、写回去")
+      ↑
+libdexgame.dll          场景的权威表示:eng_scene_json / eng_scene_load_json / eng_comp_* 自省
+```
+
+三条约定:
+
+1. **逻辑写在 C,JS 只画**:所有状态改动都经 `ds_command(json) → json`,JS 不做业务
+   判断。好处是"UI 能做的"与"测试能断言的"是同一件事 —— `tests/test_dexstudio.py`
+   用 ctypes 调同一批命令,`--command`/`--selftest` 再用命令行跑一遍。
+2. **场景不另造模型**:实体/组件/字段全部落在引擎里,属性面板的字段表来自
+   `eng_comp_*`/`eng_field_*` 自省 —— 引擎加组件时 IDE 不用改一行。
+3. **失败必须带得出原因**:`ds_command` 永远返回 `{"ok":true,…}` 或
+   `{"ok":false,"error":"…"}`,错误串要具体到"哪个实体的哪个字段为什么不行"
+   (来自 `eng_last_error()`)。前端的输出面板直接显示它。
+
+测试入口(C 侧逻辑全部可无窗口验证):
+```bash
+python main.py build-dexstudio                 # 构建
+dexstudio/host/dexstudio.exe --selftest        # 模型自测(14 项)
+dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'
+dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外,等前端 ui.ready
+python tests/test_dexstudio.py                 # 91 项(ctypes + CLI + WebView2 链)
+```
+
 ---
 
 ## 6. 变更记录(新→旧)
@@ -310,6 +354,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | **B2 完成文档化**:设计文档 §9.2 把 B2 标为 ✅ 并列证据;本文件 §1 加 DexStudio 行、§2 同步测试基线(30 脚本 / 1932 项)与构建命令、§4 新增 **6 条 B2 陷阱**(`chrome.webview` 全小写 / 注释里的 `*/` / `dsj_set` 所有权 / 组件名 1 基 / WebView2 异步就绪顺序 / 撤销后实体 id 变化)、新增 **§5.4 DexStudio 分层**、§6/§7 更新;README 补 DexStudio 一节 |
+| (本次 B2) | **DexStudio 宿主骨架(产品 B 的可视化地基)**。新增 `dexstudio/`:`host/` 7 个 C 文件(~1900 行)+ `web/` 前端 3 个文件。**模型层在 C**(`libdexstudio.dll`):项目(project.json + scenes/ + scripts/ + res/ 固定约定,新建即落盘)/ 场景(直接复用引擎的 `eng_scene_json`、`eng_scene_load_json`,**不另造一套实体模型**)/ **撤销重做**(场景 JSON 快照栈,天然覆盖全部编辑动作)/ 命令通道 `ds_command(json)→json`(`app.info`、`project.*`、`scene.*`、`entity.*`、`comp.schema/add/remove/set`、`undo/redo`,失败一律带原因)。**宿主**:Win32 窗口 + 内嵌 **WebView2**(运行时 LoadLibrary + 虚拟主机映射;SDK 头与 x64 加载器 vendor 进 `third_party/`,共 3 MB)。**可验证性**:`--command`/`--selftest` 无窗口跑模型,`--wv-selftest` 把窗口放屏幕外等前端发 `ui.ready`,证明"窗口 → WebView2 → 本地页面 → JS↔C"整条链通;`tests/test_dexstudio.py` **91 项**(ctypes 调模型 + CLI + WebView2 链)。引擎顺带新增 `eng_object_id_at(index)`(IDE 场景树要按序号枚举实体,`eng_*` 166 → **167**)。**零字节码格式改动** |
 | (本次 docs) | **产品 B 开工**:`docs/DEXGAME_DESIGN.md` §9 从占位改成**已锁定决策 + B1–B7 里程碑**(14 项决策逐条来自用户确认),§10 里程碑表补产品 B 行;本文件 §1/§2 接入 dexc、§4 新增 **6 条 B1 陷阱**(含"一行式改写清空 7 个源文件")、§5.1 补"双实现一致性"、§7 更新为产品 B 进行中;README 补 `build-dexc` |
 | (本次 B1) | **纯 C 工具链 `dexc.exe`(产品 B 的地基)**。`tools/dexc/`(7 个 .c + 1 个 .h,~3700 行):词法/语法/编译/汇编/反汇编/汇编文本/.dexdef 解析全部从 `dexlang/` 移植到 C,`python main.py build-dexc` 构建(285 KB exe 入库)。**与 Python 前端逐字节一致**:新增 `tests/test_dexc.py` **478 项** —— 全仓库 34 个 .dex 的「字节码/汇编文本/警告/错误」四项对照、约 90 个语言特性用例、约 35 个错误路径、13 个 .dexdef 用例、反汇编↔汇编往返、16 个浮点边界。子命令:`compile` / `asm` / `disasm` / `run`(编译后交给 vm.exe)/ `dump-tokens` / `version`。**编译这一步从此不需要 Python** —— `dexc.exe` + `vm.exe` 就能完成"源码 → 可运行游戏" |
 | (本次 docs) | **M4-e 完成 = 产品 A(M0.5–M4)收官**:设计文档里程碑表把 M4 标为完成并列证据、验收表 M4 行打勾;本文件 §1/§2/§7 更新为"引擎完成"、测试基线加示例编译守卫;顺带校正测试基线口径(`test_scene.py` 133→**135**、测试函数数按 `^def test_` 实测为 **199**、并说明「实测执行数 1353 > 静态 `check()` 调用数 1319」的原因) |
@@ -424,6 +470,9 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 - 🟢 **产品 B(DexStudio 可视化 IDE)进行中** —— 设计见 `docs/DEXGAME_DESIGN.md` §9。
   - ✅ **B1 已完成(纯 C 工具链 dexc.exe)**:见上方「纯 C 工具链」一行与变更记录。
     验收证据:478 项双实现对照全过;`dexc run examples/fib.dex` 直接出结果。
+  - ✅ **B2 已完成(WebView2 宿主骨架 + 可测模型层)**:见上方「可视化 IDE」一行。
+    验收证据:`tests/test_dexstudio.py` 91 项全过(ctypes 调模型 + 无窗口 CLI +
+    **窗口放屏幕外的 WebView2 整条链自测** `--wv-selftest`);`--selftest` 14 项全过。
   - 已锁定决策(14 项,用户逐条确认):① 编译链移植成 C 的 `dexc.exe`;② C 宿主 +
     **内嵌 WebView2**;③ WebView2 SDK 下载并 vendor 入库;④ 逻辑编辑用 **UE 蓝图式节点图**
     (复用 `bluedit/` 模型);⑤ **完整可视化场景编辑器**(视口/层级树/属性面板/图层);
@@ -434,10 +483,10 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
     (`project.json` + `scenes/` + `scripts/` + `res/`)且支持新建/打开项目;
     ⑫ 目录 **`dexstudio/`**;⑬ **地基先行**(先 dexc,再宿主,再场景,再逻辑);
     ⑭ 全权自主:自动提交 + 推送 origin,细节按"最简可行 + 与现有风格一致"自行决定并记入文档。
-  - 里程碑:B1 工具链 ✅ → **B2 WebView2 宿主骨架**(开窗 / 加载 HTML / postMessage 双向 /
-    可测的模型层)→ B3 场景编辑器 → B4 逻辑编辑器 → B5 生成 + 运行 + 输出面板 + 代码页签
-    → B6 项目与资源管理 → B7 打包单 exe。
-  - 下一步就是 **B2**。
+  - 里程碑:B1 工具链 ✅ → B2 宿主骨架 ✅ → **B3 场景编辑器**(视口 / 层级树 / 属性面板 /
+    图层 / 瓦片刷子 / 场景 JSON 往返 / 撤销栈接入)→ B4 逻辑编辑器 → B5 生成 + 运行 +
+    输出面板 + 代码页签 → B6 项目与资源管理 → B7 打包单 exe。
+  - 下一步就是 **B3**。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。
