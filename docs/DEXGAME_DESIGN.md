@@ -29,6 +29,7 @@
 | 产品 B: B5 编译/运行/代码页签 | ✅ 完成 | 一键编译(**诊断带行列**,失败不留字节码)+ 独立窗口运行(vmnc,可停)+ 输出面板可点跳行 + 自写 DexLang 高亮;`tests/test_dexstudio.py` **251 项** + 页面自测 **48 项**;见 §9.5 |
 | 产品 B: B6 资源与自动保存 | ✅ 完成 | `res.*`(导入/列表/改名/删除,缩略图走虚拟主机)+ 整包自动保存 + 崩溃恢复提示;`tests/test_dexstudio.py` **279 项** + 页面自测 **58 项**;见 §9.6 |
 | 产品 B: B7 打包 | ✅ 完成 | 前端资源内嵌进 exe + `package-dexstudio` 打包命令 + 干净目录验证;`tests/test_dexstudio.py` **284 项**;见 §9.7 |
+| 产品 B: B8 中文/编码 | ✅ 完成 | 三层 UTF-8 路径层 + 标题宽字符 + 恢复提示会话标记;`tests/test_dexstudio.py` **323 项** + 页面自测 **60 项**;见 §9.8 |
 
 **M2 期间对本文设计的三处修正**(以代码为准):
 
@@ -607,9 +608,10 @@ IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
 | **B4** ✅ | 逻辑编辑器:节点图(事件/条件/动作)+ 生成 `.dex` 源码 | ✅ 见 §9.4:生成的 `.dex` 由 `dexc.exe` 编译、再由 `vm.exe` 跑 4 帧,断言 `x=20 / y=7 / vy=0`(**行为**断言,不是「能编译」就算);图存得下读得回、改图能撤销;页面自测 34 项(切模式/画布尺寸/节点面板/画布像素里有节点与连线/属性面板/生成落盘) |
 | **B5** ✅ | 生成 + 运行 + 输出面板 + 错误定位 + 代码页签(自写高亮) | ✅ 见 §9.5:一键 = 存盘 + 重生成逻辑图 + `dexc.exe` 编译;诊断由 C 解析成 `{level,phase,line,col,msg}`,输出面板点一下跳到代码页签并在那一行闪一下;"运行"用 **vmnc.exe**(无控制台)开独立游戏窗口,"停止"能收掉(`build.status` 可查 pid/退出码);高亮是自写的词法着色(零第三方 JS) |
 | **B6** ✅ | 项目与资源管理:新建/打开项目、`res/` 导入、图集预览、自动保存/崩溃恢复 | ✅ 见 §9.6:`res.list/import/pick/delete/rename`(缩略图/试听走虚拟主机);**整包**自动保存(场景 + 瓦片 CSV + 逻辑图)→ `.dexstudio/autosave.json`;`app.info.recoverable` + 恢复提示条(恢复/丢弃,不擅自恢复);新建 → 导入资源 → 存盘 → 重开内容一致;崩溃(自动保存比场景新)能恢复出两个实体 |
-| **B7** ✅ | 打包:单 exe(内嵌前端资源)+ 发布说明 | ✅ 见 §9.7:**前端资源编译进 exe**;`python main.py package-dexstudio` 产出 `dist/DexStudio/`(exe + WebView2Loader.dll + libdexgame.dll + README);测试把这三个文件拷到**干净临时目录**(里面没有 `web/`)再跑 `--selftest` 与 `--wv-selftest`,两项都全过 —— 页面自测 58 项全过就是「内嵌资源可用」的证据 |
+| **B7** ✅ | 打包:单 exe(内嵌前端资源)+ 发布说明 | ✅ 见 §9.7:**前端资源编译进 exe**;`python main.py package-dexstudio` 产出 `dist/DexStudio/`(exe + WebView2Loader.dll + libdexgame.dll + README);测试把这三个文件拷到**干净临时目录**(里面没有 `web/`)再跑 `--selftest` 与 `--wv-selftest`,两项都全过 —— 页面自测全过就是「内嵌资源可用」的证据 |
+| **B8** ✅ | 中文/编码修复 + 恢复提示语义(用户真机报的三个症状) | ✅ 见 §9.8:标题 `SetWindowTextW` + 回读断言;自动保存带 `session`/`clean` 标记,只提示**上一次运行**留下的;根因是 `ds_json` 把 UTF-8 字节当码点(二次编码)+ 窄字符 API 按 ANSI 解路径 → 新增 `ds_utf8.c`/`dg_utf8.c`/`dx_utf8.c` 三层 UTF-8 路径层。`tests/test_dexstudio.py` **323 项**,发布形态在**中文目录**里也跑通 |
 
-产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 2125 项**)。
+产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 2164 项**)。
 
 ### 9.3 B3 落地实况(与 §9.1 的差异以此为准)
 
@@ -923,7 +925,8 @@ dexstudio/host/dexstudio.exe --wv-selftest
 ```bash
 python tests/test_dexstudio.py      # 279 项(B6 新增 28 项)
 dexstudio/host/dexstudio.exe --wv-selftest
-#   PASS  界面自测:58 项通过,0 项失败(有项目时;无项目 48 项)
+#   PASS  窗口标题:[DexStudio — DexLang 可视化 IDE]
+#   PASS  界面自测:60 项通过,0 项失败(有项目时;无项目 50 项)
 ```
 
 B6 那 28 项覆盖:资源列表/导入/重名不覆盖/源不存在/改名/删除/非法名/`pick dry`;
@@ -973,14 +976,14 @@ gitignore)。**"单 exe"指的是 IDE 不需要 Python、不需要旁边摆 `web
 
 ```bash
 python main.py package-dexstudio      # → dist/DexStudio/{exe, WebView2Loader.dll, libdexgame.dll, README.txt}
-python tests/test_dexstudio.py        # 284 项,含 test_packaged_exe()
+python tests/test_dexstudio.py        # 323 项,含 test_packaged_exe()
 ```
 
 `test_packaged_exe()` 把这三个文件拷进**干净临时目录**(并断言里面**没有** `web/`),
 然后在那个目录里跑:
 
-- `--selftest` → 14 项全过(模型自测;临时项目现在放缓存目录,不再依赖 `exe/../..`);
-- `--wv-selftest` → 起窗口 + 加载**内嵌**前端 + 页面自测 **58 项全过**。
+- `--selftest` → 22 项全过(模型自测 + 中文与编码;临时项目现在放缓存目录,不再依赖 `exe/../..`);
+- `--wv-selftest` → 起窗口 + 加载**内嵌**前端 + 窗口标题回读 + 页面自测 **60 项全过**。
 
 **这个测试当场抓出两个真问题**(都已修,记进 `docs/PITFALLS.md`):
 
@@ -999,6 +1002,57 @@ python tests/test_dexstudio.py        # 284 项,含 test_packaged_exe()
 - 内嵌资源是**未压缩**的(前端一共几十 KB,压不压无所谓);没做增量更新 —— 换版本
   就是换哈希目录,旧的留在缓存里(可手工删)。
 - 新项目/打开项目走的是输入框(prompt)而不是系统文件夹选择器。
+
+---
+
+### 9.8 B8 落地实况(中文/编码 + 恢复提示语义)
+
+**这一轮不是新功能,是用户在真机上开 IDE 报的三个症状。** 三个症状看起来无关,查下来是
+两条互不相干的根因叠在一起,值得记下来。
+
+| 症状 | 根因 | 修法 |
+|------|------|------|
+| 窗口标题中文乱码 | `CreateWindowExA` 把 UTF-8 标题按 ANSI(中文系统 936)解 | 建窗后用 `SetWindowTextW` 设标题;`--wv-selftest` 里 `GetWindowTextW` **回读断言**(不看屏幕也能证明) |
+| 一直显示"上次好像没有正常退出",点恢复/丢弃当时消失、30 秒后又回来 | 自动保存每 30 秒写一次、**总是**比场景文件新,而 `recoverable` 只看时间,不区分"这份是谁写的" | 自动保存包里记 `session`(进程号 + 启动时刻 + 序号),只提示**不是本次运行写的**;正常退出时盖 `clean=1`,强杀盖不上 ⇒ 前端区分"崩溃"与"正常退出但没存盘";`file_mtime` 读不出来时**不再当作 0**(0 会被当成"比自动保存旧"→ 假可恢复) |
+| 导入资源报"那个路径下没有那个资源",且资源名乱码 | ① `ds_json.c` 的 `parse_string` 对**普通字符**也调 `put_utf8(c)`:汉字是 3 个字节,被当成 3 个码点各编一次 → **二次编码**(磁盘上还因此建出乱码目录名);② Windows 窄字符 API(`fopen`/`GetFileAttributesA`/`FindFirstFileA`/`CopyFileA`/`GetOpenFileNameA`/`CreateProcessA`/`GetModuleFileNameA`)按 ANSI 解 UTF-8 路径 | ① 普通字符改 `put_byte`(**原样抄字节**),`put_utf8` 只留给 `\uXXXX`;② 三层 UTF-8 路径层 —— 宿主 `dexstudio/host/ds_utf8.c`、引擎 `libs/dexgame/dg_utf8.c`、工具链 `tools/dexc/dx_utf8.c`,所有文件/进程/库加载都走宽字符;`argv` 从 `__wgetmainargs` 重取(CRT 给的已被 ANSI 解过一遍) |
+
+**顺带发现并修掉的两个真问题**(都是新测试逼出来的):
+
+1. `scene.new` 建出 `scenes/第一关.json` 并把实体都存在里面,但 `project.json` 的
+   `start_scene` 还是 `scenes/main.json` → 存盘后重开项目**回到空场景**,看起来像
+   "刚摆的东西丢了"(其实还在那个场景文件里)。现在 `scene_switch` 会顺手写回
+   `start_scene`。
+2. `project.new` 只能建一级目录:输入 `D:\游戏\我的项目` 而 `D:\游戏` 不存在时直接失败。
+   `dsu_mkdir` 改成逐级创建。
+
+**这条边界值得所有 Windows 项目抄一遍**:*内部一律 UTF-8,只在调用系统 API 的那一刻转宽字符。*
+一旦反过来(内部跟着 ACP 走),中文用户名(`%LOCALAPPDATA%` 本身就带中文)、中文项目路径、
+中文资源名会同时坏掉,而且坏法千奇百怪 —— 有的报"文件不存在",有的静默建出乱码目录。
+
+**验收证据**
+
+```bash
+python tests/test_dexstudio.py    # 323 项(新增 test_utf8_paths / test_build_in_chinese_path / test_recover_session)
+dexstudio.exe --selftest          # 22 项(新增「中文与编码」一节)
+dexstudio.exe --wv-selftest       # 窗口标题回读 + 页面自测 60 项
+```
+
+- `test_utf8_paths()`:中文项目目录(多级、还不存在)、中文场景名、中文实体名、中文资源名
+  (导入/列表/改名/删除)、中文目录里渲染预览、中文目录里写自动保存 —— 每一项都断言
+  **响应里的字节**与**磁盘上的文件名**。
+- `test_build_in_chinese_path()`:中文目录里一键编译(dexc 是 `CreateProcessW` 起的)。
+- `test_recover_session()`:同一会话写的自动保存**不提示**;上一次运行留下的提示;
+  正常退出归 `unsaved`、`clean=0` 归 `crash`;丢弃之后继续编辑也不再冒出来。
+- `test_packaged_exe()` 改成把三个文件拷进**中文目录**再跑,顺带断言标题。
+
+**已知简化(B8 一期)**
+
+- `vm.exe` 仍是窄字符路径(`vm.c` 的 `fopen` 用 ANSI)。它从 `CreateProcessW` 拿到的是
+  正确的宽命令行,CRT 会转成 ACP,所以**能打开中文路径**;但它在错误消息里回显的路径是
+  GBK,混在 UTF-8 输出里。宿主因此加了一道 `dsu_utf8_clean()`(非法字节 → U+FFFD),
+  保证"响应永远是合法 UTF-8"。彻底的做法是把 `vm.c` 也改成 UTF-8 原生(要重编三个 exe,
+  本轮没做)。
+- 内嵌资源的解包目录仍用 `%LOCALAPPDATA%`(中文用户名已支持,只是路径里会有中文)。
 
 ---
 

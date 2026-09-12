@@ -165,6 +165,9 @@ vm/vm.exe game.dexbc                      # 直接运行
 **B7 把前端资源内嵌进 exe**:`python main.py package-dexstudio` 产出 `dist/DexStudio/`
 (exe + WebView2Loader.dll + libdexgame.dll + README),干净目录里双击即用;
 测试会把这三个文件拷到没有 `web/` 的临时目录再跑一遍自测,钉住这个形态。
+**B8 修掉中文/编码问题**:窗口标题、中文项目路径、中文场景名与中文资源名现在都正常
+(过去会乱码、甚至建出乱码目录名);恢复提示也不再每 30 秒自己冒出来 ——
+它只提示**上一次运行**留下的自动保存,并区分"崩溃"与"正常退出但没存盘"。
 
 ### 🎮 GAL 视觉小说(蓝图编辑器)
 
