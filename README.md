@@ -73,8 +73,10 @@ DEXCODE/
   docs/egui_guide.html     # 🖼 EGUI 图形界面库教学(控件/信号/双模式/Designer)
   docs/designer_guide.html # 🎨 EGUI Designer 使用详解(画界面→生成代码→运行)
   docs/gal_guide.html      # 🎮 GAL 引擎与编辑器教学(打字机/选项/打包/编辑器)
-  docs/SPEC.md             # 完整规格说明
+  docs/SPEC.md             # 完整规格说明(语言与字节码的权威定义)
+  docs/MEMORY_DESIGN.md    # 内存模型方案与实施结论(P0–P3 已实施,P4 已撤销)
   docs/TUTORIAL.md         # 教学文档
+  AGENTS.md                # 📌 项目状态与协作须知(约定/陷阱/待办,改代码前请先读)
 ```
 
 ## 使用
@@ -314,6 +316,8 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 `%LOCALAPPDATA%\zig` 被拒。
 
 ## 开发约定
+
+> 完整的协作约定、已知陷阱与待办见 **AGENTS.md**;本节只保留最要紧的几条。
 
 **编码**:所有源文件为 **UTF-8 无 BOM**。
 
