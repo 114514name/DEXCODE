@@ -9,6 +9,7 @@
 > - `docs/MEMORY_DESIGN.md` — 内存模型的方案与**已实施/已撤销**结论
 > - `docs/DEXGAME_DESIGN.md` — **dexgame 游戏引擎 + 可视化 IDE 的设计决策与里程碑**
 > - `docs/TUTORIAL.md`、`docs/*_guide.html` — 教学材料
+> - `docs/PITFALLS.md` — **踩过的坑全表**(本文件 §4 只留最近几条)
 > - 本文件 — 状态、约定、陷阱、待办
 
 ---
@@ -29,9 +30,9 @@
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
-| **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **167** 个函数。见 `docs/DEXGAME_DESIGN.md` |
+| **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **168** 个函数(含为 IDE 加的 `eng_object_id_at`/`eng_set_view`)。见 `docs/DEXGAME_DESIGN.md` |
 | **纯 C 工具链(产品 B 地基)** | `tools/dexc/`(7 个 .c + 1 个 .h,~3700 行) | **dexc.exe**:lexer/parser/compiler/assembler/disassembler/asmtext/.dexdef 全部从 Python 移植到 C,与 Python 前端**逐字节一致**(`tests/test_dexc.py` 478 项,拿全仓库 34 个 .dex + 一批故意写错的源码对照字节码/汇编文本/错误/警告)。编译这一步从此不需要 Python —— `dexc.exe` + `vm.exe` 即可完成"源码 → 可运行游戏" |
-| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 7 个 C 文件 ~1900 行 + `web/` 3 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。测试用 ctypes 直接调模型 + 无窗口 CLI + WebView2 离屏自测(`tests/test_dexstudio.py` 91 项)。见 `docs/DEXGAME_DESIGN.md` §9 |
+| **可视化 IDE(产品 B)** | `dexstudio/`(`host/` 7 个 C 文件 ~2600 行 + `web/` 5 个文件) | **DexStudio**:C 宿主 + 内嵌 **WebView2**(单窗口,HTML/CSS/JS 前端)。**模型层在 C**(`libdexstudio.dll`:项目/场景/撤销/视图/瓦片/命令通道),场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*`/`eng_field_*` 自省 → 引擎加组件不用改 IDE。**B3 场景编辑器已完成**:视口(引擎离屏渲染 → 虚拟主机 → `<canvas>`,平移/缩放/网格/吸附/框选/拖动)、层级树、自省生成的属性面板、图层、瓦片刷子(图集调色板/画笔/橡皮)、复制粘贴/再做一个、快照式撤销(含瓦片 CSV)。测试:ctypes 调模型 + 无窗口 CLI + WebView2 离屏自测 + **页面自测**(`tests/test_dexstudio.py` **152 项**,页面 21 项)。见 `docs/DEXGAME_DESIGN.md` §9 |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
 | 测试 | `tests/`(30 个测试文件 + `_tmpdir.py`,~12900 行) | 全部是**手写 check() 脚本**,不用 pytest |
@@ -49,7 +50,7 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:1932 项通过 / 0 失败** —— 30 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- **测试:全量 30 个脚本通过 / 0 失败**(逐文件数字见下方基线,以实际运行为准)。
 - 跟踪约 210 个文件、约 38 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),vendor 的 **WebView2 SDK 头文件**
   占 **3 MB**(`dexstudio/host/third_party/`),而「刻意入库以便 clone 即用」的二进制
@@ -58,7 +59,7 @@
 - 版本控制**刚建立**(2026-09),此前项目无 git;历史提交从「初始导入」开始。
 - 远端 `origin` = `git@github.com:114514name/DEXCODE.git`。**本机到 `github.com:22`
   的连接会被对端直接关闭**(TCP 其实通,但握手被切断),必须走 GitHub 官方备用通道
-  `ssh.github.com:443` —— 已写入 `~/.ssh/config` 的 `Host github.com` 块。见 §4。
+  `ssh.github.com:443` —— 已写入 `~/.ssh/config` 的 `Host github.com` 块(见 `docs/PITFALLS.md` 的对应两条)。
 
 ### 测试基线(改动后请对照)
 
@@ -93,15 +94,15 @@ python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解�
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
 python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
-python tests/test_dexstudio.py   # 91  DexStudio 模型层(ctypes)+ 宿主 CLI + WebView2 离屏自测
+python tests/test_dexstudio.py   # 152 DexStudio 模型层(ctypes)+ 宿主 CLI + WebView2 离屏自测 + 页面自测
 ```
 
-合计 **30 个脚本 / 219 个 `def test_*` 函数 / 1436 处 `check()` 调用**(`check()` 常在
-循环里被多次调用,所以**实测执行数 > 静态调用数**);实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **1932 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **30 个脚本 / 222 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
+**实测执行数 > 静态调用数**);实际执行数随平台与是否构建 `vm.exe` 而变。
+本文件不逐条维护各项数字,以实际运行为准(改动后请把上面这行数字顺手改掉)。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
-> 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
+> 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 `docs/PITFALLS.md` 的「mkdtemp 的 0o700 ACL」。
 
 ### 构建
 
@@ -169,7 +170,7 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 ### 3.4 临时目录:测试里用 `tests/_tmpdir.py`,不要用 `tempfile.mkdtemp`
 
 `tempfile.mkdtemp()` 内部是 `os.mkdir(path, 0o700)`;`0o700` 在 Windows 上会落成
-「仅属主」ACL,受限沙箱下当前进程写不进也删不掉该目录(详见 §4)。测试统一改用
+「仅属主」ACL,受限沙箱下当前进程写不进也删不掉该目录(详见 `docs/PITFALLS.md`)。测试统一改用
 `tests/_tmpdir.py` 的 `mktempdir()` / `tempdir()`:同样的接口,但目录以 `0o777` 创建,
 且优先放在系统临时目录(正常机器行为与 `tempfile` 等价,只在系统临时目录不可用时
 回退到仓库内 `_tmptest/`)。
@@ -198,64 +199,21 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 ## 4. 已知陷阱(踩过并记录)
 
+**完整表格见 `docs/PITFALLS.md`**(M0.5 → B3 共 60 条)。
+这里只留最近一阶段的几条,免得本文件超出工作区指令预算被截断。
+
 | 陷阱 | 现象 | 应对 |
 |------|------|------|
-| zig 缓存复用失败的链接 | 修好编译参数后仍报旧的 `undefined symbol` | 构建前清空 `_zigcache/`;`build_libs.bat` 已内置 |
-| sandbox/受限环境写 zig 缓存被拒 | `failed to create output directory ...AccessDenied` —— 报错**像编译器坏了或源码有问题**,其实只是 zig 的默认缓存(`%LOCALAPPDATA%\zig\tmp`)与 `%TEMP%` 在工作区外、写不进去 | `build_libs.bat` 与 `main.py build-vm`(内部 `_compiler_env()`)都已把 `ZIG_GLOBAL_CACHE_DIR`/`TMP` 指向工作区内的 `_zigcache/` 与 `_zigtmp/`;只有**手写** zig 命令时才需自己设。注意 `main.py` 直到 `e1c0a83` 才补上,此前同一环境下「库能构建、VM 不能构建」 |
-| 测试临时文件重名 | 4 个测试文件曾共用 `_tmp_test.dexbc`,互相覆盖导致 VM 读到截断文件而随机崩溃 | 各测试文件使用带唯一后缀的路径(已修) |
-| `str.endswith("([{")` | 参数是**后缀串**不是字符集合,该判断恒为假(曾让"行尾 `{` 自动缩进"从未生效) | 用「末字符 ∈ 集合」判断 |
-| `tag_configure` 放在 `tag_add` 之后 | 配置不作用于已打区间(折叠的 `elide` 曾完全失效) | 先 `tag_configure` 再 `tag_add` |
-| Tk 全局 mark 多用途复用 | 多个折叠块共用一个 mark,后者覆盖前者,导致展开时删不掉提示 | 按行使用唯一 tag 定位 |
-| `Text.get("1.0","end-1c")` 与 `elide` | 折叠后仍返回全文(这是 Tk 设计,便于保存) | 判断是否隐藏要看 `tag_ranges`/`dlineinfo`,不是 `get` |
-| **`tempfile.mkdtemp` 的 `0o700` ACL**(最坑的一条) | 受限沙箱(只放行工作区写入)下,`mkdtemp`/`TemporaryDirectory` 建出的目录**内部既不能建子目录也不能写文件**,连 `shutil.rmtree` 都被拒;最外层只看到 `PermissionError: [WinError 5] 拒绝访问` / `[Errno 13] Permission denied`,看不出病因。曾让 `test_bluedit`/`test_designer`/`test_module`/`test_vm_versions` 四个脚本 rc=1 | `mkdtemp` 内部是 `os.mkdir(p, 0o700)`。实测同一父目录下:`0o700` FAIL / `0o777` OK / 默认 OK。测试统一走 `tests/_tmpdir.py`(以 `0o777` 建目录)。见 §3.4 |
-| 库函数失败只返回空值 | `bluedit.export.export_project` 失败时返回 `""`,裸调用后 `open(path)` 抛 `FileNotFoundError: ''`,把真实原因(「无法创建输出目录 …」)彻底吞掉 —— 排查时完全不知从何下手 | 测试改用 `_export()` 包装,失败时抛出 `export.last_error` 的内容。**写同类 API 时:失败要带得出原因,不要只返回空值**(库侧早已把原因记在 `last_error`,是调用方丢了它) |
-| `tests/test_editor.py` 驱动的是哪份 exe | 该测试曾指向**不存在**的 `tools/galedit.exe`(实际在 `tools/legacy_galedit_c/`),两个用例永远 skip,`check(..., True)` 是死代码 | 已修:路径更正 + `.gitignore` 放行该 exe + exe 入库(否则 clone 后仍缺文件)。现为 18 项有效断言 |
-| **`github.com:22` 被对端切断** | `git push` 报 `Connection closed by <ip> port 22`。注意这**不是** `Permission denied (publickey)` —— 用 `Test-NetConnection` 测 TCP 是通的,极容易被误判成「缺密钥/仓库不存在」而白折腾 | 走 GitHub 官方备用通道:在 `~/.ssh/config` 写 `Host github.com` / `HostName ssh.github.com` / `Port 443` / `User git`。验证:`ssh -T git@github.com` 应回 `Hi <用户名>! You've successfully authenticated` |
-| 受限沙箱阻断 Git 出站 | 沙箱(仅工作区写)下 `git ls-remote`/`push` 报 `sh.exe: couldn't create signal pipe, Win32 error 5`,HTTPS 则报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS` —— 看起来像 Git 坏了或没凭据,其实只是沙箱不放行出站 | 这两条都是**沙箱**造成,不是 Git 或凭据问题;提权后同一命令即恢复正常。诊断时先用 `git ls-remote <url>` 判定「通道是否通」「仓库是否存在」 |
-| **常量池把 int `N` 与 float `N.0` 合并**(M0.5 时发现并修复) | `assembler.cidx()` 原先**只按值**当键,踩中 Python 的 `0 == 0.0` 且 `hash(0) == hash(0.0)`,于是 `print 0;` 与 `print 0.0;` 共用同一条常量,后出现的那一个拿到**错误的类型标签**。潜伏很久没暴露:直接 ABI 会按声明的参数类型做 int/float 互转,VM 的算术也对两者很宽容 | 键改成 `("int"|"float"|"str", value)`。值数组 ABI 让**类型标签变得可观测**,这个 bug 才浮出来 —— 是新 ABI 的**前置修复**。回归测试:`test_abi.py::test_const_pool_types` 与 `abi_tags` 断言 |
-| 新 ABI 只在「类型标签可观测」时才暴露老 bug | 双 VM 一致性断言把上面那条抓了出来(`arr_greet("", 0, 0.0)` 的 `0.0` 在 C VM 成了 int) | 加 ABI/内存布局类改动时,**必须**同时加双 VM 逐行对比断言,否则 pyvm 与 C VM 会静默分叉 |
-| **`-ld3dcompiler` 链不上**(M1) | zig 只提供 d3d11/dxgi/dwrite 等少数 Windows 导入库,`d3dcompiler` **没有**:`error: unable to find dynamic system library 'd3dcompiler'` | 运行时 `LoadLibraryA("d3dcompiler_47.dll")` + `GetProcAddress("D3DCompile")`(系统自带该 DLL)。反而更自包含 —— 不依赖任何导入库。见 `dg_draw.c` 的 `dg_d3dcompile()` |
-| **`IID_xxx` 未定义**(M1) | 只 include 头文件时 `lld-link: error: undefined symbol: IID_IDWriteFactory` —— 因为 GUID 符号本应由导入库提供,而 zig 不提供 dwrite/dxgi 的导入库 | 在 `libs/dexgame/dg_guids.h` 里**显式写死**用到的那几个 GUID(比 `#include <initguid.h>` 更可预测,只需付出实际用到的) |
-| **库往 stdout 打印**(M1) | 引擎初始化时 `printf` 一行 GPU 信息,结果把游戏的输出污染了 —— `test_dexgame.py` 的按行断言全部错位(5 项失败),而 DLL 本身完全正常 | **库不写 stdout**。改成按需查询(`eng_gpu_name()`/`eng_vram_mb()`)。写任何库时都该这样:输出是调用方的地盘 |
-| **图集边缘渗漏**(M1) | 单纹素源用 `u0..u1` 覆盖整个纹素时,线性过滤会掺进邻居(实测纯绿变成 `0xff04ff04`) | 半纹素内缩:单纹素源直接用**纹素中心**(退化区间 `u0==u1`),即 `u=(x+0.5)/W`。`test_dexgame.py::test_atlas_png` 锁住这个约定 —— 将来做图集助手时要在库里自动完成内缩 |
-| 引擎宿主进程的 DPI 只能设一次 | `SetProcessDpiAwarenessContext` 必须在**创建任何窗口之前**调用,且清单设过就再设会失败 | `dg_gfx_init_window` 里尽早调用并**忽略失败**(E_ACCESSDENIED 不算错);客户区尺寸要用 `AdjustWindowRectExForDpi` 算,否则 150% 缩放下会偏小 |
-| **`zig cc -shared` 会往当前目录丢 import library**(M1) | lld 为 `-shared` 链接生成导入库,且**按第一个输入文件命名**:多文件的 dexgame 于是把 `dg_gfx.lib` 扔在了**仓库根**(单文件的 6 个库则是 `libs/*/lib<名>.lib`,已入库)。它不被 gitignore 覆盖,污染工作树 | 传 `-Wl,--out-implib=_zigtmp\dexgame.lib` 把它引到 gitignored 目录(`build_libs.bat` 已这么做)。我们运行时用 LoadLibrary,不需要导入库 |
-| **DLL 重建不可复现,exe 可以**(M1) | 连续两次 `build_libs.bat` 编出的 DLL 哈希不同:PE `TimeDateStamp` 每次都变,设 `SOURCE_DATE_EPOCH` 也无效(实测)。而 `build-vm` 的三个 exe 逐字节可复现 | 重建库文件后出现二进制 diff 是**正常的**,与代码改动无关;判断"某次改动是否影响二进制"只能靠 exe 那边。见 §2 构建小节 |
-| **游标式 JSON 迭代器的契约**(M2) | `djr_key`/`djr_arr_more` **只报告"到头了",不代劳收尾**;而且**必须自己消费元素之间的逗号**。第一版两处都写错(声明"不消费 `}`/`]`"却让调用方再收尾;数组迭代器不消费 `,`),症状是 `scene JSON: line 25: expected '{'` —— 报错点离病因十万八千里 | 契约写在 `dg_json.h` 的注释里,调用方必须调 `djr_obj_end`/`djr_arr_end`。**报错信息带上"实际看到的字符"**(`expected '{', found ','`)后一眼定位。片切数组时 `objs_len` 必须**包含**收尾的 `]`,否则子解析器的 `djr_arr_end` 找不到它 |
-| **跳过未知值时不能借 `djr_string`**(M2) | `djr_skip_value` 里用 `djr_string(r, dump, sizeof dump)`(cap=2)跳过字符串,于是**任何长度 ≥ 2 的未知字符串字段**都让整个场景加载失败:`scene JSON: string too long (cap 2)`。向前兼容测试(未知字段值 `"ignored"`)当场抓住 | 单独写一个**不复制内容**的 `djr_skip_string`。规则:`skip` 系列永远不能依赖任何固定缓冲 |
-| `dg_error` 是**覆盖**式 | 失败路径上后写的 `dg_error` 会盖掉前面更具体的原因(如"贴图路径不存在"),用户只看到含糊的上层消息 | 只在**原因还空着**时兜底:`if (!dg_last_error()[0]) dg_error(...)`。判断"某个失败是否带得出原因"只能靠测试断言原因内容,不能只看返回码 |
-| **引擎自己算 uv 时也必须遵守单纹素规则**(M2) | M1 只在 `eng_draw_uv`(调用方给 uv)上定了这条,但 `eng_draw_scene` 从 Sprite 的源矩形算 uv 时又踩了一遍:单纹素精灵放大 4 倍后纯绿变成 `0xFF20FF20`(红色渗进来) | 规则落到引擎内部:跨多纹素用**区域边界**,单纹素(`sw/sh ≤ 1`)退化到**纹素中心**。`test_scene.py::test_sprite_texel_rule` 锁住并实测了两者差异(边界 uv 得 `0xFF20FF20`,纹素中心得 `0xFF00FF00`) |
-| **JSON 里的 `parent` 是场景内索引,不是实体 id**(M2) | 实体 id 高位是世代号。写场景时拿运行时 id 直接和槽位数比较 → `parent` 恒写成 `-1`,层级在往返后**静默丢失**(只有像素断言才发现) | 写:先给活实体编 `index_of[]`,用 `dg_ent_idx(id)` 取出索引再查表。读:`on_load` 钩子经 `id_map` 把索引重映射为**新的**实体 id。`test_scene.py::test_json_shape` 同时断言"是索引 0"和"不是实体 id" |
-| 加载失败会留下半成品场景(M2) | `dg_scene_from_json` 直接返回 -1,但已经创建的实体/组件留在池子里 —— 调用方拿到失败却又多出一堆东西(测试里就出现过"加载失败但计数 = 1") | `dg_scene_parse`(内部)+ `dg_scene_from_json`(外壳:失败即 `dg_object_clear()`)。**注册表/加载器一类的 API 都要这样:失败后状态必须回到调用前** |
-| **字面量精度会打乱固定步长**(M3) | 用 `eng_physics_step(0.008333333)` 时,这个**十进制字面量比 1/120 略小**(差 3.3e-10),累加器每几次调用就少跑一个子步 —— 实测第 4 次调用起 `eng_physics_substeps()` 出现 0,速度积分少一步(0.9 而不是 1.0)。**症状极像物理算错了** | 测试里写 `1.0 / 120.0`(精确)。推论:凡是"按固定 dt 喂步进"的测试都不要写小数近似;引擎侧另有 `1e-9` 容差兜底 |
-| **浮点返回值写成 `int64_t` 会返回垃圾**(M3) | `int64_t eng_physics_alpha(){ return (double)...; }` —— 双精度的位模式被当 float 读,调用方拿到 `5.2e-315`。**DexLang 侧完全看不出是签名错**,只看到数字离谱 | 值数组 ABI 只规定**入参**是 `DexValue` 数组,**返回值仍按 `.dexdef` 声明**:`-> float` 必须 `double` 返回。加浮点接口时逐个核对 `.dexdef` 与 C 签名 |
-| **子步上限必须小于最薄的障碍**(M3) | 子步上限 32px 时,一个 20px 的位移会**整个跳过 16px 的瓦片墙**(只在终点做重叠判定)→ 玩家穿墙。这是"离散碰撞 + 大步长"的经典坑 | 上限改成 **4px**(比常见瓦片薄一半),`move-and-slide` 内部自动拆步;代价是快物体多几次解算。极快的投射物应该用 `eng_raycast`/`eng_sweep_box` |
-| **瓦片 CSV 的解析行距与读取行距必须一致**(M3) | 解析时为了扩容按 `cap_cols`(64)当行距写,存储后读取端按 `cols`(2)索引 → 只有第一格对得上,其余全是空的(渲染只画出 1 块、碰撞全穿透) | 解析完**压紧成 `cols*rows`** 再交给组件。**"内部布局"和"对外布局"不一致是隐蔽 bug 的温床** |
-| **瓦片 id 0 是合法图块,不能用 0 表示空**(M3) | 一开始约定"`0` 或 `-1` = 空格子",结果图集第 0 块永远画不出来 | 空 = **负数**(CSV 写 `-1`),`0..255` 全是合法图块。`solid[]` 表用 `-1 = 未指定(非空即实心)/0/1` 三态 |
-| **射线从自己体内发出会命中自己**(M3) | 玩家向脚下的地面打射线,结果 `t=0` 且命中的是玩家自己的碰撞体 —— 示例里一眼就撞上了 | `eng_raycast`/`eng_sweep_box` 末尾加 `ignore` 参数(0 = 不忽略)。注意瓦片的 `obj` 也是 0,所以判断要写 `if (ignore && obj == ignore)` |
-| **`restitution = 0` 会算出 `-0`**(M3) | 撞地后 `vy = -vy * 0.0` 得到 `-0.0`,打印成 `-0`,和 `0` 不相等,测试与用户判断都踩 | 先判 `restitution > 0` 再算;或统一 `if (fabsf(v) < 阈值) v = 0.0f` |
-| **XAudio2 没有导入库,而且要 COM 初始化**(M4) | zig 只提供 mingw 的 `xaudio2.h`(接口的 C 版 vtable)不提供 `.lib`;直接 `-lxaudio2` 链不上。另外每个用 XAudio2 的线程都要 `CoInitializeEx` | 运行时 `LoadLibraryA("xaudio2_9.dll")`(Win8 回退 `xaudio2_8.dll`)+ `GetProcAddress("XAudio2Create")`;init 里 `CoInitializeEx(COINIT_APARTMENTTHREADED)` 并**忽略已初始化**的返回值 |
-| **没有声卡不能让引擎崩**(M4) | 无音频设备时 `CreateMasteringVoice` 失败。若把 init 当致命错误,整个游戏都跑不起来 —— 而这只是"没声音" | `eng_audio_ok()` 暴露设备状态;失败时播放调用一律**带原因的失败**(而不是崩溃),测试据此 **SKIP** 而不是 FAIL。注意 `eng_audio_init` 在**两个** init 函数里都要调(offscreen 那次漏了就会得到 `ok=0` 且**原因为空**,很容易误判成"设备坏了") |
-| **短音频的"正在播放"断言不稳**(M4) | 0.1 秒的音效在忙机器上可能在 `play` 与 `playing` 两次调用之间**自己播完**,`BuffersQueued` 变 0 → 断言偶发失败(实测整套跑时命中过一次) | 状态类断言一律用 **loop=1**(无限循环,永远不会自然结束);要测"播完"就显式等待或用长样本 |
-| **边沿检测的拷贝时机**(M4) | `pressed`/`released` 靠"上一帧 vs 当前"。第一版在 `begin_frame`(也就是 pump **之后**)把 now 拷进 prev,于是**本帧刚按下的键立刻变成"上一帧也按着"**,pressed 永远为假 —— 而 down 一切正常,极容易以为"边沿就这样" | 拷贝放在**帧结束**(`dg_input_end_frame`,由 `eng_frame_end` 调)。判据:`down` 对但 `pressed` 恒为假 → 先查拷贝时机 |
-| **语言没有全局变量 → 回调拿不到主程序的 `let`**(M4) | 主程序里 `let st = eng_object_new();`,然后在 `func on_update()` 里用 `st` → 编译期直接报 `undefined variable`。**回调式 API 撞上语言的第一个硬限制** | 跨帧状态放**组件字段**里,靠 `eng_set_name(obj,"state")` + `eng_find("state")` 取回(名字本来就是 IDE 场景树要的)。别指望闭包 |
-| **`eng_dt()` 是帧间隔,不是物理步长**(M4) | 以为它能当"固定步长"用(手动物理时不调 `eng_frame_begin` 就恒为 0);另外它是**毫秒精度**的墙钟差,几帧挤在 1ms 内时是 0 | 固定步长用 `1.0 / eng_physics_set_step(hz)` 自己算;`eng_dt()` 只给"这帧该走多远"用。测试里断言 dt 前先忙等到下一毫秒 |
-| **`main.py run` 只吃字节码**(M3) | 示例头注释一直写 `python main.py run examples/dexgame/demo_m1.dex`,但 `cmd_run` 直接把参数交给 VM → `error: not a valid DEXC bytecode file`。**注释与实现对不上,谁也没测过** | `cmd_run` 现在遇到 `.dex` 会先编译成同名 `.dexbc` 再跑(并接受 `-L`)。**文档里出现的命令要真的跑一遍** |
-| **DirectWrite 的 IID 也要自己写,而且要 `-ldwrite`**(M4) | `DWriteCreateFactory(..., &IID_IDWriteFactory, ...)` 链接期报 `undefined symbol: IID_IDWriteFactory`(zig 不提供 dwrite 的 GUID 符号);另外构建 dexgame 必须显式加 `-ldwrite`(之前一直没加) | 用 `dg_guids.h` 里的 `DG_IID_IDWriteFactory`(M1 就写好了);构建脚本补 `-ldwrite`。**先写独立探针验证整条 API 链再集成** —— 探针几十行就能把"工厂/字体面/字形度量/alpha 位图"四步全验一遍,比在引擎里边调边猜快得多 |
-| **文字光栅化必须整数像素定位**(M4) | 字形位图按整数像素光栅化,quad 落在半像素上会被线性过滤糊掉 | 画字时把(笔位+墨水偏移)与(基线+墨水偏移)四舍五入到整数;配合 §4.3 的 uv 规则(区域用边界)1:1 映射才清晰。**推论:一期文字不支持子像素定位** |
-| **DexLang 没有位运算 → 测试不能拆像素通道**(M4) | 想验证"红字"写了 `(p>>16)&0xFF`,词法器直接报 `unexpected character '&'`(**也没有 `>>`**) | 用**算术恒等式**:白字 = base+cov·0x10101、红字 = base+cov·0x10000 → 两帧像素和之差必是 `cov总和×257` 的倍数(实测 3497770 = 257×13610)。写测试时最容易忘这条(库侧有 `eng_rgba` 兜底,测试里没有) |
-| **`open(f,'w').write(open(f).read())` 会把文件清空**(最惨的一次自伤,B1) | 想一行式批量替换 `canatives`→`capnatives`,写成 `open(f,'w',…).write(open(f,…).read().replace(…))`。Python **先求值 `open(f,'w')`(立刻截断)**,再求值 `open(f).read()`(读到空串)→ `tools/dexc/` 的 **7 个 .c 文件全变成 0 字节**。当时还没提交,只能凭上下文把 ~3700 行重写一遍 | 批量改写一律 **read → 改 → write** 三步(或 `p = Path(f); p.write_text(p.read_text(...).replace(...))`)。**新写的代码要尽早 `git add`** —— 这次能恢复只是因为内容还在上下文里 |
-| **按行切分写成 `while (p <= n)` = 死循环**(B1) | `dexc asm` 报 `out of memory (18446744056529682432 bytes)`(2^64−2^34,一看就是尺寸算崩)。真正病因却是切行循环:最后一轮 `p == n` 时会再切出一个空行、而 `p` 不再前进 → 无限 push 空行直到爆内存。**报错信息完全指不到病因** | 写成 `for (;;) { …; if (p >= n) break; p++; }`;缓冲区增长也要防溢出(`if (nc > SIZE_MAX/2)`)。“尺寸离谱的 OOM”先查**循环边界**,不要追分配器 |
-| **空源文件会"编译成功"**(B1) | 源文件被上一条清空后 zig 不报错(空文件是合法 C),但产物**没有任何函数符号** → 链接期报 `lld-link: error: undefined symbol: WinMain`。这个报错看着像"子系统/启动对象选错了",于是白试了 `-mconsole`、`-Wl,--subsystem=console` 等一整天(zig 还回 `unsupported linker arg`) | 链接期缺 `main`/启动符号时,**先确认目标文件里有没有 `main`**(直接读 COFF 符号表:空文件的对象只有节符号与 `.file`),再怀疑链接参数。**别在链接参数上打转** |
-| **签名类型码与 `.dexdef` 类型名是两套映射**(B1) | 把 `.dexdef` 的 `type_code("int"/"float"/"string"/"void")` 复用到签名串 `'ii:i'` 上,于是 **dexc 自己 disasm 出来的 `.native … siii:i` 自己 asm 不认** —— 往返只在"含 string 参数或 arity ≥ 3"的库上断裂 | `parse_sig` 用单字母映射(`v/i/f/s`)、`parse_type` 用全名映射,各自一个函数。**往返测试要覆盖真实库(166 个原生函数),玩具例子测不出来** |
-| **PowerShell 没有 heredoc,还会吃掉 `-Wl,` 的逗号**(B1) | `python - <<'PY'` 在 PowerShell 里报"缺少文件规范"(不是 heredoc);`-Wl,-subsystem:console` 被当成 PowerShell 自己的参数(报"参数列表中缺少参量") | 要改文本就**写一个脚本文件**(write 工具)再 `python 脚本.py`;命令行里的 `-Wl,…` 必须整体加引号,或直接写进 Python 的 subprocess 参数列表 |
-| **Python 的 `repr` 得自己实现**(B1) | dexc 的错误信息(`{x!r}`)与 `.dxasm` 里的浮点文本都要求与 Python 逐字节一致:引号选择、控制字符转 `\xNN`/`\uNNNN`、浮点用**最短往返**十进制且仅当指数 < −4 或 ≥ 16 才用科学计数法 | `tools/dexc/dexc_util.c` 里写 `dx_py_repr_str`/`dx_py_repr_float`,并由 `test_dexc.py` 用 16 个边界浮点(0.0/-0.0/1e15/1e16/1e-4/1e-5/5e-324/1.797…e308…)锁住 |
-| **WebView2 注入的桥是 `chrome.webview`(全小写)**(B2) | 按文档常见写法用 `window.chrome.webView.postMessage(...)`:页面**正常渲染**、`title` 正确、导航 `ok=1`,但宿主机**一条消息都收不到** —— 表现像"桥没接通",而不是像 JS 报错 | 两个都认:`chrome.webview \|\| chrome.webView`(`dexstudio/web/index.html` 顶部内联脚本把可用实例存进 `window.__ds_bridge`)。诊断手段:`ds_wv_eval()` 让页面把 `Object.keys(window.chrome)` 报回来 —— 一眼看到实际名字是 `webview` |
-| **注释里出现 `*/` 会提前结束块注释**(B2) | 在头注释里写 `字段表来自 eng_comp_*/eng_field_* 自省`,那个 `*/` **闭合了注释**,后面整段中文变成 C 代码 → 报一堆"unknown type name",真正的病因(注释被打断)完全看不出来 | 注释里不要写 `xxx_*/yyy_*`;要写就写 `` `eng_comp_*` 与 `eng_field_*` ``。(同类:`/*` 出现在注释里只会警告,`*/` 会直接破坏代码) |
 | **`dsj_set` 接管所有权 → 复用别的树里的节点会悬垂**(B2) | 把 `entity_comps()` 返回值里的子节点直接 `dsj_set(响应, "fields", 子节点)`,随后 `dsj_free(那棵树)` 就把它释放了 → 序列化响应时读已释放内存 → **进程堆损坏 `0xC0000374`**(没有任何有用信息) | 跨树移动节点一律 `dsj_clone()`。规则:`dsj_set(o,k,v)` 之后 `v` 归 `o` 所有,原树释放前必须先克隆 |
 | **`eng_comp_name_at` 的索引是 1 基**(B2) | IDE 按 0..count-1 枚举组件名,结果**最后一个组件永远看不到**(漏掉了 `audio`),而字段 API(`field_name`/`field_type`)是 **0 基** —— 两套下标混在一个自省接口里 | `for (i = 1; i <= eng_comp_count(); i++)` 取组件名;字段用 0 基。这条在 `ds_model.c` 里有注释,`test_dexstudio.py` 断言"8 种组件都在" |
 | **WebView2 的接口是异步就绪的,顺序错了白页且无报错**(B2) | `SetVirtualHostNameToFolderMapping`(虚拟主机映射)要经 `ICoreWebView2_3`,而 webview 要等**控制器创建完成**才有;第一版在"控制器还没就绪"时直接跳过映射,之后仍然 `Navigate("https://dexstudio.local/index.html")` → 导航"成功"、页面白、没有任何错误信息 | 导航请求先**存起来**(folder/host/page),控制器就绪后**先映射再导航**;另外注册 `NavigationCompleted` 处理器把 `WebErrorStatus` 记进 `wv->err`,失败才带得出原因 |
 | **撤销 = 场景快照 → 实体 id 会变**(B2) | 撤销/重做是把整份场景 JSON 恢复回去,实体因此被**重新创建**,而引擎的 id 带世代号 → 旧的 id 立刻失效。表现为"撤销之后 UI 里什么都点不动" | IDE 在每次撤销/重做后必须**重新拉取实体列表**(前端 `guard()` 就是这么做的);测试里要按名字重新 `entity.find`。想保留选中项就按名字重选 |
+| **`free()` 一个数组内元素 = 堆损坏**(B3) | 撤销栈从 `char*` 改成结构体 `UndoEntry{char *scene; Dsj *csv;}` 之后,清栈时仍然写 `undo_free_entry(&m->undo[i])` —— 栈里的条目是 **malloc 数组的元素**,不是各自分配的;`free` 一个**内指针**立刻堆损坏 `0xC0000374`。而且崩在**销毁模型**时(`--selftest`/测试一启动就死),离病因很远;表现还是“什么输出都没有”(stdout 块缓冲,异常退出就丢了) | 把释放拆成两个函数:`undo_free_contents(e)`(只放 `scene`/`csv`)与 `undo_free_entry(e)`(内容 + `free(e)` 本身)。**凡“栈/池/数组里的元素”都只能用 contents 版**。诊断手法:用 ctypes 逐条命令做二分(`_probe2.py` 那种),比读代码快得多 |
+| **引擎的 `set_s` 把“清空路径”当失败**(B3) | `comp.set(sprite.tex_path, "")` 返回 -1 并带原因(其实字段已经写进去了):引擎是“先写字段再尝试加载,加载不到就报错”,而空路径必然加载不到。IDE 的属性面板于是显示一个**假的错误**,`entity.duplicate` 复制一个没有贴图的精灵也直接失败 | 引擎侧改成“**只有路径非空**且加载失败才算错”(`if (t->tex_path[0] && t->texture < 0) return -1;`,sprite 与 tilemap 各一处)。判据:凡是“设了就立刻加载”的字段,**清空**必须是合法操作 |
+| **视口的像素不能走 JSON**(B3) | 1024×640 的离屏帧 = 2.6 MB 原始像素,base64 后每条消息 ~3.4 MB,`postMessage` 通道会被压垮 | 渲染落成 BMP,宿主把预览目录映射成虚拟主机 `dexstudio-preview.local`,前端 `<img>`/`drawImage` 直接读文件(见 §5.4)。**大块二进制一律走虚拟主机,不走消息通道** |
+| **离屏目标不可 resize,尺寸要一次定够**(B3) | 模型层在建 `DsModel` 时用 `eng_init_offscreen(64,64)`(B2 只验证命令通道,够用),到 B3 要当视口用:渲染出来是 64×64 的小图,前端按比例放大后一团糊 | 建模型时就按编辑器视口定 **1024×640**(`DS_VIEW_W/H`),前端再用 canvas 缩放显示并画 letterbox。`app.info` 返回 `view_w/view_h`,页面据此算出显示变换(见 `viewport.js` 的 `fit`) |
+
+> 加新陷阱时:**写进 `docs/PITFALLS.md` 的表尾**,再把本节的最后一条挤出去。
 
 ---
 
@@ -337,9 +295,22 @@ libdexgame.dll          场景的权威表示:eng_scene_json / eng_scene_load_js
 python main.py build-dexstudio                 # 构建
 dexstudio/host/dexstudio.exe --selftest        # 模型自测(14 项)
 dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'
-dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外,等前端 ui.ready
-python tests/test_dexstudio.py                 # 91 项(ctypes + CLI + WebView2 链)
+dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外;等 ui.ready 后再让页面自测
+python tests/test_dexstudio.py                 # 152 项(ctypes + CLI + WebView2 链 + 页面自测)
 ```
+
+**命令一览**(全部走 `ds_command`,前端与测试用的是同一批):
+`app.info` / `app.components` / `ui.boot|ready|error` /
+`project.new|open|save|state` / `scene.new|load|save|save_as|list|json|render|outline` /
+`entity.list|get|add|remove|rename|set_pos|find|duplicate|copy|paste` /
+`comp.schema|add|remove|set` / `comp.set_many` /
+`view.set` / `tilemap.create|info|set|paint|csv` / `undo` / `redo`。
+
+**界面自测**:`dexstudio/web/app.js` 里的 `window.__ds_selftest()` 由页面自己跑
+(渲染图真的解码成 1024×640 了吗 / 画布上真有非背景像素吗 / 世界↔屏幕往返自洽吗 /
+层级树行数对不对 / 属性面板生成字段了吗 / 拖动真的写回位置了吗 / 瓦片真的落进 CSV
+且能一次撤销吗),结果用 `ui.selftest` 消息回传,`--wv-selftest` 断言“0 项失败”并
+作为退出码。**这是“不看屏幕也能证明 UI 没坏”的那条路。**
 
 ---
 
@@ -354,6 +325,7 @@ python tests/test_dexstudio.py                 # 91 项(ctypes + CLI + WebView2 
 
 | 提交 | 内容 |
 |------|------|
+| (本次 B3) | **DexStudio B3:可视化场景编辑器**。`dexstudio/web/` 从 B2 的“状态面板”变成真编辑器:`app.js`(桥/RPC/状态/顶栏/快捷键/自测)、`scene.js`(层级树/图层/自省生成的属性面板/瓦片调色板)、`viewport.js`(视口:平移缩放/网格吸附/框选/拖动移动/瓦片刷子)。**视口画面 = 引擎离屏渲染的一帧**(1024×640)→ BMP → 虚拟主机 `dexstudio-preview.local` → `<canvas>`,网格/选中框/瓦片格与画面同坐标系。**模型层新增**:`view.set`(编辑器视图覆盖,不动用户的相机实体)、`scene.render`(渲染落盘,返回 `seq` 破缓存)、`scene.outline`(每实体世界包围盒,一次调用给全)、`entity.duplicate/copy/paste`(字段级复制,跨场景剪贴板)、`comp.set_many`(批量写字段 = **一条**撤销记录)、`tilemap.create/info/set/paint/csv`(刷子;`paint` 一次画多格 = 一条撤销)。**撤销快照现在含各瓦片地图的 CSV 文本** —— 瓦片数据不在场景 JSON 里(`cols/rows/texture` 都是 `persist=0`),只快照场景会出现“撤销了但瓦片还在”。引擎侧顺带:新增 `eng_set_view`(视图覆盖,`dg_scene_active_camera` 优先返回它)、修 `dg_set_s` 把“清空 tex_path”误判为失败(`eng_*` 167 → **168**)。**测**:`tests/test_dexstudio.py` 91 → **152 项**(新增视口/瓦片刷子/复制粘贴三组),`--wv-selftest` 多跑一层**页面自测 21 项**。**零字节码格式改动** |
 | (本次 docs) | **B2 完成文档化**:设计文档 §9.2 把 B2 标为 ✅ 并列证据;本文件 §1 加 DexStudio 行、§2 同步测试基线(30 脚本 / 1932 项)与构建命令、§4 新增 **6 条 B2 陷阱**(`chrome.webview` 全小写 / 注释里的 `*/` / `dsj_set` 所有权 / 组件名 1 基 / WebView2 异步就绪顺序 / 撤销后实体 id 变化)、新增 **§5.4 DexStudio 分层**、§6/§7 更新;README 补 DexStudio 一节 |
 | (本次 B2) | **DexStudio 宿主骨架(产品 B 的可视化地基)**。新增 `dexstudio/`:`host/` 7 个 C 文件(~1900 行)+ `web/` 前端 3 个文件。**模型层在 C**(`libdexstudio.dll`):项目(project.json + scenes/ + scripts/ + res/ 固定约定,新建即落盘)/ 场景(直接复用引擎的 `eng_scene_json`、`eng_scene_load_json`,**不另造一套实体模型**)/ **撤销重做**(场景 JSON 快照栈,天然覆盖全部编辑动作)/ 命令通道 `ds_command(json)→json`(`app.info`、`project.*`、`scene.*`、`entity.*`、`comp.schema/add/remove/set`、`undo/redo`,失败一律带原因)。**宿主**:Win32 窗口 + 内嵌 **WebView2**(运行时 LoadLibrary + 虚拟主机映射;SDK 头与 x64 加载器 vendor 进 `third_party/`,共 3 MB)。**可验证性**:`--command`/`--selftest` 无窗口跑模型,`--wv-selftest` 把窗口放屏幕外等前端发 `ui.ready`,证明"窗口 → WebView2 → 本地页面 → JS↔C"整条链通;`tests/test_dexstudio.py` **91 项**(ctypes 调模型 + CLI + WebView2 链)。引擎顺带新增 `eng_object_id_at(index)`(IDE 场景树要按序号枚举实体,`eng_*` 166 → **167**)。**零字节码格式改动** |
 | (本次 docs) | **产品 B 开工**:`docs/DEXGAME_DESIGN.md` §9 从占位改成**已锁定决策 + B1–B7 里程碑**(14 项决策逐条来自用户确认),§10 里程碑表补产品 B 行;本文件 §1/§2 接入 dexc、§4 新增 **6 条 B1 陷阱**(含"一行式改写清空 7 个源文件")、§5.1 补"双实现一致性"、§7 更新为产品 B 进行中;README 补 `build-dexc` |
@@ -464,7 +436,7 @@ python tests/test_dexstudio.py                 # 91 项(ctypes + CLI + WebView2 
     不碰键鼠时**自动演示**(合成输入走同一套代码路径),实测 1050 帧通关。
     `tests/test_examples.py` 钉住示例仍能编译(示例最容易悄悄烂)。
 - ✅ **产品 A(dexgame 引擎)到此完成**:M0.5 ABI → M1 渲染 → M2 场景 → M3 物理 →
-  M4 接口层全部落地,`eng_*` 166 个函数,28 个测试脚本 1353 项通过。
+  M4 接口层全部落地,`eng_*` 168 个函数,全量测试通过(见 §2)。
   引擎可只靠 `libdexgame.dll` + `vm.exe` 独立发布(或用 `dexgame_static` 把 DLL
   内嵌进字节码,发布产物不需要单独的 DLL 文件)。
 - 🟢 **产品 B(DexStudio 可视化 IDE)进行中** —— 设计见 `docs/DEXGAME_DESIGN.md` §9。
@@ -483,10 +455,18 @@ python tests/test_dexstudio.py                 # 91 项(ctypes + CLI + WebView2 
     (`project.json` + `scenes/` + `scripts/` + `res/`)且支持新建/打开项目;
     ⑫ 目录 **`dexstudio/`**;⑬ **地基先行**(先 dexc,再宿主,再场景,再逻辑);
     ⑭ 全权自主:自动提交 + 推送 origin,细节按"最简可行 + 与现有风格一致"自行决定并记入文档。
-  - 里程碑:B1 工具链 ✅ → B2 宿主骨架 ✅ → **B3 场景编辑器**(视口 / 层级树 / 属性面板 /
-    图层 / 瓦片刷子 / 场景 JSON 往返 / 撤销栈接入)→ B4 逻辑编辑器 → B5 生成 + 运行 +
-    输出面板 + 代码页签 → B6 项目与资源管理 → B7 打包单 exe。
-  - 下一步就是 **B3**。
+  - ✅ **B3 已完成(可视化场景编辑器)**:视口(引擎离屏渲染 → 虚拟主机 → canvas,
+    平移/缩放/网格/吸附/框选/拖动移动)、层级树(过滤/双击居中)、自省生成的属性面板、
+    图层分组、瓦片刷子(图集调色板/画笔/橡皮/整图清空/越界自动扩)、复制粘贴与再做一个、
+    快照式撤销(含瓦片 CSV)、批量字段写一条撤销、快捷键。验收证据:
+    `python tests/test_dexstudio.py` **152 项**全过;`dexstudio.exe --wv-selftest` 报
+    **界面自测 21 项通过、0 项失败**(渲染图解码尺寸/画布像素/世界↔屏幕换算/层级树行数/
+    属性面板字段/选中框/拖动写回/瓦片落 CSV 与一次撤销),不再需要人看屏幕。
+    细节与已知简化见 `docs/DEXGAME_DESIGN.md` §9.3。
+  - 里程碑:B1 工具链 ✅ → B2 宿主骨架 ✅ → B3 场景编辑器 ✅ → **B4 逻辑编辑器**(节点图
+    事件/条件/动作/变量 → 生成 `.dex`)→ B5 生成 + 运行 + 输出面板 + 代码页签 →
+    B6 项目与资源管理 → B7 打包单 exe。
+  - 下一步就是 **B4**。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。

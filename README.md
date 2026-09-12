@@ -74,8 +74,8 @@ DEXCODE/
                            #    host/  ds_*.c + dexstudio.exe;web/  HTML/CSS/JS 前端
                            #    host/third_party/webview2/   vendor 的 SDK 头 + x64 加载器
   libs/dexgame/            # 🎮 模块化 2D 游戏引擎(D3D11 批渲染 + 实体/组件/场景 JSON +
-                           #    物理/瓦片地图 + 输入/主循环 + 音频 + 文字;167 个 eng_* 函数)
-  tests/                   # 端到端测试(30 个文件 / 219 个测试函数 / 实测 1932 项断言)
+                           #    物理/瓦片地图 + 输入/主循环 + 音频 + 文字;168 个 eng_* 函数)
+  tests/                   # 端到端测试(30 个文件 / 222 个测试函数 / 实测约 2000 项断言)
   docs/quickstart.html     # 🚀 快速入门指南(新手首选,浏览器打开)
   docs/stdlib_guide.html   # 📚 标准库详解(33 个函数逐个讲解,含可运行示例)
   docs/ui_guide.html       # 🖥 WinAPI 与 UI 库教学(窗口/消息循环/事件)
@@ -84,6 +84,7 @@ DEXCODE/
   docs/gal_guide.html      # 🎮 GAL 引擎与编辑器教学(打字机/选项/打包/编辑器)
   docs/SPEC.md             # 完整规格说明(语言与字节码的权威定义)
   docs/MEMORY_DESIGN.md    # 内存模型方案与实施结论(P0–P3 已实施,P4 已撤销)
+  docs/PITFALLS.md         # 踩过的坑全表(改代码前扫一眼)
   docs/TUTORIAL.md         # 教学文档
   AGENTS.md                # 📌 项目状态与协作须知(约定/陷阱/待办,改代码前请先读)
 ```
@@ -122,14 +123,14 @@ tools/dexc/dexc.exe compile examples/fib.dex     # 与 main.py compile 产物逐
 tools/dexc/dexc.exe run examples/fib.dex         # 编译并交给 vm.exe 运行
 tools/dexc/dexc.exe disasm fib.dexbc -o fib.dxasm
 
-# 9. (可选)DexStudio 可视化 IDE(产品 B:B1 工具链 + B2 宿主骨架已完成)
+# 9. (可选)DexStudio 可视化 IDE(产品 B:B1 工具链 + B2 宿主 + B3 场景编辑器已完成)
 python main.py build-dexstudio                   # 构建模型 DLL + 两个宿主
 dexstudio/host/dexstudio.exe                     # 开 IDE 窗口(HTML/CSS/JS 前端)
 dexstudio/host/dexstudio.exe --project mygame    # 直接打开一个项目
 dexstudio/host/dexstudio.exe --selftest          # 不开窗口跑一遍模型自测
 dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'   # 跑单条命令
-python tests/test_dexstudio.py                   # 91 项(含 WebView2 整条链的离屏自测)
-```
+python tests/test_dexstudio.py                   # 152 项(含 WebView2 整条链 + 页面自测)
+dexstudio/host/dexstudio.exe --wv-selftest      # 窗口放屏幕外,断言界面自测 21 项全过
 ```
 
 **`tools/dexc/` 是什么**:把 `dexlang/`(词法/语法/编译/汇编/反汇编/汇编文本/.dexdef)
@@ -141,6 +142,16 @@ python tests/test_dexstudio.py                   # 91 项(含 WebView2 整条链
 tools/dexc/dexc.exe compile game.dex      # → game.dexbc
 vm/vm.exe game.dexbc                      # 直接运行
 ```
+
+**`dexstudio/` 是什么**:C 宿主 + 内嵌 **WebView2** 的可视化 IDE(产品 B)。前端只做视图
+(HTML/CSS/JS),**状态与逻辑全在 C 模型层**(`libdexstudio.dll`):项目 / 场景 / 撤销 /
+编辑器视图 / 瓦片,而场景数据直接复用引擎的 `eng_scene_json` 与 `eng_comp_*` 自省 ——
+**引擎加组件,IDE 不用改一行**。B3 起是完整的场景编辑器:视口(引擎离屏渲染 → 虚拟主机
+→ `<canvas>`,平移/缩放/网格/吸附/框选/拖动移动)、层级树、自省生成的属性面板、图层分组、
+瓦片刷子(图集调色板/画笔/橡皮)、复制粘贴/再做一个、快照式撤销(含瓦片 CSV)。
+模型与界面**两层都有自动化判据**,不需要人看屏幕:模型层用 ctypes 直接调命令通道断言;
+页面那一层由 `window.__ds_selftest()` 自己验(渲染图是否真解码、画布上是否真有像素、
+世界↔屏幕换算是否自洽、属性面板是否生成字段、瓦片是否落进 CSV 并能一次撤销)。
 
 ### 🎮 GAL 视觉小说(蓝图编辑器)
 
@@ -167,7 +178,6 @@ python gal_main.py examples/gal/demo_blueprint.bluescene   # 打开示例蓝图
 ```
 
 # build-vm 会一次构建三个版本:vm.exe(控制台)/ vmnc.exe(无控制台)/ galrun.exe(发布版)
-```
 
 成品目录即插即玩,运行时仅需 `galrun.exe + core.do + res/`,无 Python 依赖。
 详见 `docs/gal_guide.html`。
@@ -394,14 +404,14 @@ python tests/test_bluedit.py     # 180 项:GAL 蓝图模型/序列化/导出可�
 python tests/test_robust.py      # 24 项:健壮性回归(畸形字节码/循环对象/类型校验/整型边界)
 python tests/test_memmodel.py    # 44 项:内存模型(P0 统一堆入口/P1 预算/P2 FFI 所有权)
 python tests/test_dexgame.py     # 59 项:dexgame 引擎渲染核心(离屏像素断言)
-python tests/test_scene.py       # 135 项:dexgame 实体/组件/场景 JSON
+python tests/test_scene.py       # 145 项:dexgame 实体/组件/场景 JSON
 python tests/test_phys.py        # 193 项:dexgame 碰撞/查询/运动学/瓦片地图
 python tests/test_input.py       # 78 项:dexgame 输入/动作映射/主循环
 python tests/test_audio.py       # 81 项:dexgame 音频(XAudio2 + 手写 WAV 解析)
 python tests/test_text.py        # 46 项:dexgame 文字(DirectWrite + 字形图集)
 python tests/test_examples.py    # 30 项:examples/dexgame/*.dex 编译守卫
 python tests/test_dexc.py        # 478 项:纯 C 工具链 dexc 与 Python 前端逐字节一致
-python tests/test_dexstudio.py   # 91 项:DexStudio 模型层(ctypes)+ 宿主 CLI + WebView2 离屏自测
+python tests/test_dexstudio.py   # 152 项:DexStudio 模型层 + CLI + WebView2 链 + 页面自测
 # 其余:test_call / test_module / test_img / test_ui / test_egui / test_gal /
 #       test_designer / test_editor / test_nopydep / test_vm_versions
 ```

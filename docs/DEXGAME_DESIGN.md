@@ -21,7 +21,10 @@
 | M2 场景与实体 | ✅ 完成 | 实体池 + 代际句柄 + 6 种内置组件 + 描述符表自省 + 层级世界坐标 + JSON 往返(像素一致);`tests/test_scene.py` **133 项**;`eng_*` 由 33 → **58** 个 |
 | M2b 相机 / 层级排序 | ✅ 完成(并入 M2) | 相机约定与 (layer, order) 稳定排序都有像素断言;层级排序原计划留在 M1b,实际随 M2 一起做完 |
 | M3 物理 / 查询 / 瓦片 | ✅ 完成 | `dg_phys.c` ~1000 行:精确重叠 + 均匀网格宽相 + 游标式查询 + 射线/扫掠(结果槽)+ 固定步长 120Hz + 轴分离 move-and-slide + 渲染插值 + 瓦片地图(CSV/碰撞/裁剪渲染);`tests/test_phys.py` **193 项**;`eng_*` 58 → **105** 个;示例 `examples/dexgame/demo_m3.dex` |
-| M4 DexLang 接口层收尾 | ✅ **完成** | ✅ 每帧回调(`eng_run_frames` + `on_start/on_update/on_draw`)、✅ 输入(键盘/鼠标/XInput + 动作映射 + 合成输入)、✅ 音频(XAudio2)、✅ 文字(DirectWrite + 字形图集)、✅ 静态内嵌变体、✅ **完整可玩示例** `examples/dexgame/platformer.dex`(自动演示 1050 帧通关)。`eng_*` 共 **166** 个函数;`tests/test_examples.py` 30 项编译守卫 |
+| M4 DexLang 接口层收尾 | ✅ **完成** | ✅ 每帧回调(`eng_run_frames` + `on_start/on_update/on_draw`)、✅ 输入(键盘/鼠标/XInput + 动作映射 + 合成输入)、✅ 音频(XAudio2)、✅ 文字(DirectWrite + 字形图集)、✅ 静态内嵌变体、✅ **完整可玩示例** `examples/dexgame/platformer.dex`(自动演示 1050 帧通关)。`eng_*` 共 **168** 个函数(含为 IDE 加的 `eng_object_id_at` / `eng_set_view`);`tests/test_examples.py` 30 项编译守卫 |
+| 产品 B: B1 纯 C 工具链 | ✅ 完成 | `tools/dexc/dexc.exe` 与 Python 前端**逐字节一致**(`tests/test_dexc.py` 478 项);见 §9.2 |
+| 产品 B: B2 宿主骨架 | ✅ 完成 | WebView2 单窗口宿主 + **模型层在 C**(`libdexstudio.dll`);`--wv-selftest` 离屏验证整条链;见 §9.2 |
+| 产品 B: B3 场景编辑器 | ✅ 完成 | 视口(引擎离屏渲染 → 虚拟主机 → canvas)+ 层级树 + 自省生成的属性面板 + 图层 + 瓦片刷子 + 复制粘贴 + 批量化撤销;`tests/test_dexstudio.py` **152 项** + 页面自测 **21 项**;见 §9.3 |
 
 **M2 期间对本文设计的三处修正**(以代码为准):
 
@@ -596,13 +599,90 @@ IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
 |---|---|---|
 | **B1** ✅ | 纯 C 工具链 `dexc.exe`(lexer/parser/compiler/assembler/disassembler/asmtext/.dexdef) | ✅ 与 Python 前端**逐字节一致**(`tests/test_dexc.py` **478 项**:全仓库 34 个 `.dex` 的字节码/汇编文本/警告/错误四项对照 + ~90 个语言特性用例 + ~35 个错误路径 + 13 个 `.dexdef` + 反汇编↔汇编往返 + 16 个浮点边界);`dexc run examples/fib.dex` 直接出结果;`python main.py build-dexc` 可重建(285 KB exe 入库) |
 | **B2** ✅ | WebView2 宿主骨架:C 窗口 + 内嵌 WebView2 + 加载本地 HTML + 双向 `postMessage` + **可测的模型层**(项目文档 / 场景文档 / 撤销栈) | ✅ 窗口/页面/导航/映射都通,**整条链有自动化判据**:`--wv-selftest` 把窗口放到屏幕外,等前端发来 `ui.ready` 才算过(证明"窗口 → WebView2 → 本地页面 → JS↔C");模型层 91 项断言走 ctypes 直接调 DLL;`--selftest` 14 项无窗口自测;项目新建/打开/存盘 + 场景 JSON 往返 + 撤销重做 + 组件自省全部可用 |
-| **B3** | 场景编辑器:2D 视口 + 层级树 + 属性面板(自省生成)+ 图层 + 瓦片刷子 + 场景 JSON 往返 | 拖出来的场景存成 JSON 再读回后**像素一致**;瓦片刷子改动的 CSV 立刻反映到视口;撤销/重做覆盖所有编辑动作 |
+| **B3** ✅ | 场景编辑器:2D 视口(平移/缩放/网格/吸附/框选/拖动)+ 层级树 + 属性面板(自省生成)+ 图层 + 瓦片刷子(图集调色板/画笔/橡皮/整图清空)+ 复制粘贴/再做一个 + 场景 JSON 往返 | ✅ 见 §9.3:模型层 + 界面层**两层都有自动化判据** —— `tests/test_dexstudio.py` **152 项**(模型/CLI/WebView2 链) + 页面自测 **21 项**(`--wv-selftest` 会调 `window.__ds_selftest()`,验渲染图是否真解码、画布上是否真有像素、世界↔屏幕换算是否自洽、属性面板是否生成字段、瓦片是否落到 CSV 并能一次撤销) |
 | **B4** | 逻辑编辑器:节点图(事件/条件/动作/变量)+ 生成 `.dex` 源码 | 生成的 `.dex` 能编译并跑出预期行为(用合成输入断言);节点图可存可读 |
 | **B5** | 生成 + 运行 + 输出面板 + 错误定位 + 代码页签(自写高亮) | 点"运行"→ 调 `dexc.exe` 编译 → 起 `vm.exe` 真窗口;编译错误能在输出面板里点回节点/代码行 |
 | **B6** | 项目与资源管理:新建/打开项目、`res/` 导入、图集预览、自动保存/崩溃恢复 | 新建项目 → 加资源 → 存盘 → 重开内容一致;崩溃后能恢复未保存改动 |
 | **B7** | 打包:单 exe(内嵌前端资源)+ 发布说明 | 干净目录里双击 exe 能新建项目、编辑、运行示例 |
 
-产品 B 的硬约束与产品 A 相同:每完成一项,现有测试(当前 **29 脚本 / 1831 项**)必须全过。
+产品 B 的硬约束与产品 A 相同:每完成一项,现有测试必须全过(当前 **30 脚本 / 1932+ 项**)。
+
+### 9.3 B3 落地实况(与 §9.1 的差异以此为准)
+
+**做出来的样子**
+
+- **视口(center,`dexstudio/web/viewport.js`)**:视口里的画面就是引擎**离屏渲染**的一帧
+  (1024×640,`eng_init_offscreen`),落成 BMP 后经**虚拟主机** `dexstudio-preview.local`
+  被前端画到 `<canvas>` 上。为什么不把像素塞进 JSON:1024×640×4 ≈ 2.6 MB,
+  base64 后每条消息 3.4 MB,这条通道会被压垮。
+  网格、选中框、框选、瓦片格都画在**同一个坐标系**里(世界 → 图内像素 → 画布),
+  所以不会出现"框和画面对不上"。
+- **相机语义**:引擎的相机约定是"(x,y) = 屏幕左上角的世界坐标、zoom = 每世界单位像素数"。
+  编辑器**不改用户的相机实体**(那会写进场景 JSON、污染撤销历史),而是用引擎新增的
+  **视图覆盖** `eng_set_view(on,x,y,zoom)`;`dg_scene_active_camera` 优先返回覆盖值,
+  于是渲染与"屏幕→世界"自动一致。产品 A 侧为此改了 3 处(新增 `eng_set_view`,
+  `eng_object_id_at` 供 IDE 按序号枚举实体)。
+- **属性面板**:完全由 `comp.schema`(`eng_comp_*`/`eng_field_*` 自省)生成 ——
+  **引擎加组件,IDE 一行都不用改**;`persist=0` 的字段标"运行期",`tex_path`/`path`
+  这类路径字段改错时把引擎的原因显示出来并标红。
+- **图层**:按 `sprite.layer`/`tilemap.layer` 分组(不另造图层模型);
+  顺序仍由组件的 `layer`/`order` 决定。
+- **瓦片刷子**:图集按 `atlas_cols`/`atlas_tile` 切格点选,画到范围外自动扩格;
+  拖动连续画聚合成**一条** `tilemap.paint` —— 于是整笔拖拽只占**一条撤销记录**
+  (逐格入栈会让"撤销"要点几十次)。
+- **撤销**:仍然是"场景 JSON 快照栈",但**快照里加了各瓦片地图的 CSV 文本**。
+  原因:瓦片数据不在场景 JSON 里(`cols`/`rows`/`texture` 都是 `persist=0`,
+  格子存在外部 CSV),只快照场景会导致"撤销了但瓦片还在"。
+- **复制/粘贴/再做一个**:把实体的**全部运行时字段**抄成 JSON 再建新实体
+  (走字段自省,而不是从场景 JSON 里抠一段再重编号 —— 场景 JSON 里的 `parent`
+  是场景内索引,抠出来重编号很容易错)。
+- **批量字段写** `comp.set_many`:拖动一组实体只产生一条撤销记录。
+- **快捷键**:`1`/`2` 切工具、`F` 适应、`Ctrl+Z/Y`、`Ctrl+D` 复制、`Ctrl+C/V`、
+  `Ctrl+A`、`Delete`、方向键微调(Shift 走一格网格)、滚轮缩放(以光标为锚点)、
+  中键/空格/右键平移。
+
+**新增命令**(全部在 `ds_model.c` 的 `ds_command` 里,前端与测试走同一条通道):
+
+| 命令 | 作用 |
+|---|---|
+| `view.set {on?,x?,y?,zoom?}` | 设/关编辑器视图覆盖;无参数 = 回到场景相机 |
+| `scene.render {x?,y?,zoom?}` | 离屏渲染一帧落 BMP,返回 `{url,seq,path,w,h,view}`(前端用 `?t=seq` 破缓存) |
+| `scene.outline` | 每个实体的世界包围盒 + `kind`/`layer`(视口画框与图层面板的数据源) |
+| `entity.duplicate {id\|ids,dx,dy}` | 再做一个(字段级复制 + 偏移) |
+| `entity.copy {id\|ids}` / `entity.paste {dx,dy}` | 剪贴板(模型持有,跨场景有效) |
+| `comp.set_many {items:[{id,comp,field,value}]}` | 批量写字段,**一条**撤销记录 |
+| `tilemap.create {id,path,cols,rows,tex_path?}` | 先把 CSV 写出来再设 `path`(否则引擎的"设了就加载"必然报错) |
+| `tilemap.info {id}` | 网格内容 + 几何(`tw/th/atlas_tile/atlas_cols/visible`)+ `atlas_url`(项目内图集的虚拟主机 URL) |
+| `tilemap.set {id,col,row,tile}` | 画一格(越界自动扩) |
+| `tilemap.paint {id,cells:[…]}` | 一次画多格,**一条**撤销记录 |
+| `tilemap.csv {id,csv}` | 整图替换/清空 |
+
+**自动化判据(不看屏幕)**
+
+```bash
+python main.py build-dexstudio          # 构建(模型 DLL + 两个宿主)
+python tests/test_dexstudio.py          # 152 项:模型 132 + CLI 6 + WebView2 链 5 + …
+dexstudio/host/dexstudio.exe --wv-selftest
+#   PASS  前端已就绪(窗口 + 本地页面 + JS→C→JS 往返)
+#   PASS  界面自测:21 项通过,0 项失败
+```
+
+`--wv-selftest` 不只等 `ui.ready`:它随后 `ExecuteScript("window.__ds_selftest()")`,
+让**页面自己**验它那一层(渲染图是否真解码成 1024×640、画布上是否真有非背景像素与足够多颜色、
+世界↔屏幕往返是否自洽、层级树行数、属性面板字段数、视口是否画出选中框、拖动是否写回位置、
+瓦片是否落进 CSV 且能一次撤销),结果用 `ui.selftest` 消息回传,宿主断言"0 项失败"并作为退出码。
+
+**已知简化(B3 一期)**
+
+- 视口离屏尺寸固定 1024×640(引擎的离屏目标不可 resize),前端按比例缩放显示并画 letterbox;
+  窗口更小或更大都不影响正确性,只是缩放显示。
+- 帧内没有 PIE(§9.1 决策 #7):编辑期看到的是**静态一帧**,物理不跑。
+- 图层只有分组与多选,没有真正的"拖拽排序/锁定"(顺序由组件字段决定)。
+- 撤销快照里的 CSV 是**按路径**记的:如果某瓦片地图在快照那一刻还没有 CSV 文件
+  (绕过 `tilemap.create` 手写 `path`),那一步之后画的第一笔撤销不回文件内容。
+  正常流程(用 `tilemap.create` 建)不受影响。
+- 复制/粘贴不带层级 `parent` 关系(新实体一律是根)。
+
 
 ---
 
@@ -616,9 +696,9 @@ IDWriteFactory::CreateGlyphRunAnalysis(单个字形)            → 分析器
 | **M3** | 物理 L1–L3 + 瓦片地图 | ✅ 运动学行为有确定性断言(固定步长下逐帧可比:相同输入两次运行**逐行一致**);✅ 撞墙/落地位置**精确**;✅ 瓦片渲染有像素断言;✅ 双 VM 一致 |
 | **M4** | DexLang 接口层 + 示例 + 测试 | ✅ 完整可玩示例(`platformer.dex`:自动演示 1050 帧 / 6.4 秒通关,金币 1/3、0 死亡);✅ 静态内嵌变体脱离 DLL 可运行(`test_static.py` 把外部 DLL 改名后跑像素断言);✅ 帧回调 / 输入 / 音频 / 文字都有独立测试 |
 | — | —— 至此产品 A 可独立发布 —— | |
-| **产品 B** | **DexStudio 可视化 IDE**:C 工具链 → WebView2 宿主 → 场景编辑器 → 逻辑编辑器 → 生成/运行 → 项目与资源 → 打包。细化见 **§9.1(决策)/ §9.2(里程碑)** | ✅ **B1 已完成**:`dexc.exe` 与 Python 前端逐字节一致(`tests/test_dexc.py` 478 项),编译不再依赖 Python。✅ **B2 已完成**:WebView2 宿主 + 模型层(`tests/test_dexstudio.py` 91 项,含离屏 WebView2 整条链自测)。B3–B7 的验收标准见 §9.2 |
+| **产品 B** | **DexStudio 可视化 IDE**:C 工具链 → WebView2 宿主 → 场景编辑器 → 逻辑编辑器 → 生成/运行 → 项目与资源 → 打包。细化见 **§9.1(决策)/ §9.2(里程碑)/ §9.3(B3 实况)** | ✅ **B1 已完成**:`dexc.exe` 与 Python 前端逐字节一致(`tests/test_dexc.py` 478 项),编译不再依赖 Python。✅ **B2 已完成**:WebView2 宿主 + 模型层。✅ **B3 已完成**:场景编辑器(视口/层级树/属性面板/图层/瓦片刷子/复制粘贴/批量化撤销),`tests/test_dexstudio.py` **152 项** + 页面自测 **21 项**(`--wv-selftest` 断言)。B4–B7 的验收标准见 §9.2 |
 
-**全程硬约束**:每完成一项,现有测试必须仍然通过(当前基线 **29 个脚本 / 1831 项通过**);
+**全程硬约束**:每完成一项,现有测试必须仍然通过(逐文件数字以 `AGENTS.md` §2 的实测基线为准);
 同步更新 `AGENTS.md` 与 `docs/SPEC.md`(改 ABI 或格式必须)。
 
 ---
