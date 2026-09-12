@@ -284,6 +284,49 @@ def cmd_build(args):
     return 0
 
 
+DEXC_SOURCES = [
+    "dexc_main.c", "dexc_util.c", "dexc_lex.c", "dexc_parse.c",
+    "dexc_def.c", "dexc_compile.c", "dexc_asm.c",
+]
+
+
+def cmd_build_dexc(args):
+    """编译纯 C 工具链 dexc.exe(产品 B 的地基:编译不再依赖 Python)。
+
+    产物 tools/dexc/dexc.exe 与 dexlang/*.py 行为逐字节一致,由
+    tests/test_dexc.py 用同一份语料对照两边(.dexbc 字节 / .dxasm 文本 / 错误信息)。
+    """
+    d = os.path.join(ROOT, "tools", "dexc")
+    srcs = [os.path.join(d, s) for s in DEXC_SOURCES]
+    missing = [s for s in srcs if not os.path.exists(s)]
+    if missing:
+        print("缺少源文件: " + ", ".join(missing), file=sys.stderr)
+        return 1
+    out = os.path.join(d, "dexc.exe" if os.name == "nt" else "dexc")
+
+    compiler = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    zig = None
+    if compiler is None:
+        zig = _find_zig()
+        if zig is None:
+            print("未找到 C 编译器(gcc/clang/zig),可先: pip install ziglang", file=sys.stderr)
+            return 1
+
+    if zig:
+        cmd = [zig, "cc", "-target", "x86_64-windows-gnu", "-O2", "-Wall",
+               "-Wextra", "-std=c11", "-I", d, "-o", out] + srcs
+    else:
+        cmd = [compiler, "-O2", "-Wall", "-Wextra", "-std=c11", "-I", d, "-o", out] + srcs
+    print(" ".join(cmd))
+    try:
+        subprocess.run(cmd, check=True, env=_compiler_env())
+    except subprocess.CalledProcessError as e:
+        print(f"构建 dexc 失败(编译器退出码 {e.returncode})。", file=sys.stderr)
+        return 1
+    print(f"已构建: {out}")
+    return 0
+
+
 def cmd_roundtrip(args):
     """校验:汇编 → 字节码 → 汇编 → 字节码 往返一致。"""
     with open(args.bc, "rb") as f:
@@ -359,6 +402,9 @@ def main(argv=None):
 
     p = sub.add_parser("build-vm", help="编译 C 字节码解释器")
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("build-dexc", help="编译纯 C 工具链 tools/dexc/dexc.exe")
+    p.set_defaults(func=cmd_build_dexc)
 
     p = sub.add_parser("roundtrip", help="字节码 → 汇编 → 字节码 往返校验")
     p.add_argument("bc", help="字节码文件 (.dexbc)")
