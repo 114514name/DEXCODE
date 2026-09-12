@@ -24,56 +24,66 @@
 
 | 组件 | 位置 | 说明 |
 |------|------|------|
-| 语言前端 + 汇编器 | `dexlang/`(14 文件 ~2900 行) | 词法/语法/编译/汇编/反汇编/`.dexdef` 解析 |
-| 调试用 Python VM | `dexlang/pyvm.py` | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
-| C 字节码解释器 | `vm/vm.c`(单文件 ~1460 行) | 含原生 FFI(P0–P3 的内存模型改动都在这里) |
+| 语言前端 + 汇编器 | `dexlang/`(14 文件 ~3320 行) | 词法/语法/编译/汇编/反汇编/`.dexdef` 解析 |
+| 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
+| C 字节码解释器 | `vm/vm.c`(单文件 ~1570 行) | 含原生 FFI(P0–P3 的内存模型改动都在这里) |
 | 原生库(6 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` |
-| 集成开发环境 | `dexide/`(8 文件 ~3700 行) | tkinter,零第三方依赖 |
-| GAL 蓝图编辑器 | `bluedit/`(~6400 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 旧版 GAL 编辑器 | `galide/`(~2500 行) | **已停用**,仅为兼容保留 |
-| 测试 | `tests/`(21 文件 ~5500 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
+| GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
+| 测试 | `tests/`(20 个测试文件 + `_tmpdir.py`,~12700 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
+
+> 已删除:`galide/`(Python 旧版 GAL 编辑器,Scratch 式指令块)。它与 `bluedit/`
+> 有 **104 个同名定义**(`engine.py` 近乎整文件级重复),且两者曾共用同一个
+> `~/.galide.json`。详见「变更记录」。旧 `.galscene` 工作流现由
+> `tools/legacy_galedit_c/`(C 版)与 `bluedit/` 承接。
 
 ---
 
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:483 项通过 / 0 失败**(见下方基线)。1 项已知失败是环境问题,见「已知陷阱」。
-- 跟踪 205 个文件、约 34 MB(含 `vm/*.exe` 与 `libs/*/lib*.dll`,刻意入库以便 clone 即用)。
+- **测试:686 项通过 / 0 失败** —— 20 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
+  占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
+  二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
+  **2.4 MB**。要让仓库瘦身,该动的是示例媒体,不是二进制。
 - 版本控制**刚建立**(2026-09),此前项目无 git;历史提交从「初始导入」开始。
+- ⚠️ **没有任何 git remote**:仓库只存在于本机磁盘,属单点故障。见「待办」第 1 条。
 
 ### 测试基线(改动后请对照)
 
 ```bash
-# 逐个跑(每个都是独立脚本,退出码 0/1)
+# 逐个跑(每个都是独立脚本,退出码 0/1);也可直接跑 python _status_run2.py 之类的批处理
 python tests/test_toolchain.py   # 29  核心工具链 + C VM + 往返
-python tests/test_native.py      # 32  include/refer + DLL 调用
+python tests/test_native.py      # 41  include/refer + .dexdef + arity 上限 + DLL 调用
 python tests/test_static.py      # 16  静态链接
 python tests/test_stdlib.py      # 36  标准库
 python tests/test_struct.py      # 18  type/结构体 + 双 VM 一致性
 python tests/test_call.py        # 12  call() 动态调用
-python tests/test_module.py      # 10  .dex 语言模块
+python tests/test_module.py      # 7   .dex 语言模块
 python tests/test_img.py         # 13  图片渲染库
 python tests/test_ui.py          # 27  WinAPI UI 库
 python tests/test_egui.py        # 12  EGUI 库
 python tests/test_gal.py         # 30  GAL 引擎(含 BMP 像素断言)
-python tests/test_galide_py.py   # 46  旧版编辑器模型
 python tests/test_pyvm.py        # 14  Python 调试 VM
 python tests/test_ide.py         # 123 DEXIDE 分析器 + 编辑器
-python tests/test_designer.py    # 16  EGUI Designer
-python tests/test_bluedit.py     # 185 GAL 蓝图模型/导出
+python tests/test_designer.py    # 22  EGUI Designer
+python tests/test_bluedit.py     # 180 GAL 蓝图模型/导出
 python tests/test_nopydep.py     # 7   脱离 Python 运行
 python tests/test_vm_versions.py # 13  三个 VM 变体 + release 打包
-python tests/test_robust.py      # 25  健壮性(畸形字节码/循环对象/整型边界)
+python tests/test_robust.py      # 24  健壮性(畸形字节码/循环对象/整型边界)
 python tests/test_memmodel.py    # 44  内存模型(P0–P3 + FFI 契约)
-python tests/test_editor.py      # 0/2 永远 skip(见「已知陷阱」)
+python tests/test_editor.py      # 18  旧版 C 编辑器 .galscene 往返 + 导出链路
 ```
 
-合计 **701 处 `check()` 调用**;实际执行数随平台与是否构建 `vm.exe` 而变,
-本机实测 **483 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **138 个测试函数 / 647 处 `check()` 调用**;实际执行数随平台与是否构建
+`vm.exe` 而变,本机实测 **686 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+
+> `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
+> 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
 
 ### 构建
 
@@ -129,13 +139,24 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 因此编辑器里「1 基列 → Tk 索引」的换算见 `dexide/editor.py` 的 `_idx()`,
 **不要**写成 `"L.0 + Nc"` —— Tk 只解析一次 `+`,那种表达式会静默退化为行首。
 
-### 3.4 其他
+### 3.4 临时目录:测试里用 `tests/_tmpdir.py`,不要用 `tempfile.mkdtemp`
+
+`tempfile.mkdtemp()` 内部是 `os.mkdir(path, 0o700)`;`0o700` 在 Windows 上会落成
+「仅属主」ACL,受限沙箱下当前进程写不进也删不掉该目录(详见 §4)。测试统一改用
+`tests/_tmpdir.py` 的 `mktempdir()` / `tempdir()`:同样的接口,但目录以 `0o777` 创建,
+且优先放在系统临时目录(正常机器行为与 `tempfile` 等价,只在系统临时目录不可用时
+回退到仓库内 `_tmptest/`)。
+
+### 3.5 其他
 
 - **提交前**:工作树干净 + 全量测试通过。
 - **生成产物不入库**:`*.dxasm`、`*.dexbc`、`*.do`、`scene_out.dex` 等
   (可由 `.dex` 重建),见 `.gitignore` 注释。
-- 二进制(`vm/*.exe`、`libs/*/lib*.dll`)刻意入库:仓库缺少部分构建脚本时,
-  不入库会导致 clone 后无法运行示例与测试。
+- 二进制(`vm/*.exe`、`libs/*/lib*.dll`、`tools/legacy_galedit_c/galedit.exe`)
+  刻意入库:仓库缺少部分构建脚本时,不入库会导致 clone 后无法运行示例与测试。
+- **`.dexdef` 的 arity 上限只有一个来源**:`dexlang/opcodes.py` 的
+  `MAX_NATIVE_ARITY`。若要改,同步 `defparser.py` 的两处检查与 `docs/SPEC.md` 4.5;
+  `vm/vm.c` 的 `MAX_NATIVE_ARGS`(=8)是另一回事,只是 `param_types` 数组容量。
 
 ---
 
@@ -150,9 +171,9 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | `tag_configure` 放在 `tag_add` 之后 | 配置不作用于已打区间(折叠的 `elide` 曾完全失效) | 先 `tag_configure` 再 `tag_add` |
 | Tk 全局 mark 多用途复用 | 多个折叠块共用一个 mark,后者覆盖前者,导致展开时删不掉提示 | 按行使用唯一 tag 定位 |
 | `Text.get("1.0","end-1c")` 与 `elide` | 折叠后仍返回全文(这是 Tk 设计,便于保存) | 判断是否隐藏要看 `tag_ranges`/`dlineinfo`,不是 `get` |
-| `tests/test_editor.py` 永远 skip | 它驱动 `tools/galedit.exe`,该文件不存在(实际在 `tools/legacy_galedit_c/`) | 已知缺陷,未修;`check(..., True)` 是恒真断言 |
-| `test_bluedit.py` 有 1 项失败 | 该测试向 `%TEMP%` 写临时目录,受限环境下被拒 | **环境问题,非代码缺陷**;本地正常环境可过 |
-| `%TEMP%` 不可写的连锁反应 | `test_designer`/`test_module`/`test_vm_versions` 退出码为 1 但 FAIL=0 | 同上,都是 temp 目录清理时的 `PermissionError` |
+| **`tempfile.mkdtemp` 的 `0o700` ACL**(最坑的一条) | 受限沙箱(只放行工作区写入)下,`mkdtemp`/`TemporaryDirectory` 建出的目录**内部既不能建子目录也不能写文件**,连 `shutil.rmtree` 都被拒;最外层只看到 `PermissionError: [WinError 5] 拒绝访问` / `[Errno 13] Permission denied`,看不出病因。曾让 `test_bluedit`/`test_designer`/`test_module`/`test_vm_versions` 四个脚本 rc=1 | `mkdtemp` 内部是 `os.mkdir(p, 0o700)`。实测同一父目录下:`0o700` FAIL / `0o777` OK / 默认 OK。测试统一走 `tests/_tmpdir.py`(以 `0o777` 建目录)。见 §3.4 |
+| 库函数失败只返回空值 | `bluedit.export.export_project` 失败时返回 `""`,裸调用后 `open(path)` 抛 `FileNotFoundError: ''`,把真实原因(「无法创建输出目录 …」)彻底吞掉 —— 排查时完全不知从何下手 | 测试改用 `_export()` 包装,失败时抛出 `export.last_error` 的内容。**写同类 API 时:失败要带得出原因,不要只返回空值**(库侧早已把原因记在 `last_error`,是调用方丢了它) |
+| `tests/test_editor.py` 驱动的是哪份 exe | 该测试曾指向**不存在**的 `tools/galedit.exe`(实际在 `tools/legacy_galedit_c/`),两个用例永远 skip,`check(..., True)` 是死代码 | 已修:路径更正 + `.gitignore` 放行该 exe + exe 入库(否则 clone 后仍缺文件)。现为 18 项有效断言 |
 
 ---
 
@@ -195,6 +216,11 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | 修正本文件与 README 的失实项:测试计数、34 MB 体积归因(示例媒体 28 MB 而非二进制)、galide/bluedit 重复规模、待办重排 |
+| `78f4170` | 删除停用的 `galide/`(与 `bluedit/` 重复 **104 个同名定义**)+ 其测试 |
+| `a45e96a` | `test_editor.py` 指向真实存在的 `galedit.exe` 并入库该二进制(0 → 18 项有效断言) |
+| `f5ce92e` | 测试临时目录改用 `tests/_tmpdir.py`:修 `mkdtemp` 的 `0o700` ACL 导致 4 脚本失败;`test_bluedit` 导出失败改为带出 `last_error` |
+| `e955448` | `.dexdef` 原生 arity 上限改为**编译期强制**(`MAX_NATIVE_ARITY`,SPEC 4.5 同步) |
 | `b032a14` | IDE:括号配对高亮 + 查找替换(Ctrl+F/H/F3) + 代码折叠(边栏点击) |
 | `802b04d` | IDE:着色按 token 种类完整归类(修 1 基列偏移)+ 语法感知缩进 + 自动配对/Tab/Ctrl+/ |
 | Revert | **撤销 P4 字符串引用计数**(理由见 MEMORY_DESIGN 6.1) |
@@ -223,20 +249,26 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 按价值排序,括号内是我的评估:
 
-1. **`tests/test_editor.py` 的恒真断言**(低风险,易修):它测的是不存在的
-   `tools/galedit.exe`,两个用例永远 skip,`check(..., True)` 无意义。
-   要么修路径、要么删除该测试文件。
-2. **`.dexdef` 的 arity≤3 不在编译期校验**:编译/汇编都能过,直到运行时第一次
-   `NCALL` 才报错。建议在 `defparser`/`compiler` 加检查。
-3. **`galide/` 停用但仍在仓库**:与 `bluedit/` 有 13 个同名函数、
-   `settings.py` 与 `theme.py` 几乎重复,且**两者写同一个 `~/.galide.json`**。
-   建议删除或抽出共享的 `galcore`。
-4. **数据目录里的散件**:根目录曾有大量以 `_` 开头的调试脚本(已 gitignore,
-   未删除);`我的项目/`、`我的界面设计/`、`完整导出/`、`mycode/` 是用户数据,归属待确认。
+1. **没有任何 git remote**(高价值,需人工)。仓库只存在于本机磁盘 —— 一次误删或磁盘
+   故障即全部丢失,而这是目前**唯一**的恢复手段(打包目录里的旧快照早已删除)。
+   请补一个远端并首次 `push`。
+2. **示例媒体占仓库体积的 80%**:`examples/**/res/` 28 MB(单个 mp3 4.5 MB、单张
+   jpg 3 MB)。若要瘦身,方向是压缩/换格式/移出仓库(用下载脚本或 LFS),而不是动二进制。
+3. **`bluedit/settings.py` 仍把配置写到 `~/.galide.json`**:`galide/` 已删除,这个文件名
+   成了遗留物。直接改名会静默丢用户设置,故**未改**;如要改名需带迁移(旧文件存在且
+   新文件不存在时沿用旧文件)。
+4. **环境相关的散件**(已 gitignore,未删除):根目录 20+ 个 `_*` 调试脚本与
+   `_sm2.pdb`/`_smoke.pdb`(各 1.1 MB)、`nuitka-crash-report.xml`(0.6 MB)、
+   `_zigcache/`(103 MB)、`.venv/`(353 MB)。另外 `我的项目/`、`我的界面设计/`、
+   `完整导出/`、`mycode/` 是用户数据,归属待确认。
 5. **IDE 未实现**:多光标、`Ctrl+D` 选同词、正则/全词查找、查找历史、
    自动换行、代码折叠跨多行注释。
-6. **文档漂移风险**:`README`/`SPEC` 里的测试项数会随测试增加而过时;
-   本文件刻意不逐条维护那些数字,以实际运行为准。
+6. **`vm.c` 的 arity 兜底可以更早**:手写/篡改的 `.dexbc` 目前要到**调用期**才报
+   `unsupported native arity`;加载期只拒绝 `arity > 8`。改成加载期直接拒绝 `> 3`
+   能让不可调用的签名更早暴露。**未做**,因为要重编 `vm.exe`/`vmnc.exe`/`galrun.exe`
+   并重新入库三个二进制(改动收益小、二进制 diff 噪声大)。
+7. **文档漂移风险**:`README`/本文件里的测试项数会随测试增加而过期。
+   本文件已改为只维护「本机实测总数」,逐文件数字以实际运行为准。
 
 ### 明确不建议做(除非条件变化)
 

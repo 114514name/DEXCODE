@@ -64,9 +64,9 @@ DEXCODE/
   bluedit/                 # 🎮 GAL 蓝图编辑器(UE 风格节点连线:镜头入口/出口 +
                            #    说话/长对话/立绘/选项/代码/变量/if/逻辑/运算/镜头控制;
                            #    变量由引擎存储(跨镜头);ctypes 复用 libdexxgal.dll 实时预览/运行)
-  galide/                  # 🎮 旧版 GAL 编辑器(Scratch 式指令块,已停用)
-  tools/legacy_galedit_c/  # 🎮 旧版 GAL 编辑器(C 纯 GDI 自绘,已封存备用)
-  tests/                   # 端到端测试(21 个文件 / 134 个测试函数 / 639 处断言)
+  tools/legacy_galedit_c/  # 🎮 旧版 GAL 编辑器(C 纯 GDI 自绘,已封存备用;
+                           #    galedit.exe 入库,由 tests/test_editor.py 驱动)
+  tests/                   # 端到端测试(20 个文件 / 138 个测试函数 / 647 处断言)
   docs/quickstart.html     # 🚀 快速入门指南(新手首选,浏览器打开)
   docs/stdlib_guide.html   # 📚 标准库详解(33 个函数逐个讲解,含可运行示例)
   docs/ui_guide.html       # 🖥 WinAPI 与 UI 库教学(窗口/消息循环/事件)
@@ -341,22 +341,26 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 
 ## 测试
 
-共 **21 个测试文件 / 134 个测试函数 / 639 处断言**（`check(...)` 调用点；实际执行数
-随平台与是否构建 `vm.exe` 而变，本机实测 388 项通过、0 失败）。
+共 **20 个测试文件 / 138 个测试函数 / 647 处断言**（`check(...)` 调用点；实际执行数
+随平台与是否构建 `vm.exe` 而变，本机实测 **686 项通过、0 失败**）。
+
+测试用的临时目录由 `tests/_tmpdir.py` 创建，不用 `tempfile` 的目录 API —— 原因见该
+文件头部注释（`mkdtemp` 以 `0o700` 建目录，在受限沙箱里会落成「仅属主」ACL，导致该
+目录内部既写不进也删不掉）。
 
 ```bash
-python tests/test_toolchain.py   # 33 项:核心工具链 + C VM 执行 + 往返
-python tests/test_native.py      # 34 项:include/refer + 定义文件 + 错误检查 + DLL 调用 + 中文
-python tests/test_static.py      # 17 项:静态链接(字节内嵌、v3 往返、无外部 DLL 运行)
-python tests/test_stdlib.py      # 25 项:标准库(纯 C 实现 + 脱离 Python 运行)
-python tests/test_struct.py      # 14 项:type/结构体 + 双 VM 一致性
-python tests/test_pyvm.py        # 15 项:Python 调试 VM(断点/单步/调用栈/原生/中文)
-python tests/test_ide.py         # 49 项:DEXIDE 分析器 + GUI + IME 安全 + 编译工具 + 终端运行
-python tests/test_bluedit.py     # 185 项:GAL 蓝图模型/序列化/导出可编译
-python tests/test_robust.py      # 25 项:健壮性回归(畸形字节码/循环对象/类型校验/整型边界)
-python tests/test_memmodel.py    # 27 项:内存模型(P0 统一堆入口/P1 预算/P2 FFI 所有权)
+python tests/test_toolchain.py   # 29 项:核心工具链 + C VM 执行 + 往返
+python tests/test_native.py      # 41 项:include/refer + 定义文件 + arity 上限 + 错误检查 + DLL 调用 + 中文
+python tests/test_static.py      # 16 项:静态链接(字节内嵌、v3 往返、无外部 DLL 运行)
+python tests/test_stdlib.py      # 36 项:标准库(纯 C 实现 + 脱离 Python 运行)
+python tests/test_struct.py      # 18 项:type/结构体 + 双 VM 一致性
+python tests/test_pyvm.py        # 14 项:Python 调试 VM(断点/单步/调用栈/原生/中文)
+python tests/test_ide.py         # 123 项:DEXIDE 分析器 + GUI + IME 安全 + 编译工具 + 终端运行
+python tests/test_bluedit.py     # 180 项:GAL 蓝图模型/序列化/导出可编译
+python tests/test_robust.py      # 24 项:健壮性回归(畸形字节码/循环对象/类型校验/整型边界)
+python tests/test_memmodel.py    # 44 项:内存模型(P0 统一堆入口/P1 预算/P2 FFI 所有权)
 # 其余:test_call / test_module / test_img / test_ui / test_egui / test_gal /
-#       test_galide_py / test_designer / test_editor / test_nopydep / test_vm_versions
+#       test_designer / test_editor / test_nopydep / test_vm_versions
 ```
 
 覆盖:词法、语法、AST、编译降级、汇编、反汇编、**字节码↔汇编往返一致性**、
@@ -380,7 +384,10 @@ IDE 分析器(函数/调用图/原生库/补全/悬停/问题)与 GUI 调试联�
   (大小无限)。这一条很重要:它让环在**类型层面不可表达**,因此不需要环收集器,
   引用计数即可完备。`tests/test_memmodel.py` 覆盖。
 - **FFI 参数个数 ≤ 3**：没有 libffi，参数编组是手写的分支表，组合数按 4^N 增长。
-  注意 `.dexdef` 里写超过 3 个参数**不会**在编译期报错，要到第一次 `NCALL` 才失败。
+  超过 3 个参数的 `.dexdef` 现在会在**编译期**被拒（报 `at most 3 are supported`），
+  上限常量是 `dexlang/opcodes.py` 的 `MAX_NATIVE_ARITY`。`.dexdef` 解析与汇编文本的
+  `.native` 行两条路径都会检查；手写或篡改的 `.dexbc` 绕过前端，由 VM 在加载期
+  （`arity > 8`，`param_types` 数组容量）与调用期（`arity > 3`）兜底。
 - **`.dexbc` 视为可信输入**：字节码可以指定任意 DLL 路径与符号名并调用。VM 已做
   加载期校验(函数 code 区间、指令对齐、`nlocals >= arity`)，但它不是沙箱。
 
