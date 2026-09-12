@@ -27,11 +27,11 @@
 |------|------|------|
 | 语言前端 + 汇编器 | `dexlang/`(14 文件 ~3320 行) | 词法/语法/编译/汇编/反汇编/`.dexdef` 解析 |
 | 调试用 Python VM | `dexlang/pyvm.py`(~580 行) | 与 C VM 语义一致的参照实现,IDE 断点/单步靠它 |
-| C 字节码解释器 | `vm/vm.c`(单文件 ~1570 行) | 含原生 FFI(P0–P3 的内存模型改动都在这里) |
+| C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(6 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(20 个测试文件 + `_tmpdir.py`,~12700 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(21 个测试文件 + `_tmpdir.py`,~6500 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -46,7 +46,7 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:686 项通过 / 0 失败** —— 20 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- **测试:722 项通过 / 0 失败** —— 21 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
 - 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
   二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
@@ -80,10 +80,11 @@ python tests/test_vm_versions.py # 13  三个 VM 变体 + release 打包
 python tests/test_robust.py      # 24  健壮性(畸形字节码/循环对象/整型边界)
 python tests/test_memmodel.py    # 44  内存模型(P0–P3 + FFI 契约)
 python tests/test_editor.py      # 18  旧版 C 编辑器 .galscene 往返 + 导出链路
+python tests/test_abi.py         # 36  原生调用「值数组 ABI」(M0.5)
 ```
 
-合计 **138 个测试函数 / 647 处 `check()` 调用**;实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **686 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+合计 **144 个测试函数 / 704 处 `check()` 调用**;实际执行数随平台与是否构建
+`vm.exe` 而变,本机实测 **722 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -157,9 +158,12 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
   (可由 `.dex` 重建),见 `.gitignore` 注释。
 - 二进制(`vm/*.exe`、`libs/*/lib*.dll`、`tools/legacy_galedit_c/galedit.exe`)
   刻意入库:仓库缺少部分构建脚本时,不入库会导致 clone 后无法运行示例与测试。
-- **`.dexdef` 的 arity 上限只有一个来源**:`dexlang/opcodes.py` 的
-  `MAX_NATIVE_ARITY`。若要改,同步 `defparser.py` 的两处检查与 `docs/SPEC.md` 4.5;
-  `vm/vm.c` 的 `MAX_NATIVE_ARGS`(=8)是另一回事,只是 `param_types` 数组容量。
+- **原生 arity 上限有两个来源,别搞混**(见 SPEC 4.5):`dexlang/opcodes.py` 的
+  `MAX_NATIVE_ARITY = 3`(直接 ABI)与 `MAX_NATIVE_ARGS = 8`(值数组 ABI)。
+  要功能上放宽,得让 `.dexdef` 声明 `abi value_array;`,不是改常量。
+  `vm/vm.c` 的 `MAX_NATIVE_ARGS` 是同一件事的 C 侧副本,两边必须一致。
+- **`.dexdef` 的 `abi` 是文件级指令**:一行影响该文件全部 `extern`,可出现在任意位置
+  (解析完再统一校验),同一文件只能出现一次。
 
 ---
 
@@ -179,6 +183,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | `tests/test_editor.py` 驱动的是哪份 exe | 该测试曾指向**不存在**的 `tools/galedit.exe`(实际在 `tools/legacy_galedit_c/`),两个用例永远 skip,`check(..., True)` 是死代码 | 已修:路径更正 + `.gitignore` 放行该 exe + exe 入库(否则 clone 后仍缺文件)。现为 18 项有效断言 |
 | **`github.com:22` 被对端切断** | `git push` 报 `Connection closed by <ip> port 22`。注意这**不是** `Permission denied (publickey)` —— 用 `Test-NetConnection` 测 TCP 是通的,极容易被误判成「缺密钥/仓库不存在」而白折腾 | 走 GitHub 官方备用通道:在 `~/.ssh/config` 写 `Host github.com` / `HostName ssh.github.com` / `Port 443` / `User git`。验证:`ssh -T git@github.com` 应回 `Hi <用户名>! You've successfully authenticated` |
 | 受限沙箱阻断 Git 出站 | 沙箱(仅工作区写)下 `git ls-remote`/`push` 报 `sh.exe: couldn't create signal pipe, Win32 error 5`,HTTPS 则报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS` —— 看起来像 Git 坏了或没凭据,其实只是沙箱不放行出站 | 这两条都是**沙箱**造成,不是 Git 或凭据问题;提权后同一命令即恢复正常。诊断时先用 `git ls-remote <url>` 判定「通道是否通」「仓库是否存在」 |
+| **常量池把 int `N` 与 float `N.0` 合并**(M0.5 时发现并修复) | `assembler.cidx()` 原先**只按值**当键,踩中 Python 的 `0 == 0.0` 且 `hash(0) == hash(0.0)`,于是 `print 0;` 与 `print 0.0;` 共用同一条常量,后出现的那一个拿到**错误的类型标签**。潜伏很久没暴露:直接 ABI 会按声明的参数类型做 int/float 互转,VM 的算术也对两者很宽容 | 键改成 `("int"|"float"|"str", value)`。值数组 ABI 让**类型标签变得可观测**,这个 bug 才浮出来 —— 是新 ABI 的**前置修复**。回归测试:`test_abi.py::test_const_pool_types` 与 `abi_tags` 断言 |
+| 新 ABI 只在「类型标签可观测」时才暴露老 bug | 双 VM 一致性断言把上面那条抓了出来(`arr_greet("", 0, 0.0)` 的 `0.0` 在 C VM 成了 int) | 加 ABI/内存布局类改动时,**必须**同时加双 VM 逐行对比断言,否则 pyvm 与 C VM 会静默分叉 |
 
 ---
 
@@ -193,6 +199,12 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 - **已有一次向后兼容的格式扩展**:代码段之后的可选 `DXRL` 尾节(记录各库的字符串
   释放函数)。它不改版本号、不改定长表布局,旧 VM 只读 `code_size` 之前的内容。
   见 `docs/SPEC.md` 5.1。
+- **第二次向后兼容扩展(M0.5)**:原生函数表 `ret_type` 字节的**位 7** 作为调用约定
+  标记(`0` 直接 ABI / `1` 值数组 ABI)。该字节有效值只有 0..3,高位本来是空的,故
+  **旧字节码该位恒为 0**,新旧 VM 解析结果逐字节一致。见 `docs/SPEC.md` 4.5.3。
+  两次扩展的共同思路都是**借用未使用的位/尾部空间**,而不是升版号 ——
+  因为 `vm.c` 的版本检查是严格相等(`data[4] != VERSION`),升版号会让所有现存
+  `.dexbc` 立刻失效。
 
 ### 5.2 两个 VM 必须语义一致
 
@@ -226,6 +238,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | M0.5 完成:SPEC 4.5 重写为两套调用约定 + 新增 4.5.1–4.5.3;本文件同步测试基线、新增两条陷阱、§3.5 与 §5.1 更新、待办推进 |
+| (本次 M0.5) | **原生调用「值数组 ABI」**:`.dexdef` 加 `abi value_array;` 文件级指令,原生侧收 `(const DexValue*, int)`,arity 上限 3→8;借 `ret_type` 的 bit7 标记,**零格式改动、零版号改动**;两个 VM 同步;顺带修 **常量池把 int N 与 float N.0 合并**的既有 bug。新增 `tests/test_abi.py`(36 项)与 `tests/fixtures/libabiarr.{c,dll,dexdef}` |
 | (本次 docs) | 新增 `docs/DEXGAME_DESIGN.md`(dexgame 决策记录 / ABI 方案 / 里程碑);本文件接入该文档、更新 zig 缓存陷阱行与待办 |
 | `e1c0a83` | `main.py build-vm` 在受限环境下失败:把 zig 缓存/临时目录收进工作区(`_compiler_env()`),并给出可操作的失败诊断。重编产物与已提交二进制**逐字节一致** |
 | `41c1777` | `tests/_tmpdir.py` 的回退分支原先**恒不触发**:`tempfile.gettempdir()` 在所有候选都不可用时按 Python 既定行为退化成 `os.getcwd()`,于是临时目录被撒在仓库根而不是 `_tmptest/`。现显式排除 cwd |
@@ -262,9 +276,17 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 **进行中:dexgame 游戏引擎(设计见 `docs/DEXGAME_DESIGN.md`)** — 决策已全部锁定,
 按 `M0.5 ABI 扩展 → M1 D3D11 渲染核心 → M2 场景与实体 → M3 物理 → M4 接口层` 推进;
-可视化 IDE(产品 B)在引擎可独立发布之后再动。下一刀是 **M0.5**。
-开工前已验证的两个前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK/特性级别 11_1);
-② `python main.py build-vm` 可重编且产物与已提交二进制逐字节一致。
+可视化 IDE(产品 B)在引擎可独立发布之后再动。
+
+- ✅ **M0.5 已完成**:原生调用「值数组 ABI」落地(arity 3→8、零格式/版号改动、两个 VM
+  同步、新增 36 项测试)。**下一刀是 M1**:D3D11 设备/交换链/flip 模型/DPI 感知/
+  2D 批渲染/纹理图集/DirectWrite 文字。
+- 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
+  RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
+  **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。
+- M1 起要注意的两个实测约束:显示器 **2560×1600 @165Hz**(一帧预算 6.06 ms,不能用
+  `Sleep(16)` 控帧)、系统 **150% DPI 缩放**(必须 `PER_MONITOR_AWARE_V2`,否则画面被
+  拉伸再放大而糊掉)。
 
 以下是既有项目的零散待办,按价值排序:
 
