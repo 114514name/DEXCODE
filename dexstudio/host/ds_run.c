@@ -15,6 +15,7 @@
  * 绝对 → exe 同目录 → 仓库根(exe_dir/../..)→ cwd 的顺序试。
  * ==========================================================================*/
 #include "ds_run.h"
+#include "ds_utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,7 @@ static void seterr(DsModel *m, const char *fmt, ...)
 
 static int file_exists(const char *p)
 {
-    FILE *f = fopen(p, "rb");
+    FILE *f = dsu_fopen(p, "rb");
     if (!f) return 0;
     fclose(f);
     return 1;
@@ -92,7 +93,7 @@ static int spawn_ds(DsModel *m, const char *exe, const char *args, const char *c
                     void **out_proc, unsigned long *out_pid, char *err, unsigned errsz)
 {
     char cmd[4096];
-    STARTUPINFOA si;
+    STARTUPINFOW si;          /* 与 CreateProcessW 配套(结构布局和 A 版相同,但别混用) */
     (void)m;
     PROCESS_INFORMATION pi;
     HANDLE rd = NULL, wr = NULL, nul = NULL;
@@ -111,21 +112,31 @@ static int spawn_ds(DsModel *m, const char *exe, const char *args, const char *c
             return 0;
         }
         SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-        nul = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+        nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
                           0, NULL);
         si.dwFlags = STARTF_USESTDHANDLES;
         si.hStdOutput = wr;
         si.hStdError = wr;
         si.hStdInput = nul;
     }
-    if (!CreateProcessA(NULL, cmd, NULL, NULL, capture ? TRUE : FALSE,
-                        capture ? CREATE_NO_WINDOW : 0, NULL,
-                        (cwd && *cwd) ? cwd : NULL, &si, &pi)) {
-        snprintf(err, errsz, "启动失败(%lu):%s", (unsigned long)GetLastError(), cmd);
-        if (rd) CloseHandle(rd);
-        if (wr) CloseHandle(wr);
-        if (nul) CloseHandle(nul);
-        return 0;
+    /* 走 W 版:命令行里有中文路径时,CreateProcessA 会按 ANSI 再解一遍,
+     * 于是 dexc/vm 收到的就是乱码路径(然后报"找不到文件")。 */
+    {
+        wchar_t *wcmd = dsu_w(cmd);
+        wchar_t *wcwd = (cwd && *cwd) ? dsu_w(cwd) : NULL;
+        BOOL started = wcmd
+            ? CreateProcessW(NULL, wcmd, NULL, NULL, capture ? TRUE : FALSE,
+                             capture ? CREATE_NO_WINDOW : 0, NULL, wcwd, &si, &pi)
+            : FALSE;
+        free(wcmd);
+        free(wcwd);
+        if (!started) {
+            snprintf(err, errsz, "启动失败(%lu):%s", (unsigned long)GetLastError(), cmd);
+            if (rd) CloseHandle(rd);
+            if (wr) CloseHandle(wr);
+            if (nul) CloseHandle(nul);
+            return 0;
+        }
     }
     if (!capture) {
         if (out_proc) *out_proc = (void *)pi.hProcess;
@@ -168,6 +179,16 @@ static int spawn_ds(DsModel *m, const char *exe, const char *args, const char *c
             }
         }
         if (r && !r->out) { r->out = malloc(1); r->out[0] = 0; r->len = 0; }
+    }
+    /* 子进程的输出会原样进 JSON,而它可能混着 ANSI(GBK)字节(老工具从 argv 拿到的
+     * 路径就是 GBK)—— 清成合法 UTF-8,否则前端 JSON.parse 会直接抛,面板全废。 */
+    if (r && r->out) {
+        char *clean = dsu_utf8_clean(r->out);
+        if (clean) {
+            free(r->out);
+            r->out = clean;
+            r->len = strlen(clean);
+        }
     }
     {
         DWORD st = WaitForSingleObject(pi.hProcess, (DWORD)(timeout_ms > 0 ? timeout_ms : 20000));
@@ -328,6 +349,14 @@ void ds_run_kill(DsModel *m)
 /* ------------------------------------------------------------ 命令 */
 
 /* scripts/ 下的 .dex 清单(前端"代码"页签的文件列表) */
+static void dex_push_cb(const char *name, long long size, unsigned long attrs,
+                        void *ud)
+{
+    (void)size;
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY) return;
+    dsj_push((Dsj *)ud, dsj_str(name));
+}
+
 static Dsj *cmd_scripts(DsModel *m)
 {
     Dsj *a = dsj_arr();
@@ -338,22 +367,11 @@ static Dsj *cmd_scripts(DsModel *m)
         return NULL;
     }
     dir = ds_path_join(root, "scripts");
-#if defined(_WIN32)
     {
-        char pat[1400];
-        WIN32_FIND_DATAA fd;
-        HANDLE h;
-        snprintf(pat, sizeof pat, "%s\\*.dex", dir);
-        h = FindFirstFileA(pat, &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-                    dsj_push(a, dsj_str(fd.cFileName));
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
+        char *pat = ds_path_join(dir, "*.dex");
+        dsu_list(pat, dex_push_cb, a);
+        free(pat);
     }
-#endif
     free(dir);
     return a;
 }

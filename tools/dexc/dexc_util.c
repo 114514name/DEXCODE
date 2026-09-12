@@ -7,6 +7,7 @@
  * ==========================================================================*/
 #define _CRT_SECURE_NO_WARNINGS
 #include "dexc.h"
+#include "dx_utf8.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -404,7 +405,9 @@ char *dx_path_abspath(const char *p)
     {
         char cwd[4096];
 #if defined(_WIN32)
-        if (!_getcwd(cwd, (int)sizeof cwd)) cwd[0] = 0;
+        char *w = dxu_getcwd();
+        if (w) { snprintf(cwd, sizeof cwd, "%s", w); free(w); }
+        else cwd[0] = 0;
 #else
         if (!getcwd(cwd, sizeof cwd)) cwd[0] = 0;
 #endif
@@ -415,8 +418,7 @@ char *dx_path_abspath(const char *p)
 int dx_path_exists(const char *p)
 {
 #if defined(_WIN32)
-    DWORD a = GetFileAttributesA(p);
-    return a != INVALID_FILE_ATTRIBUTES;
+    return dxu_exists(p);
 #else
     struct stat st;
     return stat(p, &st) == 0;
@@ -426,8 +428,7 @@ int dx_path_exists(const char *p)
 int dx_path_isdir(const char *p)
 {
 #if defined(_WIN32)
-    DWORD a = GetFileAttributesA(p);
-    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+    return dxu_isdir(p);
 #else
     struct stat st;
     return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
@@ -449,51 +450,16 @@ char *dx_path_abspath_noext(const char *p)
     return dx_path_strip_ext(dx_path_abspath(p));
 }
 
-static int cmp_str(const void *a, const void *b)
-{
-    return strcmp(*(const char *const *)a, *(const char *const *)b);
-}
-
 char **dx_listdir(const char *dir, int *out_n)
 {
-    char **names = NULL;
-    int n = 0, cap = 0;
-#if defined(_WIN32)
-    char pat[4096];
-    WIN32_FIND_DATAA fd;
-    HANDLE h;
-    snprintf(pat, sizeof pat, "%s\\*", dir);
-    h = FindFirstFileA(pat, &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
-            char *nm;
-            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-            nm = dx_strdup(fd.cFileName);
-            DXV_PUSH(names, n, cap, nm);
-        } while (FindNextFileA(h, &fd));
-        FindClose(h);
-    }
-#else
-    DIR *d = opendir(dir);
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d))) {
-            char *nm;
-            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-            nm = dx_strdup(e->d_name);
-            DXV_PUSH(names, n, cap, nm);
-        }
-        closedir(d);
-    }
-#endif
-    if (n > 1) qsort(names, (size_t)n, sizeof *names, cmp_str);
-    *out_n = n;
-    return names;
+    /* 实现搬到 dx_utf8.c 了:目录名/文件名都按 UTF-8 处理(宽字符 API + 转码),
+     * 否则中文目录下的 libs/ 与 .dexdef 扫描会一无所获。 */
+    return dxu_listdir(dir, out_n);
 }
 
 char *dx_read_file(const char *path, size_t *out_len)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = dxu_fopen(path, "rb");
     char *buf;
     long sz;
     size_t got;

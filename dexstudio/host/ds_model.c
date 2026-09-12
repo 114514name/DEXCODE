@@ -17,6 +17,7 @@
 #include "ds_graph.h"
 #include "ds_run.h"
 #include "ds_res.h"
+#include "ds_utf8.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -70,6 +71,10 @@ struct DsModel {
     void *proc;            /* 正在独立窗口运行的游戏进程(B5) */
     unsigned long proc_pid;
     int autosave_seq;       /* 自动保存次数(B6;前端显示"已自动保存 N 次") */
+    /* 本次运行的会话标识(B7 修):自动保存文件里记下"是谁写的"。
+     * 只有**上一次运行**留下的自动保存才值得提示恢复 —— 不记的话,当前这次
+     * 运行自己写的自动保存(比场景新)会让界面一直喊"上次好像没有正常退出"。 */
+    char session[64];
     char *resp;
     size_t resp_cap;
     int has_id;            /* 请求里带了 id → 响应原样带回(前端靠它配对 Promise) */
@@ -138,25 +143,17 @@ static int path_is_abs(const char *p)
 
 static int path_exists(const char *p)
 {
-#if defined(_WIN32)
-    return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES;
-#else
-    return access(p, 0) == 0;
-#endif
+    return dsu_exists(p);
 }
 
 static int ensure_dir(const char *path)
 {
-#if defined(_WIN32)
-    return _mkdir(path) == 0 || path_exists(path);
-#else
-    return mkdir(path, 0777) == 0 || path_exists(path);
-#endif
+    return dsu_mkdir(path);
 }
 
 static char *read_text(const char *path, size_t *out_len)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = dsu_fopen(path, "rb");
     long sz;
     char *buf;
     size_t got;
@@ -180,7 +177,7 @@ static char *read_text(const char *path, size_t *out_len)
 
 static int write_text(const char *path, const char *text)
 {
-    FILE *f = fopen(path, "wb");
+    FILE *f = dsu_fopen(path, "wb");
     if (!f) return 0;
     fwrite(text, 1, strlen(text), f);
     fclose(f);
@@ -678,7 +675,7 @@ static int project_save(DsModel *m)
     txt = dsj_dump(m->project);
     ok = write_text(path, txt);
     if (ok) {
-        FILE *f = fopen(path, "ab");
+        FILE *f = dsu_fopen(path, "ab");
         if (f) { fputc('\n', f); fclose(f); }
     }
     free(txt);
@@ -687,6 +684,26 @@ static int project_save(DsModel *m)
     if (m->scene[0] && !scene_save_to(m, m->scene)) return 0;
     m->dirty = 0;
     return 1;
+}
+
+/* 把当前场景记成项目的"起始场景"(项目相对路径,正斜杠),这样下次打开项目
+ * 就回到你上次在编辑的那个场景。不记的话:新建/切换场景 → 存盘 → 重开,
+ * 又回到 scenes/main.json —— 摆好的东西其实还在那个场景文件里,但用户会以为丢了。 */
+static void project_set_start_scene(DsModel *m, const char *full)
+{
+    const char *root = ds_project_dir(m);
+    char *norm;
+    size_t i, rl;
+    if (!m->project || !full || !*full) return;
+    if (root && *root && !strncmp(full, root, (rl = strlen(root)))
+        && (full[rl] == '\\' || full[rl] == '/')) {
+        norm = ds_strdup(full + rl + 1);
+    } else {
+        norm = ds_strdup(full);
+    }
+    for (i = 0; norm[i]; i++) if (norm[i] == '\\') norm[i] = '/';
+    dsj_set_str(m->project, "start_scene", norm);
+    free(norm);
 }
 
 /* 切换当前场景到 <root>/<rel>;rel 空则用 project.start_scene */
@@ -713,6 +730,7 @@ static int scene_switch(DsModel *m, const char *rel, int load)
         }
     }
     snprintf(m->scene, sizeof m->scene, "%s", full);
+    project_set_start_scene(m, full);
     free(full);
     stacks_clear(m);
     return 1;
@@ -748,6 +766,7 @@ static Dsj *cmd_app_info(DsModel *m)
         dsj_set(r, "view", v);
     }
     dsj_set_bool(r, "recoverable", ds_res_recoverable(m));
+    dsj_set_str(r, "recover_kind", ds_res_recover_kind(m));
     dsj_set_int(r, "autosave_seq", m->autosave_seq);
     dsj_set_int(r, "view_w", m->eng.ok ? (long long)m->eng.width(none, 0) : 0);
     dsj_set_int(r, "view_h", m->eng.ok ? (long long)m->eng.height(none, 0) : 0);
@@ -852,30 +871,27 @@ static Dsj *cmd_project_open(DsModel *m, Dsj *args)
     return r;
 }
 
+/* dsu_list 的回调:把名字推进数组(名字已经是 UTF-8,可以直接进 JSON) */
+static void push_name_cb(const char *name, long long size, unsigned long attrs,
+                         void *ud)
+{
+    (void)size;
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY) return;
+    dsj_push((Dsj *)ud, dsj_str(name));
+}
+
 static Dsj *cmd_scene_list(DsModel *m)
 {
     Dsj *a = dsj_arr();
-    char *dir;
+    char *dir, *pat;
     if (!m->root[0]) {
         seterr(m, "还没有打开项目");
         return NULL;
     }
     dir = pjoin(m->root, "scenes");
-#if defined(_WIN32)
-    {
-        char pat[1400];
-        WIN32_FIND_DATAA fd;
-        HANDLE h;
-        snprintf(pat, sizeof pat, "%s\\*.json", dir);
-        h = FindFirstFileA(pat, &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                dsj_push(a, dsj_str(fd.cFileName));
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
-    }
-#endif
+    pat = pjoin(dir, "*.json");
+    dsu_list(pat, push_name_cb, a);
+    free(pat);
     free(dir);
     return a;
 }
@@ -1545,11 +1561,13 @@ const char *ds_temp_dir(void)
     static char dir[1400];
     static int done = 0;
     if (!done) {
-        const char *base = getenv("LOCALAPPDATA");
-        if (!base || !*base) base = getenv("TEMP");
-        if (!base || !*base) base = getenv("TMP");
-        if (!base || !*base) base = ".";
-        snprintf(dir, sizeof dir, "%s\\DexStudio", base);
+        /* 注意:窄的 getenv 在**中文用户名**下拿到的就已经是乱码路径了
+         * (%LOCALAPPDATA% = C:\Users\<用户名>\AppData\Local),所以要问宽字符那套。 */
+        char *base = dsu_env("LOCALAPPDATA");
+        if (!base || !*base) { free(base); base = dsu_env("TEMP"); }
+        if (!base || !*base) { free(base); base = dsu_env("TMP"); }
+        snprintf(dir, sizeof dir, "%s\\DexStudio", (base && *base) ? base : ".");
+        free(base);
         ensure_dir(dir);
         done = 1;
     }
@@ -1558,6 +1576,7 @@ const char *ds_temp_dir(void)
 void ds_model_mark_dirty(DsModel *m) { m->dirty = 1; }
 int ds_model_autosave_seq(DsModel *m) { return ++m->autosave_seq; }
 int ds_model_dirty(DsModel *m) { return m->dirty; }
+const char *ds_model_session(DsModel *m) { return m ? m->session : ""; }
 /* 给 ds_res.c 用的公开包装(内部那两份是 static) */
 char *ds_scene_snapshot(DsModel *m) { return scene_snapshot(m); }
 Dsj *ds_files_snapshot(DsModel *m) { return files_snapshot(m); }
@@ -2370,6 +2389,14 @@ DsModel *ds_model_create(const char *exe_dir)
     }
     m->view_zoom = 1.0;
     m->view_on = 1;
+    /* 会话标识:进程号 + 启动时刻 + 一个计数器。要求只是"同一次运行里稳定、
+     * 换一次运行必然不同",不做密码学意义上的唯一性。 */
+    {
+        static int seq = 0;
+        snprintf(m->session, sizeof m->session, "%lu-%llu-%d",
+                 (unsigned long)GetCurrentProcessId(),
+                 (unsigned long long)GetTickCount64(), ++seq);
+    }
     return m;
 }
 
@@ -2385,6 +2412,8 @@ void ds_model_destroy(DsModel *m)
     if (m->clipboard) dsj_free(m->clipboard);
     if (m->graph) dsj_free(m->graph);
     ds_run_kill(m);
+    /* 走到这儿说明是正常退出:给本次运行的自动保存盖个 clean 章(崩了就走不到) */
+    ds_res_autosave_mark_clean(m);
     if (m->eng.ok) ds_engine_unload(&m->eng);
     free(m->resp);
     free(m);

@@ -15,6 +15,7 @@
 #include <d3d11.h>
 
 #include "dexgame.h"
+#include "dg_utf8.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -219,7 +220,7 @@ int dg_tex_free(int id) {
 }
 
 int dg_tex_load_file(const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = dg_fopen(path, "rb");
     if (!f) { dg_error("cannot open image '%s'", path); return -1; }
     fseek(f, 0, SEEK_END);
     long n = ftell(f);

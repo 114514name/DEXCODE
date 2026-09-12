@@ -124,6 +124,19 @@ def test_ime_safety():
                 app.update()
                 time.sleep(0.02)
 
+        def pump_for(pred, secs=3.0):
+            """等一个**定时触发**的结果(补全弹窗是 after() 去抖出来的)。
+
+            固定 pump(0.5) 在机器忙的时候会偶发失败(实测批跑时挂过一次,
+            单独跑 3 次全过)。这里改成轮询到条件成立为止,失败就真的失败。"""
+            end = time.time() + secs
+            while time.time() < end:
+                if pred():
+                    return True
+                app.update()
+                time.sleep(0.02)
+            return bool(pred())
+
         def run():
             try:
                 ed = app.tabs[app.active_path]
@@ -132,8 +145,8 @@ def test_ime_safety():
                 ed.text.insert("insert", "pr")
                 ed.text.mark_set("insert", "end")
                 ed._on_key(_key("i", "i"))
-                pump(0.5)
-                check("默认开启时输入字母触发补全", ed._ac_popup is not None)
+                check("默认开启时输入字母触发补全",
+                      pump_for(lambda: ed._ac_popup is not None))
 
                 # 关键:弹窗打开时焦点仍在编辑器(不抢焦点 → IME 组合不被终止)
                 check("补全弹窗不抢焦点", "text" in str(app.focus_get()),
@@ -158,8 +171,8 @@ def test_ime_safety():
                 # 重新开启恢复
                 ed.set_auto_complete(True)
                 ed._on_key(_key("e", "e"))
-                pump(0.5)
-                check("重新开启恢复自动补全", ed._ac_popup is not None)
+                check("重新开启恢复自动补全",
+                      pump_for(lambda: ed._ac_popup is not None))
             except Exception as e:
                 check("IME 测试异常", False, repr(e))
             finally:

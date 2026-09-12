@@ -17,6 +17,7 @@
  * ==========================================================================*/
 #define _CRT_SECURE_NO_WARNINGS
 #include "dexc.h"
+#include "dx_utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,7 +126,9 @@ static char *resolve_def(const char *target, const char *kind, const char *sourc
         else {
             char cwd[4096];
 #if defined(_WIN32)
-            if (!_getcwd(cwd, (int)sizeof cwd)) cwd[0] = 0;
+            char *w = dxu_getcwd();          /* 中文工作目录:窄的 _getcwd 会乱码 */
+            if (w) { snprintf(cwd, sizeof cwd, "%s", w); free(w); }
+            else cwd[0] = 0;
 #else
             if (!getcwd(cwd, sizeof cwd)) cwd[0] = 0;
 #endif

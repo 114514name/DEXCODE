@@ -194,8 +194,9 @@ function afterEdit(msg) {
 
 /* ------------------------------------------------------------ 恢复提示(B6) */
 
-/* 自动保存比场景新 = 上次没正常收尾(崩溃/强杀)。这时**不要**擅自恢复 ——
- * 让用户选「恢复」还是「丢弃」,原因与时间都写在提示条上。 */
+/* 有一份**比场景文件新的自动保存** = 上次退出时还有没保存的改动。
+ * 可能是崩溃(clean=0),也可能是正常关掉但没存盘(clean=1)——
+ * 两种都问用户要不要恢复,但话要说准(不能一律说"崩溃")。 */
 function renderRecover() {
   const bar = $('recover-bar');
   const info = DS.info || {};
@@ -204,8 +205,11 @@ function renderRecover() {
     return;
   }
   bar.hidden = false;
+  const why = info.recover_kind === 'crash'
+    ? '上次似乎没有正常退出(可能崩溃了)'
+    : '上次退出时还有没保存的改动';
   $('recover-text').textContent =
-    '上次似乎没有正常退出 —— 有一份比场景文件新的自动保存' +
+    why + ' —— 有一份比场景文件新的自动保存' +
     (info.autosave_seq ? '(' + info.autosave_seq + ' 次自动保存)' : '') +
     '。要恢复它吗?';
 }
@@ -1096,14 +1100,25 @@ window.__ds_selftest = async function () {
     } else {
       out.skip.push('没有打开项目:跳过 res.list/autosave 的界面检查');
     }
-    /* 恢复提示:合成一个"可恢复"状态验渲染与按钮(不去造假项目文件) */
+    /* 恢复提示:合成一个"可恢复"状态验渲染与按钮(不去造假项目文件)。
+     * 两种原因(crash / unsaved)措辞必须不同:C 侧用 clean 标记区分,
+     * 一律说"崩溃"是不诚实的。 */
     const keepInfo = DS.info;
-    DS.info = Object.assign({}, keepInfo, { recoverable: true, autosave_seq: 3 });
+    DS.info = Object.assign({}, keepInfo,
+      { recoverable: true, autosave_seq: 3, recover_kind: 'crash' });
     renderRecover();
+    const barEl = document.getElementById('recover-bar');
+    const txtEl = document.getElementById('recover-text');
     t('有可恢复的自动保存时弹出提示条',
-      !document.getElementById('recover-bar').hidden
-      && document.getElementById('recover-text').textContent.indexOf('自动保存') >= 0,
-      document.getElementById('recover-text').textContent);
+      !barEl.hidden && txtEl.textContent.indexOf('自动保存') >= 0,
+      txtEl.textContent);
+    t('崩溃留下的自动保存说"没有正常退出"',
+      txtEl.textContent.indexOf('没有正常退出') >= 0, txtEl.textContent);
+    DS.info = Object.assign({}, keepInfo,
+      { recoverable: true, autosave_seq: 1, recover_kind: 'unsaved' });
+    renderRecover();
+    t('正常退出但没存盘时说"没保存的改动"',
+      txtEl.textContent.indexOf('没保存的改动') >= 0, txtEl.textContent);
     DS.info = Object.assign({}, keepInfo, { recoverable: false });
     renderRecover();
     t('没有可恢复内容时提示条收起',

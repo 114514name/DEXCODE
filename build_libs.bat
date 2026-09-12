@@ -85,7 +85,7 @@ echo [7/7] libs\dexgame\libdexgame.dll
   -o libs\dexgame\libdexgame.dll ^
   libs\dexgame\dg_gfx.c libs\dexgame\dg_draw.c libs\dexgame\dg_scene.c ^
   libs\dexgame\dg_json.c libs\dexgame\dg_phys.c libs\dexgame\dg_input.c ^
-  libs\dexgame\dg_audio.c libs\dexgame\dg_text.c ^
+  libs\dexgame\dg_audio.c libs\dexgame\dg_text.c libs\dexgame\dg_utf8.c ^
   libs\dexgame\dg_api.c || exit /b 1
 
 echo.

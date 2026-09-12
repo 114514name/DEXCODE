@@ -285,7 +285,8 @@ def cmd_build(args):
 
 
 DEXC_SOURCES = [
-    "dexc_main.c", "dexc_util.c", "dexc_lex.c", "dexc_parse.c",
+    "dexc_main.c", "dexc_util.c", "dx_utf8.c", "dexc_lex.c",
+    "dexc_parse.c",
     "dexc_def.c", "dexc_compile.c", "dexc_asm.c",
 ]
 
@@ -327,7 +328,8 @@ def cmd_build_dexc(args):
     return 0
 
 
-DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c", "ds_graph.c", "ds_run.c", "ds_res.c"]
+DEXSTUDIO_MODEL_SOURCES = ["ds_utf8.c", "ds_json.c", "ds_engine.c", "ds_model.c",
+                           "ds_graph.c", "ds_run.c", "ds_res.c"]
 DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_embed.c", "ds_webview.c",
                                                "ds_main.c"]
 

@@ -252,6 +252,16 @@ static void put_utf8(char **buf, size_t *len, size_t *cap, int cp)
     }
 }
 
+/* 原样追加一个字节。**JSON 里的普通字符必须按字节抄**:文本本身就是 UTF-8,
+ * 一个汉字是三个字节;把它们当成三个"码点"再走一遍 put_utf8 就是二次编码 ——
+ * "我的" 会变成 "æ\x88\x91ç\x9a\x84",表现出来就是磁盘上多出乱码目录名、
+ * 资源"找不到"、实体名/场景名乱码。put_utf8 只该用在 \uXXXX 转义上。 */
+static void put_byte(char **buf, size_t *len, size_t *cap, int b)
+{
+    if (*len + 2 > *cap) { *cap = *cap ? *cap * 2 : 64; *buf = xj_realloc(*buf, *cap); }
+    (*buf)[(*len)++] = (char)b;
+}
+
 static char *parse_string(P *p)
 {
     char *buf = NULL;
@@ -297,7 +307,7 @@ static char *parse_string(P *p)
                 return NULL;
             }
         } else {
-            put_utf8(&buf, &len, &cap, c);
+            put_byte(&buf, &len, &cap, c);   /* 原样(UTF-8 的一个字节),不要转码 */
         }
     }
     if (!buf) buf = xj_malloc(1);

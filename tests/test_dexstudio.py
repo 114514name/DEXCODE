@@ -18,6 +18,7 @@ import ctypes
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -983,38 +984,214 @@ def test_resources_and_autosave(dll):
             check("包里的场景确实有那个实体", "player" in bundle["scene"],
                   bundle["scene"][:80])
 
-            # --- 崩溃恢复:自动保存比场景文件新 ---
+            # --- 同一次运行里,自动保存比场景新也**不该**提示恢复 ---
+            # (跨会话的"上次没正常退出"在 test_recover_session 里测:那里才需要
+            #  两个模型实例。这里先证明"当前这次运行"不会自己吓自己。)
             m.ok("entity.add", {"name": "enemy"})
             m.ok("autosave.tick")
             spath = os.path.join(tmp, "scenes", "main.json")
             old = os.path.getmtime(spath)
             os.utime(spath, (old - 120, old - 120))     # 假装场景是两分钟前存的
             st = m.ok("recover.status")
-            check("认出有可恢复的自动保存", st["recoverable"] is True, st)
-            check("报告包里有几个外部文件", st["files"] >= 1, st)
-            check("app.info 也报可恢复",
-                  m.ok("app.info")["recoverable"] is True)
-            r = m.ok("recover.apply")
-            check("恢复成功", r["recovered"] is True, r)
-            names = [e["name"] for e in m.ok("entity.list")]
-            check("恢复后两个实体都在", "player" in names and "enemy" in names, names)
-            check("恢复后自动保存被清掉(不会反复提示)",
-                  m.ok("recover.status")["recoverable"] is False)
-            check("恢复出来的内容算未保存改动", m.ok("app.info")["dirty"] is True)
+            check("同一会话的自动保存不提示恢复", st["recoverable"] is False, st)
+            check("app.info 也不提示", m.ok("app.info")["recoverable"] is False)
             e = m.err("recover.apply")
             check("没有可恢复内容时给原因", "没有可恢复" in e, e)
 
-            # --- 正常保存之后不该再提示恢复 ---
+            # --- 正常保存之后同样不提示;丢弃始终可用 ---
             m.ok("entity.add", {"name": "third"})
             m.ok("autosave.tick")
             m.ok("project.save")
             os.utime(spath, (old + 600, old + 600))     # 场景现在比自动保存新
-            check("正常保存后不再提示恢复",
+            check("正常保存后也不再提示恢复",
                   m.ok("recover.status")["recoverable"] is False)
             r = m.ok("recover.discard")
             check("丢弃自动保存返回成功", r["discarded"] is True, r)
         finally:
             m.close()
+
+
+def test_utf8_paths(dll):
+    """中文路径/中文名必须一路 UTF-8 到底(B7 修)。
+
+    这里的每一项过去都是坏的,而且坏法不同:
+      - JSON 解析把 UTF-8 的字节当成"码点"再编码一次 → 二次编码;
+      - 宿主用 CreateFileA/FindFirstFileA/fopen 这些 ANSI 接口 → 中文路径找不到;
+      - 窗口标题用 CreateWindowExA → 乱码;
+      - CreateProcessA 起的 dexc 收到乱码路径。
+    一个中文名走一遍"命令 → 内存 → 磁盘 → JSON → 命令",上面几处全都会被踩到。
+    """
+    print("[中文与编码(UTF-8 路径一路到底)]")
+    with tempdir("ds_utf8_") as tmp:
+        # 故意多一层还不存在的父目录:project.new 要能自己建出来
+        root = os.path.join(tmp, "我的项目", "游戏")
+        m = Model(dll)
+        try:
+            r = m.ok("project.new", {"dir": root, "name": "我的游戏"})
+            check("中文项目目录能建出来", r["root"] == root, r)
+            check("中文项目目录真的落盘",
+                  os.path.isdir(os.path.join(root, "scenes")), root)
+            check("project.json 里没有乱码",
+                  "我的游戏" in open(os.path.join(root, "project.json"),
+                                     encoding="utf-8").read())
+
+            # 场景:中文名 + 中文实体名(实体名走引擎的 JSON 读写)
+            r = m.ok("scene.new", {"name": "第一关"})
+            check("中文场景名原样回来", r["scene"].endswith("第一关.json"), r)
+            check("中文场景文件真的落盘",
+                  os.path.exists(os.path.join(root, "scenes", "第一关.json")))
+            check("scene.list 里是 UTF-8 中文名",
+                  "第一关.json" in m.ok("scene.list"), m.ok("scene.list"))
+            m.ok("entity.add", {"name": "玩家"})
+            m.ok("entity.add", {"name": "敌人"})
+            names = [e["name"] for e in m.ok("entity.list")]
+            check("中文实体名原样回来", names == ["玩家", "敌人"], names)
+            eid = m.ok("entity.find", {"name": "玩家"})["id"]
+            check("entity.find 认中文名",
+                  m.ok("entity.get", {"id": eid})["name"] == "玩家", eid)
+
+            # 存盘 → 重开:中文名要能从磁盘读回来
+            # (引擎在 DLL 里是**单例**,同一个进程只能有一个活着的模型 ——
+            #  所以先关掉 m 再开 m2,不能同时开两个。)
+            m.ok("project.save")
+        finally:
+            m.close()
+
+        m2 = Model(dll)
+        try:
+            m2.ok("project.open", {"dir": root})
+            names2 = [e["name"] for e in m2.ok("entity.list")]
+            check("重开项目后中文实体名还在", names2 == ["玩家", "敌人"], names2)
+            check("重开项目后当前场景还是中文那个",
+                  m2.ok("app.info")["scene"].endswith("第一关.json"),
+                  m2.ok("app.info")["scene"])
+        finally:
+            m2.close()
+
+        m3 = Model(dll)
+        try:
+            m3.ok("project.open", {"dir": root})
+            # 资源:中文文件名,导入/列表/改名都要是 UTF-8
+            src = os.path.join(tmp, "来源 图片.png")
+            with open(src, "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n" + b"\0" * 24)
+            r = m3.ok("res.import", {"src": src, "name": "我的图片.png"})
+            check("中文资源名导入成功", r["name"] == "我的图片.png", r)
+            check("中文资源文件真的落盘",
+                  os.path.exists(os.path.join(root, "res", "我的图片.png")))
+            files = m3.ok("res.list")["files"]
+            check("res.list 里是 UTF-8 中文名",
+                  [f["name"] for f in files] == ["我的图片.png"], files)
+            check("资源扩展名识别正确", files[0]["kind"] == "image", files[0])
+            m3.ok("res.rename", {"name": "我的图片.png", "to": "背景图.png"})
+            check("中文资源改名成功",
+                  os.path.exists(os.path.join(root, "res", "背景图.png")))
+            m3.ok("res.delete", {"name": "背景图.png"})
+            check("中文资源删除成功", m3.ok("res.list")["count"] == 0)
+
+            # 视口渲染:预览图要落在中文目录里(引擎侧也是 _wfopen)
+            r = m3.ok("scene.render")
+            check("中文目录里也能渲染预览", r["seq"] >= 1, r)
+            check("预览图真的写出了",
+                  os.path.exists(os.path.join(root, ".dexstudio", "preview.bmp")))
+
+            # 自动保存:包里的路径与文件都要能读写
+            m3.ok("entity.add", {"name": "存档点"})
+            check("中文目录里能写自动保存", m3.ok("autosave.tick")["saved"] is True)
+            check("中文目录里自动保存文件在",
+                  os.path.exists(os.path.join(root, ".dexstudio", "autosave.json")))
+        finally:
+            m3.close()
+
+
+def test_build_in_chinese_path(dll):
+    """一键编译要能在中文目录里跑通(dexc 是 CreateProcessW 起的)。"""
+    print("[中文目录里一键编译]")
+    if not os.path.exists(DEXC):
+        skip("中文目录编译", "dexc.exe 未构建")
+        return
+    with tempdir("ds_utf8_build_") as tmp:
+        root = os.path.join(tmp, "我的游戏")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": root, "name": "游戏"})
+            r = m.ok("build.compile")
+            check("中文目录里 build.compile 成功", r["ok"] is True, r)
+            check("字节码落在中文目录里",
+                  r.get("bytecode_exists") is True and
+                  os.path.exists(r.get("bytecode") or ""), r.get("bytecode"))
+            scripts = m.ok("project.scripts")
+            check("scripts 列表正常", "main.dex" in scripts, scripts)
+            src = m.ok("file.read", {"path": "scripts/main.dex"})
+            check("file.read 读得到中文目录里的源码",
+                  "logic" in (src.get("text") or ""), str(src)[:120])
+        finally:
+            m.close()
+
+
+def test_recover_session(dll):
+    """恢复提示的语义:只提示**上一次运行**留下的自动保存。
+
+    用户报的坑:IDE 开着,自动保存每 30 秒写一次(比场景文件新),界面就一直喊
+    "上次好像没有正常退出",点「恢复/丢弃」也没用 —— 30 秒后它又回来了。
+    """
+    print("[恢复提示只认上一次运行]")
+    with tempdir("ds_recover_") as tmp:
+        root = os.path.join(tmp, "proj")
+        apath = os.path.join(root, ".dexstudio", "autosave.json")
+
+        # --- 第 1 次运行:改一改 → 自动保存 → 同一次运行里不该提示 ---
+        m = Model(dll)
+        m.ok("project.new", {"dir": root, "name": "proj"})
+        m.ok("entity.add", {"name": "player"})
+        check("自动保存写出来了", m.ok("autosave.tick")["saved"] is True)
+        check("包里记了是哪个会话写的",
+              "session" in open(apath, encoding="utf-8").read())
+        check("本次运行自己写的自动保存不提示恢复",
+              m.ok("recover.status")["recoverable"] is False)
+        check("app.info 也不提示", m.ok("app.info")["recoverable"] is False)
+        m.close()
+
+        # --- 第 2 次运行:同一份自动保存,这次要提示(正常退出 → unsaved)---
+        m2 = Model(dll)
+        m2.ok("project.open", {"dir": root})
+        st = m2.ok("recover.status")
+        check("上一次运行留下的自动保存会提示恢复", st["recoverable"] is True, st)
+        check("正常退出(打过 clean 标记)归类为 unsaved",
+              st["kind"] == "unsaved", st)
+        check("app.info 也报 recover_kind",
+              m2.ok("app.info")["recover_kind"] == "unsaved", m2.ok("app.info"))
+        # 假装上次是被强杀的(clean=0)→ 归类成 crash,措辞不同
+        with open(apath, encoding="utf-8") as f:
+            bundle = json.load(f)
+        bundle["clean"] = False
+        with open(apath, "w", encoding="utf-8") as f:
+            json.dump(bundle, f, ensure_ascii=False)
+        check("clean=0 时归类为 crash(强杀)", m2.ok("recover.status")["kind"] == "crash")
+        r = m2.ok("recover.apply")
+        check("恢复成功", r["recovered"] is True, r)
+        check("恢复后实体回来了",
+              [e["name"] for e in m2.ok("entity.list")] == ["player"])
+        check("恢复后不再提示", m2.ok("recover.status")["recoverable"] is False)
+        check("恢复出来的内容算未保存改动", m2.ok("app.info")["dirty"] is True)
+        m2.close()
+
+        # --- 第 3 次运行:丢弃之后,同一次运行里再怎么自动保存都不该冒出来 ---
+        m3 = Model(dll)
+        m3.ok("project.open", {"dir": root})
+        check("恢复过的自动保存已经清掉,不再提示",
+              m3.ok("recover.status")["recoverable"] is False)
+        m3.ok("entity.add", {"name": "enemy"})
+        m3.ok("autosave.tick")
+        check("同一会话里自动保存比场景新也不提示(用户的坑)",
+              m3.ok("recover.status")["recoverable"] is False)
+        m3.ok("project.save")
+        m3.ok("entity.add", {"name": "enemy2"})
+        m3.ok("autosave.tick")
+        check("保存后又编辑、又自动保存,依然不提示",
+              m3.ok("recover.status")["recoverable"] is False)
+        check("丢弃命令可用", m3.ok("recover.discard")["discarded"] is True)
+        m3.close()
 
 
 def test_packaged_exe():
@@ -1033,7 +1210,9 @@ def test_packaged_exe():
         skip("发布形态", "WebView2Loader.dll / libdexgame.dll 未构建")
         return
     with tempdir("ds_pkg_") as tmp:
-        out = os.path.join(tmp, "DexStudio")
+        # 目录名故意用中文:发布形态下 exe 也可能被放在中文路径里,
+        # 那样 --selftest / 找 WebView2Loader.dll / 解包内嵌前端都得走 UTF-8。
+        out = os.path.join(tmp, "我的 DexStudio")
         os.makedirs(out, exist_ok=True)
         for p in (EXE, loader, engine):
             shutil.copy2(p, os.path.join(out, os.path.basename(p)))
@@ -1052,6 +1231,9 @@ def test_packaged_exe():
         out_txt = r.stdout or ""
         check("发布目录里能起窗口 + 加载内嵌前端", r.returncode == 0, out_txt[-400:])
         check("发布目录里页面自测也全过", "0 项失败" in out_txt, out_txt[-400:])
+        check("发布目录里窗口标题不是乱码",
+              "窗口标题:[DexStudio — DexLang 可视化 IDE]" in out_txt,
+              [l for l in out_txt.splitlines() if "窗口标题" in l] or out_txt[-200:])
         if r.returncode != 0:
             skip("发布形态的页面自测项数", (r.stderr or "")[-120:])
 
@@ -1110,7 +1292,12 @@ def test_cli():
                        encoding="utf-8", errors="replace")
     check("--selftest 全过", r.returncode == 0 and "0 失败" in r.stdout,
           (r.stdout or "")[-400:])
-    check("--selftest 至少 14 项", "14 通过" in r.stdout, r.stdout)
+    # 项数只做"至少"断言:自测项会随着功能增加,别让数字成为维护负担
+    m = re.search(r"自测结果:(\d+) 通过", r.stdout or "")
+    check("--selftest 至少 20 项", bool(m) and int(m.group(1)) >= 20, r.stdout)
+    check("--selftest 覆盖中文与编码", "中文与编码" in (r.stdout or ""), r.stdout)
+    check("--selftest 覆盖恢复提示语义",
+          "本次运行自己写的自动保存不提示恢复" in (r.stdout or ""), r.stdout)
 
 
 def test_webview_chain():
@@ -1128,6 +1315,10 @@ def test_webview_chain():
                        encoding="utf-8", errors="replace", timeout=120)
     check("窗口 + 本地页面 + JS↔C 往返通", r.returncode == 0, (r.stdout or "")[-400:])
     check("自测报告 PASS", "PASS" in (r.stdout or ""), r.stdout)
+    # 窗口标题是用户第一眼看到的东西:宿主回读 GetWindowTextW 并断言过 UTF-8
+    check("窗口标题不是乱码",
+          "窗口标题:[DexStudio — DexLang 可视化 IDE]" in (r.stdout or ""),
+          [l for l in (r.stdout or "").splitlines() if "窗口标题" in l])
     # 页面那一层(渲染图/层级树/属性面板/瓦片刷子)由页面自己验,结果回传给宿主断言
     check("界面自测跑起来了", "界面自测" in (r.stdout or ""), (r.stdout or "")[-600:])
     check("界面自测全过", "0 项失败" in (r.stdout or ""), (r.stdout or "")[-600:])
@@ -1157,6 +1348,9 @@ def main():
     test_graph_behavior(dll)
     test_build_and_run(dll)
     test_resources_and_autosave(dll)
+    test_utf8_paths(dll)
+    test_build_in_chinese_path(dll)
+    test_recover_session(dll)
     test_web_assets()
     test_packaged_exe()
     test_cli()

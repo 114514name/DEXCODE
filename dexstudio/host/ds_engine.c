@@ -3,6 +3,7 @@
  * ==========================================================================*/
 #define _CRT_SECURE_NO_WARNINGS
 #include "ds_engine.h"
+#include "ds_utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +42,13 @@ static void eng_strcpy(char *dst, size_t n, const char *src)
 static void *try_load(const char *path)
 {
     if (!path || !*path) return NULL;
-    return (void *)LoadLibraryA(path);
+    {
+        /* 引擎 DLL 可能就在中文目录里:LoadLibraryA 会按 ANSI 解路径 */
+        wchar_t *w = dsu_w(path);
+        void *h = w ? (void *)LoadLibraryW(w) : NULL;
+        free(w);
+        return h;
+    }
 }
 
 int ds_engine_load(DsEngine *e, const char *dll_path, const char *exe_dir)

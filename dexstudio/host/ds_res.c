@@ -21,6 +21,7 @@
  * 场景 JSON 会得到一个"看起来对了、瓦片和图都不对"的项目。
  * ==========================================================================*/
 #include "ds_res.h"
+#include "ds_utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,15 +45,12 @@ static void seterr(DsModel *m, const char *fmt, ...)
 
 static int file_exists(const char *p)
 {
-    FILE *f = fopen(p, "rb");
-    if (!f) return 0;
-    fclose(f);
-    return 1;
+    return dsu_exists(p);
 }
 
 static long long file_size(const char *p)
 {
-    FILE *f = fopen(p, "rb");
+    FILE *f = dsu_fopen(p, "rb");
     long n;
     if (!f) return -1;
     fseek(f, 0, SEEK_END);
@@ -64,15 +62,7 @@ static long long file_size(const char *p)
 /* 修改时间(秒;0 = 读不到)。用来判断"自动保存比场景文件新"。 */
 static long long file_mtime(const char *p)
 {
-#if defined(_WIN32)
-    WIN32_FILE_ATTRIBUTE_DATA fd;
-    if (!GetFileAttributesExA(p, GetFileExInfoStandard, &fd)) return 0;
-    return ((long long)fd.ftLastWriteTime.dwHighDateTime << 32)
-         | (long long)fd.ftLastWriteTime.dwLowDateTime;
-#else
-    (void)p;
-    return 0;
-#endif
+    return dsu_mtime(p);
 }
 
 static const char *ext_of(const char *name)
@@ -108,6 +98,49 @@ const char *ds_res_url(const char *name)
 
 /* ------------------------------------------------------------ res.* */
 
+#if defined(_WIN32)
+/* "a\0b\0\0" 这种多字符串(OpenFileName 的 filter 就是它)按段转宽字符 */
+static void utf8_multisz_to_wide(const char *s, wchar_t *out, size_t outsz)
+{
+    size_t o = 0, n = 0;
+    if (!outsz) return;
+    while (o + 1 < outsz) {
+        size_t len = strlen(s + n);
+        wchar_t *w;
+        size_t i;
+        if (len == 0) { out[o++] = 0; break; }   /* 空段 = 结束(补上第二个 0) */
+        w = dsu_w(s + n);
+        if (!w) break;
+        for (i = 0; w[i] && o + 1 < outsz; i++) out[o++] = w[i];
+        out[o++] = 0;
+        free(w);
+        n += len + 1;
+    }
+    out[outsz - 1] = 0;
+}
+#endif
+
+/* dsu_list 的回调。名字由 dsu_list 转成 **UTF-8** 再交过来 —— 用
+ * FindFirstFileA 的话这里是 GBK 字节,进了 JSON 前端就是乱码。 */
+static void res_push_cb(const char *name, long long size, unsigned long attrs,
+                        void *ud)
+{
+    Dsj *a = (Dsj *)ud;
+    Dsj *o;
+    const char *ext;
+    if (attrs & FILE_ATTRIBUTE_DIRECTORY) return;
+    if (name[0] == '.' && name[1] == 0) return;
+    ext = ext_of(name);
+    o = dsj_obj();
+    dsj_set_str(o, "name", name);
+    dsj_set_int(o, "size", size);
+    dsj_set_str(o, "ext", ext);
+    dsj_set_str(o, "kind", is_image(ext) ? "image"
+                          : (is_audio(ext) ? "audio" : "other"));
+    dsj_set_str(o, "url", "");
+    dsj_push(a, o);
+}
+
 static Dsj *cmd_res_list(DsModel *m)
 {
     Dsj *a = dsj_arr();
@@ -118,34 +151,11 @@ static Dsj *cmd_res_list(DsModel *m)
         return NULL;
     }
     ds_mkdir(dir);
-#if defined(_WIN32)
     {
-        char pat[1400];
-        WIN32_FIND_DATAA fd;
-        HANDLE h;
-        snprintf(pat, sizeof pat, "%s\\*", dir);
-        h = FindFirstFileA(pat, &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                Dsj *o;
-                const char *ext;
-                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-                if (fd.cFileName[0] == '.' && fd.cFileName[1] == 0) continue;
-                ext = ext_of(fd.cFileName);
-                o = dsj_obj();
-                dsj_set_str(o, "name", fd.cFileName);
-                dsj_set_int(o, "size",
-                            ((long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow);
-                dsj_set_str(o, "ext", ext);
-                dsj_set_str(o, "kind", is_image(ext) ? "image"
-                                      : (is_audio(ext) ? "audio" : "other"));
-                dsj_set_str(o, "url", "");
-                dsj_push(a, o);
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
+        char *pat = ds_path_join(dir, "*");
+        dsu_list(pat, res_push_cb, a);
+        free(pat);
     }
-#endif
     free(dir);
     r = dsj_obj();
     dsj_set(r, "files", a);
@@ -189,7 +199,7 @@ static Dsj *cmd_res_import(DsModel *m, Dsj *args)
         free(dst);
         return NULL;
     }
-    if (!CopyFileA(src, dst, TRUE)) {
+    if (!dsu_copy_file(src, dst)) {
         seterr(m, "复制失败(%lu):%s → %s", (unsigned long)GetLastError(), src, dst);
         free(dst);
         return NULL;
@@ -215,22 +225,30 @@ static Dsj *cmd_res_pick(DsModel *m, Dsj *args)
         return r;
     }
 #if defined(_WIN32)
-    char buf[MAX_PATH] = {0};
-    OPENFILENAMEA ofn;
+    /* 用 W 版对话框:中文路径(以及中文用户名下的整个 %USERPROFILE%)在 A 版里
+     * 会被按 ANSI 解一遍,拿回来的就是乱码,`res.import` 随后必然"文件不存在"。 */
+    wchar_t wbuf[MAX_PATH * 4] = {0};
+    wchar_t wfilter[512];
+    OPENFILENAMEW ofn;
     const char *filter = dsj_get_str(args, "filter", "");
-    memset(&ofn, 0, sizeof ofn);
-    ofn.lStructSize = sizeof ofn;
-    ofn.hwndOwner = NULL;
-    ofn.lpstrFilter = (filter && *filter) ? filter
+    const char *use = (filter && *filter) ? filter
         : "所有支持的资源\0*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.wav;*.mp3;*.ogg\0"
           "图片\0*.png;*.jpg;*.jpeg;*.bmp;*.gif\0"
           "声音\0*.wav;*.mp3;*.ogg\0所有文件\0*.*\0";
-    ofn.lpstrFile = buf;
-    ofn.nMaxFile = sizeof buf;
+    memset(&ofn, 0, sizeof ofn);
+    ofn.lStructSize = sizeof ofn;
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = wbuf;
+    ofn.nMaxFile = (DWORD)(sizeof wbuf / sizeof wbuf[0]);
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameA(&ofn)) {
+    /* 过滤器是 UTF-8,内嵌 '\0' 分段、最后双 '\0' 结尾 —— 手工转宽字符 */
+    utf8_multisz_to_wide(use, wfilter, sizeof wfilter / sizeof wfilter[0]);
+    ofn.lpstrFilter = wfilter;
+    if (GetOpenFileNameW(&ofn)) {
+        char *u = dsu_u(wbuf);
         dsj_set_bool(r, "picked", 1);
-        dsj_set_str(r, "path", buf);
+        dsj_set_str(r, "path", u ? u : "");
+        free(u);
     } else {
         dsj_set_bool(r, "picked", 0);
         dsj_set_str(r, "path", "");
@@ -274,7 +292,7 @@ static Dsj *cmd_res_delete(DsModel *m, Dsj *args)
         free(path);
         return NULL;
     }
-    if (!DeleteFileA(path)) {
+    if (!dsu_remove(path)) {
         seterr(m, "删除失败(%lu):%s", (unsigned long)GetLastError(), path);
         free(path);
         return NULL;
@@ -313,7 +331,7 @@ static Dsj *cmd_res_rename(DsModel *m, Dsj *args)
         free(a); free(b);
         return NULL;
     }
-    if (!MoveFileA(a, b)) {
+    if (!dsu_move_file(a, b)) {
         seterr(m, "改名失败(%lu)", (unsigned long)GetLastError());
         free(a); free(b);
         return NULL;
@@ -343,6 +361,10 @@ static Dsj *autosave_bundle(DsModel *m)
     dsj_set_str(o, "scene_path", ds_model_scene_path(m));
     dsj_set_str(o, "scene", scene ? scene : "{}");
     dsj_set(o, "files", files ? files : dsj_arr());
+    /* 谁写的:恢复提示只认**上一次运行**留下的自动保存(见 recoverable)。
+     * clean 由正常退出时补成 1 —— 强杀时补不上,所以 clean=0 就是"上次是崩的"。 */
+    dsj_set_str(o, "session", ds_model_session(m));
+    dsj_set_bool(o, "clean", 0);
     free(scene);
     return o;
 }
@@ -398,7 +420,14 @@ static Dsj *cmd_autosave_tick(DsModel *m)
     return r;
 }
 
-/* 有没有"没正常收尾"的自动保存:它在,而且比场景文件新 */
+/* 有没有值得提示恢复的自动保存。
+ *
+ * 三条判据(缺一不可):
+ *   1. 自动保存文件在,并且**读得出来时间**(读不出来 = 判断不了 ⇒ 不提示);
+ *   2. 它比场景文件新(或场景文件已经不在了)—— 旧的自动保存是上次正常存盘后的残留;
+ *   3. 它**不是本次运行写的**。这一条是必须的:自动保存每 30 秒写一次,若不区分
+ *      会话,正在编辑的这一次运行会不停地把"比场景新"的自动保存写出来,界面就会
+ *      一直喊"上次好像没有正常退出",而且点恢复/丢弃都没用(30 秒后它又回来了)。 */
 static int recoverable(DsModel *m, Dsj **out)
 {
     char *path = autosave_path(m);
@@ -410,9 +439,13 @@ static int recoverable(DsModel *m, Dsj **out)
         return 0;
     }
     ta = file_mtime(path);
+    if (ta <= 0) {            /* 读不出来 ⇒ 判断不了,别乱提示 */
+        free(path);
+        return 0;
+    }
     ts = ds_model_scene_path(m) && *ds_model_scene_path(m)
         ? file_mtime(ds_model_scene_path(m)) : 0;
-    if (ta <= ts) {           /* 场景比自动保存新 → 那是上一次正常保存后的残留 */
+    if (ts > 0 && ta <= ts) {  /* 场景比自动保存新 → 上次正常保存后的残留 */
         free(path);
         return 0;
     }
@@ -429,6 +462,16 @@ static int recoverable(DsModel *m, Dsj **out)
         free(path);
         return 0;                 /* 自动保存读不出来/不是对象:当没有 */
     }
+    /* 本次运行自己写的 → 不是"上次没正常退出",不提示(见上面第 3 条) */
+    {
+        const char *sess = dsj_get_str(dom, "session", "");
+        const char *mine = ds_model_session(m);
+        if (sess && *sess && mine && *mine && !strcmp(sess, mine)) {
+            dsj_free(dom);
+            free(path);
+            return 0;
+        }
+    }
     dsj_set_str(dom, "autosave_path", path);
     dsj_set_int(dom, "autosave_time", ta);
     if (out) *out = dom;          /* out 为空 = 只问"有没有" */
@@ -439,12 +482,50 @@ static int recoverable(DsModel *m, Dsj **out)
 
 int ds_res_recoverable(DsModel *m) { return recoverable(m, NULL); }
 
+/* 提示恢复的原因。场景文件比自动保存新时压根不提示(见 recoverable)。 */
+const char *ds_res_recover_kind(DsModel *m)
+{
+    Dsj *b = NULL;
+    const char *kind = "";
+    if (!recoverable(m, &b)) return "";
+    kind = dsj_get_bool(b, "clean", 0) ? "unsaved" : "crash";
+    dsj_free(b);
+    return kind;
+}
+
+/* 正常退出:把**本次运行写的**那份自动保存标成 clean=1(不是我们的就不动) */
+void ds_res_autosave_mark_clean(DsModel *m)
+{
+    char *path = autosave_path(m);
+    char *txt;
+    Dsj *dom;
+    char perr[128];
+    if (!path) return;
+    txt = ds_file_read_text(path, NULL);
+    if (!txt) { free(path); return; }
+    dom = dsj_parse(txt, perr, sizeof perr);
+    free(txt);
+    if (dom && dom->t == DSJ_OBJ) {
+        const char *sess = dsj_get_str(dom, "session", "");
+        const char *mine = ds_model_session(m);
+        if (sess && *sess && mine && *mine && !strcmp(sess, mine)) {
+            char *out;
+            dsj_set_bool(dom, "clean", 1);
+            out = dsj_dump(dom);
+            if (out) { ds_write_text(path, out); free(out); }
+        }
+    }
+    if (dom) dsj_free(dom);
+    free(path);
+}
+
 static Dsj *cmd_recover_status(DsModel *m)
 {
     Dsj *r = dsj_obj();
     Dsj *b = NULL;
     if (recoverable(m, &b)) {
         dsj_set_bool(r, "recoverable", 1);
+        dsj_set_str(r, "kind", dsj_get_bool(b, "clean", 0) ? "unsaved" : "crash");
         dsj_set_str(r, "scene_path", dsj_get_str(b, "scene_path", ""));
         dsj_set_int(r, "autosave_time", (long long)dsj_get_int(b, "autosave_time", 0));
         dsj_set_int(r, "files", dsj_len(dsj_get(b, "files")));
@@ -474,7 +555,7 @@ static Dsj *cmd_recover_apply(DsModel *m)
     {
         char *path = autosave_path(m);
         if (path) {
-            DeleteFileA(path);
+            dsu_remove(path);
             free(path);
         }
     }
@@ -491,7 +572,7 @@ static Dsj *cmd_recover_discard(DsModel *m)
     Dsj *r = dsj_obj();
     int ok = 0;
     if (path) {
-        ok = file_exists(path) ? (DeleteFileA(path) ? 1 : 0) : 1;
+        ok = file_exists(path) ? (dsu_remove(path) ? 1 : 0) : 1;
         free(path);
     }
     if (!ok) {

@@ -14,6 +14,7 @@
  * ==========================================================================*/
 #define _CRT_SECURE_NO_WARNINGS
 #include "dexc.h"
+#include "dx_utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,7 +45,7 @@ static char *derive_out(const char *path, const char *out, const char *def_ext)
 
 static void write_bytes(const char *path, const unsigned char *data, size_t n)
 {
-    FILE *f = fopen(path, "wb");
+    FILE *f = dxu_fopen(path, "wb");
     if (!f) {
         fprintf(stderr, "dexc: cannot write %s\n", path);
         exit(1);
@@ -61,11 +62,18 @@ static void write_text(const char *path, const char *text)
 static char *exe_dir(void)
 {
 #if defined(_WIN32)
-    char buf[4096];
-    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof buf);
+    wchar_t wbuf[4096];
+    char *u;
+    DWORD n = GetModuleFileNameW(NULL, wbuf, (DWORD)(sizeof wbuf / sizeof wbuf[0]));
     if (n == 0) return dx_path_abspath(".");
-    buf[sizeof buf - 1] = 0;
-    return dx_path_dirname(dx_path_abspath(buf));
+    wbuf[sizeof wbuf / sizeof wbuf[0] - 1] = 0;
+    u = dxu_u(wbuf);
+    if (!u) return dx_path_abspath(".");
+    {
+        char *d = dx_path_dirname(dx_path_abspath(u));
+        free(u);
+        return d;
+    }
 #else
     return dx_path_abspath(".");
 #endif
@@ -292,7 +300,7 @@ static int cmd_run(int argc, char **argv)
         args[0] = vm;
         args[1] = bc_path;
         args[2] = NULL;
-        rc = (int)_spawnv(_P_WAIT, vm, args);
+        rc = dxu_spawn_wait(vm, (char *const *)args);
     }
 #else
     {
@@ -413,10 +421,18 @@ static void print_error(void)
 int main(int argc, char **argv)
 {
     const char *cmd;
+    int wide_argc = 0;
+    char **wide_argv;
 #if defined(_WIN32)
     SetConsoleOutputCP(65001);
     SetConsoleCP(65001);
 #endif
+    /* 中文源码/输出路径:CRT 的 argv 是 ANSI 解码的,得从宽命令行重取一份 */
+    wide_argv = dxu_argv(&wide_argc);
+    if (wide_argv && wide_argc > 0) {
+        argv = wide_argv;
+        argc = wide_argc;
+    }
     if (setjmp(dx_jmp_buf)) {
         print_error();
         return 1;

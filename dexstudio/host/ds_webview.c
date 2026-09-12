@@ -13,6 +13,7 @@
 #define COBJMACROS
 #define _CRT_SECURE_NO_WARNINGS
 #include "ds_webview.h"
+#include "ds_utf8.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,16 @@ static FnCreateEnvWithOptions g_create_env;
 static FnGetVersion g_get_version;
 static char g_load_err[512];
 
+/* exe 可能整个装在中文目录里,而 LoadLibraryA 会按 ANSI(936)解路径 ——
+ * 所以自己转宽字符再 LoadLibraryW。 */
+static HMODULE ds_wv_load_library(const char *path)
+{
+    wchar_t *w = dsu_w(path);
+    HMODULE h = w ? LoadLibraryW(w) : NULL;
+    free(w);
+    return h;
+}
+
 int ds_wv_load(const char *exe_dir)
 {
     char path[MAX_PATH * 2];
@@ -51,10 +62,10 @@ int ds_wv_load(const char *exe_dir)
         snprintf(path, sizeof path, "%s\\WebView2Loader.dll", exe_dir);
     else
         snprintf(path, sizeof path, "WebView2Loader.dll");
-    g_loader = LoadLibraryA(path);
+    g_loader = ds_wv_load_library(path);
     if (!g_loader) {
         /* 也试一下 PATH(调试时把 DLL 放在别处) */
-        g_loader = LoadLibraryA("WebView2Loader.dll");
+        g_loader = ds_wv_load_library("WebView2Loader.dll");
     }
     if (!g_loader) {
         snprintf(g_load_err, sizeof g_load_err,

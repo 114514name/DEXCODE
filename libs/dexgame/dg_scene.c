@@ -19,6 +19,7 @@
  * 二进制格式做不到这一点,这也是"JSON 先、二进制后"的一个理由。
  */
 #include "dexgame.h"
+#include "dg_utf8.h"
 #include "dg_json.h"
 
 #include <math.h>
@@ -933,7 +934,7 @@ int32_t dg_scene_from_json(const char *text) {
 int32_t dg_scene_save(const char *path) {
     const char *text = dg_scene_to_json();
     if (!text) return -1;
-    FILE *f = fopen(path, "wb");
+    FILE *f = dg_fopen(path, "wb");
     if (!f) { dg_error("cannot write scene '%s'", path); return -1; }
     const size_t n = fwrite(text, 1, strlen(text), f);
     const int ok = (n == strlen(text));
@@ -943,7 +944,7 @@ int32_t dg_scene_save(const char *path) {
 }
 
 int32_t dg_scene_load(const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = dg_fopen(path, "rb");
     if (!f) { dg_error("cannot open scene '%s'", path); return -1; }
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
@@ -1058,7 +1059,7 @@ static int dg_tilemap_parse_csv(DgTilemap *t, const char *text) {
 }
 
 static int dg_tilemap_load_path(DgTilemap *t, const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = dg_fopen(path, "rb");
     if (!f) { dg_error("cannot open tilemap '%s'", path); return -1; }
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
@@ -1100,7 +1101,7 @@ int32_t dg_tilemap_save_csv(uint32_t obj, const char *path) {
     const DgTilemap *t = (const DgTilemap *)dg_comp_get(obj, DG_C_TILEMAP);
     if (!t) { dg_error("object %u has no 'tilemap'", obj); return -1; }
     if (!t->tiles) { dg_error("tilemap has no grid loaded"); return -1; }
-    FILE *f = fopen(path, "wb");
+    FILE *f = dg_fopen(path, "wb");
     if (!f) { dg_error("cannot write tilemap '%s'", path); return -1; }
     for (int r = 0; r < t->rows; r++) {
         for (int c = 0; c < t->cols; c++) {

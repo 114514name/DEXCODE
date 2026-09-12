@@ -19,6 +19,7 @@
  *   - 库不写 stdout。
  */
 #include "dexgame.h"
+#include "dg_utf8.h"
 
 #include <windows.h>
 #include <xaudio2.h>
@@ -120,7 +121,7 @@ static uint32_t dg_rd16(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p
 /* 解析 WAV;成功时 out_data 指向 malloc 的 PCM(调用方负责 free)*/
 static int dg_wav_parse(const char *path, BYTE **out_data, DWORD *out_bytes,
                         WAVEFORMATEX *out_fmt, double *out_duration) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = dg_fopen(path, "rb");
     if (!f) { dg_error("cannot open sound '%s'", path); return -1; }
     fseek(f, 0, SEEK_END);
     const long n = ftell(f);

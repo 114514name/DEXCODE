@@ -14,6 +14,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "ds_model.h"
 #include "ds_embed.h"
+#include "ds_utf8.h"
 #include "ds_webview.h"
 
 #include <stdio.h>
@@ -28,32 +29,27 @@ static char g_exe_dir[MAX_PATH * 2];
 
 static void find_exe_dir(void)
 {
-    char buf[MAX_PATH * 2];
+    /* 用 W 版取自身路径:exe 可能就放在中文目录里(GetModuleFileNameA 会乱码),
+     * 而整个"找前端目录/找引擎 DLL"都以它为基准。 */
+    wchar_t wbuf[MAX_PATH * 2];
+    char *u;
     char *p;
-    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof buf);
+    DWORD n = GetModuleFileNameW(NULL, wbuf, (DWORD)(sizeof wbuf / sizeof wbuf[0]));
     if (!n) { g_exe_dir[0] = 0; return; }
-    buf[sizeof buf - 1] = 0;
-    p = strrchr(buf, '\\');
+    wbuf[sizeof wbuf / sizeof wbuf[0] - 1] = 0;
+    u = dsu_u(wbuf);
+    if (!u) { g_exe_dir[0] = 0; return; }
+    p = strrchr(u, '\\');
     if (p) *p = 0;
-    snprintf(g_exe_dir, sizeof g_exe_dir, "%s", buf);
+    snprintf(g_exe_dir, sizeof g_exe_dir, "%s", u);
+    free(u);
 }
 
 /* 前端目录:--web 指定 → exe 同级 web\ → 开发布局 ../../dexstudio/web */
-/* 逐级建目录(a\b\c 这种) */
+/* 逐级建目录(实现在 dsu_mkdir 里,这里只留个名字说明用途) */
 static void make_dirs(const char *path)
 {
-    char tmp[MAX_PATH * 3];
-    size_t i;
-    snprintf(tmp, sizeof tmp, "%s", path);
-    for (i = 1; tmp[i]; i++) {
-        if (tmp[i] == '\\' || tmp[i] == '/') {
-            char c = tmp[i];
-            tmp[i] = 0;
-            CreateDirectoryA(tmp, NULL);
-            tmp[i] = c;
-        }
-    }
-    CreateDirectoryA(tmp, NULL);
+    dsu_mkdir(path);
 }
 
 /* 把内嵌的前端资源解包到一个缓存目录并返回它。
@@ -61,16 +57,22 @@ static void make_dirs(const char *path)
 static int extract_embedded_web(char *out, size_t outsz)
 {
     char dir[MAX_PATH * 3];
-    const char *base = getenv("LOCALAPPDATA");
+    char *env = dsu_env("LOCALAPPDATA");
+    const char *base = (env && *env) ? env : NULL;
+    char *env2 = NULL;
     int i, n = ds_embed_count(), need = 0;
-    if (!base || !*base) base = getenv("TEMP");
-    if (!base || !*base) base = (const char *)g_exe_dir;
+    if (!base) {
+        env2 = dsu_env("TEMP");
+        base = (env2 && *env2) ? env2 : g_exe_dir;
+    }
     snprintf(dir, sizeof dir, "%s\\DexStudio\\web-%s", base, ds_embed_hash());
+    free(env);
+    free(env2);
     /* 齐全就不用重写(每个文件都在) */
     for (i = 0; i < n; i++) {
         char p[MAX_PATH * 3];
         snprintf(p, sizeof p, "%s\\%s", dir, ds_embed_at(i)->name);
-        if (GetFileAttributesA(p) == INVALID_FILE_ATTRIBUTES) { need = 1; break; }
+        if (!dsu_exists(p)) { need = 1; break; }
     }
     if (need) {
         make_dirs(dir);
@@ -79,7 +81,7 @@ static int extract_embedded_web(char *out, size_t outsz)
             char p[MAX_PATH * 3];
             FILE *f;
             snprintf(p, sizeof p, "%s\\%s", dir, a->name);
-            f = fopen(p, "wb");
+            f = dsu_fopen(p, "wb");
             if (!f) return 0;
             fwrite(a->data, 1, a->size, f);
             fclose(f);
@@ -94,15 +96,15 @@ static int find_web_dir(const char *override, char *out, size_t outsz)
     char cand[MAX_PATH * 3];
     if (override && *override) {
         snprintf(out, outsz, "%s", override);
-        return GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES;
+        return dsu_exists(out);
     }
     snprintf(cand, sizeof cand, "%s\\web", g_exe_dir);
-    if (GetFileAttributesA(cand) != INVALID_FILE_ATTRIBUTES) {
+    if (dsu_exists(cand)) {
         snprintf(out, outsz, "%s", cand);
         return 1;
     }
     snprintf(cand, sizeof cand, "%s\\..\\..\\dexstudio\\web", g_exe_dir);
-    if (GetFileAttributesA(cand) != INVALID_FILE_ATTRIBUTES) {
+    if (dsu_exists(cand)) {
         snprintf(out, outsz, "%s", cand);
         return 1;
     }
@@ -177,7 +179,7 @@ static int cmd_selftest(void)
     /* 临时项目放缓存目录:%LOCALAPPDATA%\\DexStudio\\selftest(B7 的发布形态
      * 下 exe 旁边没有可写的 ..\\..\\_zigtmp)。 */
     snprintf(tmp, sizeof tmp, "%s\\selftest", ds_temp_dir());
-    RemoveDirectoryA(tmp);
+    dsu_rmdir(tmp);
 
     printf("[引擎与模型]\n");
     check("引擎加载", ds_model_engine_ok(m), ds_model_engine_error(m));
@@ -212,6 +214,43 @@ static int cmd_selftest(void)
     printf("[存盘]\n");
     r = ds_command(m, "{\"cmd\":\"project.save\"}");
     check("project.save", r && strstr(r, "\"ok\":true"), r);
+
+    printf("[中文与编码]\n");
+    /* 中文要穿过:JSON 解析 → 内存 → CreateFileW → 再回到 JSON。任何一环按 ANSI
+     * 解一次,这里就会拿到乱码("我的场景" → "æ\x88\x91ç\x9a\x84…"),而且磁盘上
+     * 会多出一个乱码目录/文件。发布形态下这几项最容易悄悄坏,所以放进自测。 */
+    r = ds_command(m, "{\"cmd\":\"scene.new\",\"args\":{\"name\":\"我的场景\"}}");
+    check("中文场景名能建出来", r && strstr(r, "我的场景"), r);
+    check("中文场景名没有被二次编码", r && !strstr(r, "\xC3\xA6\xC2\x88"), r);
+    {
+        char p[MAX_PATH * 3];
+        snprintf(p, sizeof p, "%s\\scenes\\我的场景.json", tmp);
+        check("中文场景文件真的落盘了", dsu_exists(p), p);
+    }
+    {
+        char src[MAX_PATH * 3], dst[MAX_PATH * 3], src_esc[1100], req2[1400];
+        snprintf(src, sizeof src, "%s\\来源文件.png", ds_temp_dir());
+        ds_write_text(src, "not really a png");
+        snprintf(dst, sizeof dst, "%s\\res\\我的图片.png", tmp);
+        dsu_remove(dst);          /* 自测目录会跨次复用,先清掉上次的 */
+        json_escape(src, src_esc, sizeof src_esc);
+        snprintf(req2, sizeof req2,
+                 "{\"cmd\":\"res.import\",\"args\":{\"src\":\"%s\","
+                 "\"name\":\"我的图片.png\"}}", src_esc);
+        r = ds_command(m, req2);
+        check("中文资源名能导入", r && strstr(r, "\"ok\":true"), r);
+        check("中文资源名真的落盘了", dsu_exists(dst), dst);
+        r = ds_command(m, "{\"cmd\":\"res.list\"}");
+        check("res.list 里是 UTF-8 的中文名", r && strstr(r, "我的图片.png"), r);
+    }
+    /* 恢复提示:同一次运行自己写的自动保存**不该**提示恢复(B7 修的坑) */
+    ds_command(m, "{\"cmd\":\"entity.add\",\"args\":{\"name\":\"autosave_probe\"}}");
+    r = ds_command(m, "{\"cmd\":\"autosave.tick\"}");
+    check("autosave.tick 写出了自动保存", r && strstr(r, "\"saved\":true"), r);
+    r = ds_command(m, "{\"cmd\":\"recover.status\"}");
+    check("本次运行自己写的自动保存不提示恢复",
+          r && strstr(r, "\"recoverable\":false"), r);
+    ds_command(m, "{\"cmd\":\"autosave.clear\"}");
 
     printf("[错误路径]\n");
     r = ds_command(m, "{\"cmd\":\"entity.get\",\"args\":{\"id\":999999}}");
@@ -362,7 +401,7 @@ static int run_window(const char *project, const char *web_override, int wv_self
         return 1;
     }
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-    hwnd = CreateWindowExA(0, "DexStudioWindow", "DexStudio — DexLang 可视化 IDE",
+    hwnd = CreateWindowExA(0, "DexStudioWindow", "DexStudio",
                            WS_OVERLAPPEDWINDOW,
                            wv_selftest ? -4000 : CW_USEDEFAULT,
                            wv_selftest ? -4000 : CW_USEDEFAULT,
@@ -372,6 +411,12 @@ static int run_window(const char *project, const char *web_override, int wv_self
         fprintf(stderr, "dexstudio: 创建窗口失败\n");
         free(host);
         return 1;
+    }
+    /* 标题单独用 W 版设:CreateWindowExA 会把 UTF-8 标题按 ANSI(936)解,
+     * 中文就成了乱码 —— 窗口标题恰好是用户第一眼看到的东西。 */
+    {
+        wchar_t *wt = dsu_w("DexStudio — DexLang 可视化 IDE");
+        if (wt) { SetWindowTextW(hwnd, wt); free(wt); }
     }
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -428,6 +473,19 @@ static int run_window(const char *project, const char *web_override, int wv_self
         if (g_ui_ready) {
             printf("  PASS  前端已就绪(窗口 + 本地页面 + JS→C→JS 往返)\n");
             printf("        请求:%s\n", g_ui_ready_info);
+            /* 窗口标题是用户第一眼看到的东西,回读一遍证明它不是乱码 ——
+             * CreateWindowExA 的坑见陷阱表;这里不用人看屏幕也能断言。 */
+            {
+                static const char *WANT = "DexStudio — DexLang 可视化 IDE";
+                wchar_t wt[256] = {0};
+                char *u;
+                GetWindowTextW(hwnd, wt, 256);
+                u = dsu_u(wt);
+                printf("%s  窗口标题:[%s]\n",
+                       (u && !strcmp(u, WANT)) ? "  PASS" : "  FAIL", u ? u : "(读不到)");
+                if (!u || strcmp(u, WANT)) g_wv_fail = 1;
+                free(u);
+            }
             /* 让页面把自己那一层也验一遍(渲染图/层级树/属性面板/瓦片刷子),
              * 结果由页面用 ui.selftest 消息发回来 —— 不需要人看屏幕。 */
             if (ds_wv_eval(host->wv,
@@ -476,12 +534,32 @@ static int run_window(const char *project, const char *web_override, int wv_self
 
 /* ------------------------------------------------------------ 入口 */
 
+static int ds_host_args(int argc, char **argv);
+
+/* 真正的入口:先把参数换成 UTF-8 的,再交给 ds_host_args。
+ * CRT 给的 argv 已经按 ANSI 解过一遍(中文系统 = 936),所以
+ * `--project 我的项目` / `--command '{"名字":"测试"}'` 到这儿都是烂的。
+ * 从宽命令行重新取一份;取不到就退回原来的 argv。 */
 static int ds_host_main(int argc, char **argv)
+{
+    int wide_argc = 0;
+    char **wide_argv;
+    int rc;
+    SetConsoleOutputCP(65001);
+    wide_argv = dsu_argv(&wide_argc);
+    if (wide_argv && wide_argc > 0) {
+        rc = ds_host_args(wide_argc, wide_argv);
+        dsu_argv_free(wide_argv, wide_argc);
+        return rc;
+    }
+    return ds_host_args(argc, argv);
+}
+
+static int ds_host_args(int argc, char **argv)
 {
     const char *project = NULL, *web = NULL, *command = NULL;
     int selftest = 0, wv_selftest = 0, i;
 
-    SetConsoleOutputCP(65001);
     find_exe_dir();
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--project") && i + 1 < argc) project = argv[++i];
