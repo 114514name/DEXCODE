@@ -216,6 +216,7 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| 补丁(见提交信息) | `tests/_tmpdir.py` 的回退分支原先**恒不触发**:`tempfile.gettempdir()` 在所有候选都不可用时按 Python 既定行为退化成 `os.getcwd()`,于是临时目录被撒在仓库根而不是 `_tmptest/`。现显式排除 cwd |
 | (本次 docs) | 修正本文件与 README 的失实项:测试计数、34 MB 体积归因(示例媒体 28 MB 而非二进制)、galide/bluedit 重复规模、待办重排 |
 | `78f4170` | 删除停用的 `galide/`(与 `bluedit/` 重复 **104 个同名定义**)+ 其测试 |
 | `a45e96a` | `test_editor.py` 指向真实存在的 `galedit.exe` 并入库该二进制(0 → 18 项有效断言) |

@@ -65,7 +65,11 @@ def _writable_root(root):
 
 def _pick_root():
     sys_root = tempfile.gettempdir()
-    if _writable_root(sys_root):
+    # 注意:tempfile.gettempdir() 在所有候选都不可用时会**退化成 os.getcwd()**
+    # (Python 的既定行为)。那种情况下它虽然「可写」,但会把临时目录撒在仓库根目录,
+    # 所以这里显式排除 cwd,改走 _FALLBACK_ROOT(仓库内 _tmptest/,已被 gitignore)。
+    is_cwd = os.path.normcase(os.path.abspath(sys_root)) == os.path.normcase(os.getcwd())
+    if not is_cwd and _writable_root(sys_root):
         return sys_root
     if _writable_root(_FALLBACK_ROOT):
         return _FALLBACK_ROOT
