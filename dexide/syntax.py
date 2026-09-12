@@ -53,8 +53,8 @@ def scan(source: str) -> Tuple[List[Span], List[Span]]:
     block_start: Optional[Tuple[int, int]] = None
 
     for li, text in enumerate(lines, 1):
-        i = 0
         n = len(text)
+        i = 0
         if in_block:
             end = text.find("*/")
             if end < 0:
@@ -62,7 +62,17 @@ def scan(source: str) -> Tuple[List[Span], List[Span]]:
             comments.append(Span(block_start[0], block_start[1], li, end + 2))
             in_block = False
             i = end + 2
+        # 用 str.find(纯 C 实现)定位下一个待处理字符,避免逐字符在 Python 层循环 ——
+        # 该函数在每次光标移动/输入时都会跑,大文件下逐字符循环会成为主要开销。
         while i < n:
+            cand = []
+            for ch in ('"', "#", "/"):
+                p = text.find(ch, i)
+                if p >= 0:
+                    cand.append(p)
+            if not cand:
+                break
+            i = min(cand)
             ch = text[i]
             # 行注释:两种写法
             if ch == "#" or (ch == "/" and i + 1 < n and text[i + 1] == "/"):
@@ -77,21 +87,34 @@ def scan(source: str) -> Tuple[List[Span], List[Span]]:
                 comments.append(Span(li, i, li, end + 2))
                 i = end + 2
                 continue
-            if ch == '"':
-                j = i + 1
-                while j < n:
-                    if text[j] == "\\":
-                        j += 2
-                        continue
-                    if text[j] == '"':
-                        break
-                    j += 1
-                # 未闭合则延伸到行尾(不跨行)
-                end_col = (j + 1) if j < n else n
-                strings.append(Span(li, i, li, end_col))
-                i = end_col
+            if ch == "/":
+                # 单独一个 / 是运算符,继续往后找
+                i += 1
                 continue
-            i += 1
+            # 字符串:用 find 找收尾(先处理转义)
+            j = text.find('"', i + 1)
+            if j >= 0:
+                # 回退检查反斜杠转义:若结尾前有奇数个反斜杠则不是真正的收尾
+                k = j - 1
+                bs = 0
+                while k > i and text[k] == "\\":
+                    bs += 1
+                    k -= 1
+                if bs % 2 == 1:
+                    j = text.find('"', j + 1)
+                    while j >= 0:
+                        k = j - 1
+                        bs = 0
+                        while k > i and text[k] == "\\":
+                            bs += 1
+                            k -= 1
+                        if bs % 2 == 0:
+                            break
+                        j = text.find('"', j + 1)
+            # 未闭合则延伸到行尾(不跨行)
+            end_col = (j + 1) if j >= 0 else n
+            strings.append(Span(li, i, li, end_col))
+            i = end_col
 
     if in_block and block_start is not None:
         last = len(lines)

@@ -341,6 +341,12 @@ class DexIDE(tk.Tk):
         vm.add_checkbutton(label="输入时自动补全(弹窗不抢焦点,兼容中文输入法)",
                            variable=self._auto_ac_var,
                            command=self._toggle_auto_complete)
+        vm.add_separator()
+        self._fold_var = tk.BooleanVar(value=True)
+        vm.add_checkbutton(label="代码折叠(点击行号右侧 ▸ 折叠/展开)",
+                           variable=self._fold_var,
+                           command=self._toggle_fold)
+        vm.add_command(label="全部展开", command=self._unfold_all)
         m.add_cascade(label="视图", menu=vm)
 
         sm = tk.Menu(m, tearoff=0, bg=C["surface0"], fg=C["text"],
@@ -602,6 +608,9 @@ class DexIDE(tk.Tk):
                         on_cursor=self._on_cursor)
         ed.set_text(text)
         ed.set_auto_complete(self._auto_ac_var.get())
+        if hasattr(self, "_fold_var"):
+            ed.fold_enabled = self._fold_var.get()
+            ed._sync_gutters()
         ed.pack(fill="both", expand=True)
         self.tabs[path] = ed
         self._tab_order.append(path)
@@ -1263,6 +1272,21 @@ class DexIDE(tk.Tk):
         for ed in self.tabs.values():
             ed.set_auto_complete(enabled)
         self.set_status("输入时自动补全: " + ("开" if enabled else "关"))
+
+    def _toggle_fold(self):
+        """开关折叠标记显示。"""
+        enabled = self._fold_var.get()
+        for ed in self.tabs.values():
+            ed.fold_enabled = enabled
+            if not enabled:
+                ed.unfold_all()
+            ed._sync_gutters()
+        self.set_status("代码折叠: " + ("开" if enabled else "关"))
+
+    def _unfold_all(self):
+        for ed in self.tabs.values():
+            ed.unfold_all()
+        self.set_status("已全部展开")
 
     def _about(self):
         messagebox.showinfo("DEXIDE", "DEXIDE — DexLang 集成开发环境\n\n"

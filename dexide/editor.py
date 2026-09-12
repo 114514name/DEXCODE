@@ -39,6 +39,9 @@ _KIND_TAG = {
 # 类型名(参数/字段/返回类型标注)
 _TYPE_WORDS = frozenset({"int", "float", "string", "void"})
 
+# 括号(用于配对高亮的快速定位)
+_BRACKET_RE = re.compile(r"[()\[\]{}]")
+
 # 文本形式的关键字集合(用于悬停/补全等按词判断的场合;
 # 语法着色本身按 token 种类进行,不依赖这个集合)
 _KEYWORDS_TEXT = frozenset({
@@ -74,6 +77,14 @@ class CodeEditor(tk.Frame):
         self._ac_auto = False
         self._ac_listbox = None
         self._ignore_modify = False
+        self._bracket_tagged = False   # 当前是否已打上括号配对标签
+        self._scan_cache = None        # (文本, (注释, 字符串)) 缓存,见 _scan_cached
+        self._fold_regions = {}        # {首行: (末行, 折叠行数)}
+        self._folded = set()           # 当前处于折叠状态的首行
+        self.fold_enabled = True       # 可在「视图」菜单关闭
+        self._bracket_marks = []       # 上次打标签的位置 [(起索引, 止索引), ...]
+                                       # 只清这几个位置:Text.tag_remove 遍历整个
+                                       # 文档,对大文件是主要开销(实测 800 行约 5 ms)
 
         self.bp = tk.Text(self, width=2, padx=2, pady=6, takefocus=0, border=0,
                           bg=C["mantle"], fg=C["red"], font=(self.FONT_FAMILY, self._font_size),
@@ -90,6 +101,10 @@ class CodeEditor(tk.Frame):
                                  activebackground=C["surface1"], relief="flat", borderwidth=0)
         self.text.configure(yscrollcommand=self._set_scroll)
 
+        # 查找/替换面板(默认隐藏,贴在底部)
+        self._find_panel = tk.Frame(self, bg=C["mantle"])
+        self._build_find_panel()
+
         self.bp.pack(side="left", fill="y")
         self.ln.pack(side="left", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
@@ -102,8 +117,18 @@ class CodeEditor(tk.Frame):
         self.text.tag_configure("err", underline=True, foreground=C["red"])
         self.text.tag_configure("warn", underline=True, foreground=C["yellow"])
         self.text.tag_configure("debug_line", background=C["surface0"])
+        # 查找高亮:全部匹配 + 当前匹配(与 VS Code 一致的两级区分)
+        self.text.tag_configure("find_all", background=C["surface1"])
+        self.text.tag_configure("find_cur", background=C["peach"], foreground=C["crust"])
+        # 括号配对:用背景色区分,前景保持可读
+        self.text.tag_configure("bracket_match",
+                                background=C["surface2"], foreground=HL["bracket_match"])
+        self.text.tag_configure("bracket_unmatched",
+                                background=C["surface1"], underline=True,
+                                foreground=HL["bracket_unmatched"])
         self.bp.tag_configure("bp", foreground=C["red"])
         self.bp.tag_configure("bpcur", foreground=C["green"])
+        self.bp.tag_configure("fold", foreground=C["overlay0"])
         self.ln.tag_configure("cur", foreground=C["peach"])
 
         # 事件
@@ -116,6 +141,16 @@ class CodeEditor(tk.Frame):
         self.text.bind("<MouseWheel>", self._on_wheel)
         self.text.bind("<Control-MouseWheel>", self._on_zoom)
         self.text.bind("<Control-space>", self._show_ac)
+        # 查找 / 替换
+        self.text.bind("<Control-f>", lambda e: self.show_find(False))
+        self.text.bind("<Control-h>", lambda e: self.show_find(True))
+        self.text.bind("<F3>", lambda e: self.find_next())
+        # 折叠:Ctrl+Shift+[ 折叠 / Ctrl+Shift+] 展开 / Ctrl+K 后 Ctrl+0 全部展开
+        self.text.bind("<Control-Shift-bracketleft>", lambda e: self.toggle_fold())
+        self.text.bind("<Control-Shift-bracketright>", lambda e: self.unfold_all())
+        self.text.bind("<Shift-F3>", lambda e: self.find_prev())
+        # 面板打开时,编辑器里的 F3 仍可用
+        self.bind_all("<F3>", self._global_find_next, add="+")
         self.text.bind("<Alt-slash>", self._show_ac)
         self.text.bind("<Control-s>", lambda e: "break")
         # 补全弹窗打开时的编辑器内导航(不抢焦点,避免打断 IME)
@@ -179,7 +214,12 @@ class CodeEditor(tk.Frame):
         idx = self.bp.index(f"@{ev.x},{ev.y}")
         line = int(float(idx))
         if 1 <= line <= self._n_lines():
-            self.toggle_breakpoint(line)
+            # 该行有折叠标记时:点击折叠/展开(与 VS Code 折叠槽一致)
+            self.compute_folds()
+            if line in self._fold_regions and self.fold_enabled:
+                self.toggle_fold(line)
+            else:
+                self.toggle_breakpoint(line)
         return "break"
 
     def _render_bp(self):
@@ -194,6 +234,12 @@ class CodeEditor(tk.Frame):
             else:
                 self.bp.insert("end", " ")
             self.bp.insert("end", "\n")
+        # 折叠标记叠加在断点列右侧(与 VS Code 的折叠槽类似)
+        for ln, mark in (self._fold_marks() if self.fold_enabled else {}).items():
+            try:
+                self.bp.insert(f"{ln}.end", " " + mark, "fold")
+            except tk.TclError:
+                pass
         self.bp.configure(state="disabled")
 
     # ---------- 调试行 ----------
@@ -278,7 +324,11 @@ class CodeEditor(tk.Frame):
             return
         if self.text.edit_modified():
             self.text.edit_modified(False)
+            self._scan_cache = None      # 文本已变,区间缓存失效
             self._schedule_highlight()
+            # 查找面板可见时,匹配位置也要跟着更新
+            if self._find_panel.winfo_ismapped():
+                self._refresh_find_marks()
             if self.on_modify:
                 self.on_modify()
 
@@ -368,7 +418,11 @@ class CodeEditor(tk.Frame):
     def _on_key(self, ev):
         # KeyRelease:回车/导航等纯按键不做补全逻辑。
         # 智能换行已在 KeyPress(_ac_navigate)完成,这里若再插入会多一个空行。
+        # 但方向键/Home/End 会移动光标,括号配对高亮要跟着更新。
         if ev.keysym in self._AC_KEYS:
+            if ev.keysym in ("Left", "Right", "Up", "Down", "Home", "End",
+                             "Prior", "Next"):
+                self.highlight_brackets()
             return
         ch = ev.char or ""
         if (ch.isalpha() and ch.isascii()) or ch == "_":
@@ -389,8 +443,7 @@ class CodeEditor(tk.Frame):
         掩码把注释与字符串内容换成等长空格 —— 缩进判断必须基于它,
         否则 `// 说明 {` 里的花括号会被当成真的块开始。
         """
-        src = self.get_text()
-        comments, strings = S.scan(src)
+        src, comments, strings = self._scan_cached()
         return src, S.code_lines(src, comments, strings), comments, strings
 
     def _indent_at(self, code_lines_list, line):
@@ -520,6 +573,7 @@ class CodeEditor(tk.Frame):
         if self.on_cursor_move:
             self.on_cursor_move()
         self._sync_line_numbers()
+        self.highlight_brackets()
 
     # ---------- 高亮 ----------
     def _schedule_highlight(self):
@@ -528,8 +582,11 @@ class CodeEditor(tk.Frame):
         self._hl_after = self.after(250, self._apply_highlight)
 
     def _clear_hl_tags(self):
+        self._bracket_marks = []
+        self._bracket_tagged = False
         # 直接按主题里定义的标签清理,避免手工维护的列表漏项
-        for tag in list(HL.keys()) + ["err", "warn"]:
+        for tag in list(HL.keys()) + ["err", "warn",
+                                      "bracket_match", "bracket_unmatched"]:
             try:
                 self.text.tag_remove(tag, "1.0", "end")
             except tk.TclError:
@@ -760,6 +817,511 @@ class CodeEditor(tk.Frame):
     def _apply_tag(self, line, col, length, tag):
         """按 (行, 1 基列) 应用标签 —— 与词法器 token 的坐标一致。"""
         self._apply_tag_abs(line, col, length, tag)
+
+    def _global_find_next(self, _ev=None):
+        """F3 全局可用(面板未打开时也能"查找下一个")。"""
+        if self._find_panel.winfo_ismapped() or self._find_var.get():
+            self.find_next()
+
+    # ---------- 查找 / 替换 ----------
+    def _build_find_panel(self):
+        """构造查找替换面板(默认隐藏)。
+
+        与自动补全弹窗不同,查找框**需要**获得焦点(用户要在这里输入),
+        因此打开时主动 focus;关闭时把焦点还给编辑器。
+        """
+        f = self._find_panel
+        pad = dict(padx=6)
+        row1 = tk.Frame(f, bg=C["mantle"])
+        row1.pack(fill="x", **pad)
+        tk.Label(row1, text="查找", bg=C["mantle"], fg=C["subtext1"],
+                 font=(self.FONT_FAMILY, 10)).pack(side="left")
+        self._find_var = tk.StringVar()
+        self._find_entry = tk.Entry(row1, textvariable=self._find_var, width=26,
+                                    bg=C["surface0"], fg=C["text"], relief="flat",
+                                    insertbackground=C["text"],
+                                    font=(self.FONT_FAMILY, 11))
+        self._find_entry.pack(side="left", padx=6)
+        self._find_count = tk.Label(row1, text="", bg=C["mantle"], fg=C["overlay0"],
+                                    font=(self.FONT_FAMILY, 10), width=12, anchor="w")
+        self._find_count.pack(side="left")
+        for label, cmd in (("上一个", self.find_prev), ("下一个", self.find_next),
+                           ("关闭", self.hide_find)):
+            tk.Button(row1, text=label, command=cmd, bg=C["surface0"], fg=C["text"],
+                      relief="flat", padx=8, font=(self.FONT_FAMILY, 10)
+                      ).pack(side="left", padx=2)
+
+        row2 = tk.Frame(f, bg=C["mantle"])
+        row2.pack(fill="x", padx=6, pady=(2, 4))
+        tk.Label(row2, text="替换", bg=C["mantle"], fg=C["subtext1"],
+                 font=(self.FONT_FAMILY, 10)).pack(side="left")
+        self._repl_var = tk.StringVar()
+        self._repl_entry = tk.Entry(row2, textvariable=self._repl_var, width=26,
+                                    bg=C["surface0"], fg=C["text"], relief="flat",
+                                    insertbackground=C["text"],
+                                    font=(self.FONT_FAMILY, 11))
+        self._repl_entry.pack(side="left", padx=6)
+        tk.Button(row2, text="替换", command=self.replace_current,
+                  bg=C["surface0"], fg=C["text"], relief="flat", padx=8,
+                  font=(self.FONT_FAMILY, 10)).pack(side="left", padx=2)
+        tk.Button(row2, text="全部替换", command=self.replace_all,
+                  bg=C["surface0"], fg=C["text"], relief="flat", padx=8,
+                  font=(self.FONT_FAMILY, 10)).pack(side="left", padx=2)
+
+        self._find_matches = []      # 匹配(文本偏移 起, 止)
+        self._find_offsets = []      # 匹配的 Tk 索引
+        self._find_idx = -1
+        for w in (self._find_entry, self._repl_entry):
+            w.bind("<Return>", lambda e: self.find_next())
+            w.bind("<Shift-Return>", lambda e: self.find_prev())
+            w.bind("<Escape>", lambda e: self.hide_find())
+            w.bind("<KeyRelease>", lambda e: self._refresh_find_marks())
+
+    def show_find(self, with_replace=False):
+        self._find_panel.pack(side="bottom", fill="x")
+        # 有选中的单行文本时带入搜索框(与常见编辑器一致)
+        try:
+            sel = self.text.get("sel.first", "sel.last") if self.text.tag_ranges("sel") else ""
+        except tk.TclError:
+            sel = ""
+        if sel and "\n" not in sel:
+            self._find_var.set(sel)
+        self._refresh_find_marks()
+        target = self._repl_entry if with_replace else self._find_entry
+        target.focus_set()
+        target.select_range(0, "end")
+        return "break"
+
+    def hide_find(self):
+        self._find_panel.pack_forget()
+        self.text.tag_remove("find_all", "1.0", "end")
+        self.text.tag_remove("find_cur", "1.0", "end")
+        self._find_matches = []
+        self._find_offsets = []
+        self._find_idx = -1
+        self.text.focus_set()
+        return "break"
+
+    def _compute_find_matches(self):
+        """找出所有匹配。大小写不敏感;支持跨行(纯文本匹配,无正则)。"""
+        needle = self._find_var.get()
+        self._find_matches = []
+        self._find_offsets = []
+        self._find_idx = -1
+        if not needle:
+            return
+        src = self.get_text()
+        hay, ndl = src.lower(), needle.lower()
+        starts = [0]
+        for i, ch in enumerate(src):
+            if ch == "\n":
+                starts.append(i + 1)
+        import bisect
+        pos = 0
+        while True:
+            p = hay.find(ndl, pos)
+            if p < 0:
+                break
+            self._find_matches.append((p, p + len(needle)))
+            li = bisect.bisect_right(starts, p) - 1
+            lj = bisect.bisect_right(starts, p + len(needle)) - 1
+            self._find_offsets.append(
+                (f"{li + 1}.{p - starts[li]}",
+                 f"{lj + 1}.{p + len(needle) - starts[lj]}"))
+            pos = p + max(1, len(ndl))
+
+    def _refresh_find_marks(self):
+        self.text.tag_remove("find_all", "1.0", "end")
+        self.text.tag_remove("find_cur", "1.0", "end")
+        self._compute_find_matches()
+        for a, b in self._find_offsets:
+            try:
+                self.text.tag_add("find_all", a, b)
+            except tk.TclError:
+                pass
+        n = len(self._find_matches)
+        self._find_count.configure(
+            text=("%d 处" % n) if n else ("无匹配" if self._find_var.get() else ""))
+        if n:
+            # 保持"当前匹配"的选中状态(替换后会重算,索引取原位置或末尾)
+            i = self._find_idx if self._find_idx >= 0 else 0
+            self._select_match(min(i, n - 1), scroll=False)
+
+    def _select_match(self, i, scroll=True):
+        """选中第 i 个匹配(取模环绕),并同步 _find_idx。
+
+        导航**只用 _find_idx**推进,不用光标位置判断 —— 选中时会把光标移到
+        匹配开头,若再拿光标去比较就会原地绕圈(实测 find_next 无法前进)。"""
+        if not self._find_matches:
+            return
+        i %= len(self._find_matches)
+        self._find_idx = i
+        a, b = self._find_offsets[i]
+        try:
+            self.text.tag_remove("find_cur", "1.0", "end")
+            self.text.tag_add("find_cur", a, b)
+            if scroll:
+                self.text.see(a)
+            self.text.mark_set("insert", a)     # 光标落在匹配开头
+        except tk.TclError:
+            pass
+
+    def find_next(self):
+        if not self._find_matches:
+            self._refresh_find_marks()
+            if self._find_matches:
+                self._select_match(0)
+                return "break"
+            return "break"
+        self._select_match(self._find_idx + 1)
+        return "break"
+
+    def find_prev(self):
+        if not self._find_matches:
+            self._refresh_find_marks()
+            if self._find_matches:
+                self._select_match(len(self._find_matches) - 1)
+                return "break"
+            return "break"
+        self._select_match(self._find_idx - 1)
+        return "break"
+
+    def _replace_range(self, a, b, repl):
+        self.text.delete(a, b)
+        if repl:
+            self.text.insert(a, repl)
+
+    def replace_current(self):
+        """替换当前匹配(通过替换前用光标定位,避免索引错位)。"""
+        if not self._find_matches:
+            self._refresh_find_marks()
+        if not self._find_matches:
+            return "break"
+        if self._find_idx < 0:
+            self._select_match(0, scroll=False)
+        a, b = self._find_offsets[self._find_idx]
+        self._ignore_modify = True
+        try:
+            self._replace_range(a, b, self._repl_var.get())
+        finally:
+            self._ignore_modify = False
+        self._scan_cache = None
+        self._refresh_find_marks()
+        # 替换后前进到下一个匹配(与常见编辑器一致)
+        if self._find_matches:
+            self._select_match(self._find_idx)
+        return "break"
+
+    def replace_all(self):
+        """全部替换:按匹配位置从后往前替换,避免前面的替换影响后面的索引。"""
+        needle = self._find_var.get()
+        if not needle:
+            return "break"
+        self._refresh_find_marks()
+        if not self._find_matches:
+            return "break"
+        repl = self._repl_var.get()
+        n = len(self._find_matches)
+        self._ignore_modify = True
+        try:
+            for a, b in reversed(self._find_offsets):
+                self._replace_range(a, b, repl)
+        finally:
+            self._ignore_modify = False
+        self._scan_cache = None
+        self._refresh_find_marks()
+        self._find_count.configure(text="已替换 %d 处" % n)
+        return "break"
+
+    # ---------- 代码折叠 ----------
+    #
+    # 实现方式:Tk Text 的 elide 属性可以真正"隐藏"一段文本(不占显示空间),
+    # 折叠时把 [首行末尾+1 .. 末行末尾] 标记为 elide;并在首行末尾放一个提示标签,
+    # 让用户知道这里折叠了多少行。
+    def compute_folds(self):
+        """扫描全文档,得出可折叠区域 {首行: (末行, 折叠行数)}。
+
+        折叠块 = 一对配对的 { }。深度计数基于**掩码后**的代码,因此注释与字符串
+        里的花括号不会产生假的折叠块(与缩进用的是同一套判断)。
+        """
+        self._fold_regions = {}
+        try:
+            src, code, _c, _s = self._code_source()
+        except tk.TclError:
+            return
+        stack = []
+        for li, line in enumerate(code, 1):
+            for ch in line:
+                if ch == "{":
+                    stack.append(li)
+                elif ch == "}":
+                    if not stack:
+                        continue
+                    start = stack.pop()
+                    if li > start:                    # 至少跨一行才有折叠意义
+                        self._fold_regions[start] = (li, li - start)
+        # 折叠状态里已不存在的区域要清掉
+        for ln in list(self._folded):
+            if ln not in self._fold_regions:
+                self._folded.discard(ln)
+
+    def toggle_fold(self, line=None):
+        if line is None:
+            line = self._cursor_line()
+        # 光标在块内时,折叠光标所在的最内层块
+        if line not in self._fold_regions:
+            cands = [k for k in self._fold_regions if k <= line <= self._fold_regions[k][0]]
+            if not cands:
+                return "break"
+            line = max(cands)
+        if line in self._folded:
+            self.unfold(line)
+        else:
+            self.fold(line)
+        return "break"
+
+    # 折叠标记文字的长度上限(用于展开时精确删除)
+    _FOLD_MARKER_MAX = 16
+
+    def fold(self, line):
+        """折叠第 line 行所在的块:用 elide 隐藏 [首行末尾+1c .. 末行末尾),
+        并在首行末尾插入 "⋯ N 行" 提示。
+
+        实现要点(踩过的坑):
+          - `text.tag_configure` 若放在 tag_add **之后**,配置不会作用于已打的区间,
+            必须先把 elide 配置好再加标签;
+          - 提示标签要在 elide 之后添加,否则它自己也会被隐藏;
+          - 折叠是**显示层**的变化,不改变文本内容(所以 get_text 仍是全文)。"""
+        end, removed = self._fold_regions.get(line, (None, 0))
+        if end is None or line in self._folded:
+            return "break"
+        try:
+            marker_idx = f"{line}.end"
+            body_start = f"{marker_idx} + 1c"
+            body_end = f"{end}.end"
+            # 1) 先配置 elide,再加标签
+            self.text.tag_configure("fold_hidden", elide=True)
+            self.text.tag_add("fold_hidden", body_start, body_end)
+            # 2) 提示文字(在 elide 区间之外,不会被隐藏)。
+            #    用一对 mark 夹住它:删除时按 mark 取范围,避免索引算术 ——
+            #    Tk 的 "line.end" 位置微妙(它指向换行符之前还是之后并不直观),
+            #    用 "1.end + Nc" 这类相对偏移很容易跨到下一行而删不掉标记。
+            # 标记文字用**按行的唯一标签**定位,展开时按该标签取范围删除。
+            # 不能用全局 mark:多个块折叠时 mark 会被后来的折叠覆盖(实测展开
+            # 第 3 行后再展开第 1 行,mark 已指向第 3 行,导致标记删不掉)。
+            tag = "fold_mark_%d" % line
+            self.text.insert(marker_idx, "⋯ %d 行" % removed,
+                             ("fold_marker", tag))
+            self._folded.add(line)
+        except tk.TclError:
+            pass
+        self._sync_gutters()
+        return "break"
+
+    def unfold(self, line):
+        if line not in self._folded:
+            return "break"
+        try:
+            # 先恢复显示,再删提示文字(顺序反了会因区间被隐藏而删不掉)
+            self.text.tag_remove("fold_hidden", "1.0", "end")
+            tag = "fold_mark_%d" % line
+            rs = self.text.tag_ranges(tag)
+            if len(rs) >= 2 and self.text.get(rs[0], rs[1]).startswith("⋯"):
+                self.text.delete(rs[0], rs[1])
+            self.text.tag_remove(tag, "1.0", "end")
+            self._folded.discard(line)
+            # 其它仍折叠的块需要重新隐藏(上面做了全局 tag_remove)
+            for other in sorted(self._folded):
+                self._apply_fold_elide(other)
+        except tk.TclError:
+            pass
+        self._sync_gutters()
+        return "break"
+
+    def _apply_fold_elide(self, line):
+        end, _n = self._fold_regions.get(line, (None, 0))
+        if end is None:
+            return
+        try:
+            self.text.tag_configure("fold_hidden", elide=True)
+            self.text.tag_add("fold_hidden", f"{line}.end + 1c", f"{end}.end")
+        except tk.TclError:
+            pass
+
+    def unfold_all(self):
+        for line in sorted(self._folded, reverse=True):
+            self.unfold(line)
+        self.text.tag_remove("fold_hidden", "1.0", "end")
+        self._folded.clear()
+        self._sync_gutters()
+        return "break"
+
+    def _fold_marks(self):
+        """{行号: 标记字符},供边栏渲染使用。"""
+        out = {}
+        self.compute_folds()
+        for ln in self._fold_regions:
+            out[ln] = "▾" if ln in self._folded else "▸"
+        return out
+
+    def _sync_gutters(self):
+        self._render_bp()
+        self._sync_line_numbers()
+
+    # ---------- 括号配对高亮 ----------
+    _OPEN2CLOSE = {"(": ")", "[": "]", "{": "}"}
+
+    def _scan_cached(self):
+        """返回 (文本, 注释区间, 字符串区间),带一层缓存。
+
+        scan 会遍历全文,而括号配对与缩进都要用它;同一份文本重复扫描没必要。
+        注意:每次按键都会改文本,所以缓存以**文本内容**为键。
+        """
+        src = self.get_text()
+        if self._scan_cache is not None and self._scan_cache[0] == src:
+            spans = self._scan_cache[1]
+            return src, spans[0], spans[1]
+        comments, strings = S.scan(src)
+        self._scan_cache = (src, (comments, strings))
+        return src, comments, strings
+
+    def _bracket_list(self):
+        """把文本里所有括号摊平成 (字符, 行, 1基列, 是否在注释/字符串内)。
+
+        括号配对必须在**代码**里做:注释或字符串中的括号不参与配对
+        (否则 `// (说明` 会让后面的 ) 配错)。
+        """
+        src, comments, strings = self._scan_cached()
+        # 区间按出现顺序排好,用双指针推进 —— 避免对每个括号都遍历全部区间
+        spans = sorted(list(comments) + list(strings),
+                       key=lambda s: (s.line, s.col))
+        # 用正则只挑出括号(而非逐字符 if) —— 大文件下逐字符循环开销明显
+        out = []
+        si = 0
+        for li, line in enumerate(src.split("\n"), 1):
+            for m in _BRACKET_RE.finditer(line):
+                col = m.start() + 1
+                while si < len(spans) and (
+                        spans[si].end_line < li or
+                        (spans[si].end_line == li and spans[si].end_col <= col)):
+                    si += 1
+                in_lit = False
+                if si < len(spans):
+                    sp = spans[si]
+                    if sp.line <= li <= sp.end_line:
+                        start_ok = not (li == sp.line and col < sp.col)
+                        end_ok = not (li == sp.end_line and col >= sp.end_col)
+                        in_lit = start_ok and end_ok
+                out.append((m.group(0), li, col, in_lit))
+        return out
+
+    @staticmethod
+    def _find_bracket_at(chars, line, col):
+        for i, c in enumerate(chars):
+            if c[1] == line and c[2] == col:
+                return i
+        return None
+
+    def _match_bracket(self, chars, pos):
+        """在 chars[pos] 处找配对项,返回下标;找不到返回 None。
+
+        用同类括号计数法(而非简单栈),因此跨层级也能正确配对。
+        """
+        ch, line, col, in_literal = chars[pos]
+        if in_literal:
+            return None
+        closer = self._OPEN2CLOSE.get(ch)
+        if closer:
+            depth = 0
+            for j in range(pos, len(chars)):
+                c = chars[j][0]
+                if chars[j][3]:
+                    continue
+                if c == ch:
+                    depth += 1
+                elif c == closer:
+                    depth -= 1
+                    if depth == 0:
+                        return j
+            return None
+        # 闭括号:反向扫描
+        opener = {v: k for k, v in self._OPEN2CLOSE.items()}.get(ch)
+        if not opener:
+            return None
+        depth = 0
+        for j in range(pos, -1, -1):
+            c = chars[j][0]
+            if chars[j][3]:
+                continue
+            if c == ch:
+                depth += 1
+            elif c == opener:
+                depth -= 1
+                if depth == 0:
+                    return j
+        return None
+
+    def _clear_bracket_tags(self):
+        """只清除上次打上的那几个位置(而不是全文档扫描)。"""
+        if not self._bracket_marks:
+            return
+        for tag in ("bracket_match", "bracket_unmatched"):
+            for a, b in self._bracket_marks:
+                try:
+                    self.text.tag_remove(tag, a, b)
+                except tk.TclError:
+                    pass
+        self._bracket_marks = []
+        self._bracket_tagged = False
+
+    def highlight_brackets(self):
+        """高亮光标处(或紧邻左侧)的括号及其配对项;找不到配对的标红。
+
+        与 VS Code 行为一致:优先看光标右边的字符,没有则看左边。
+        """
+        try:
+            # 先判断光标处(或左邻)是否真的是括号 —— 绝大多数按键都不是。
+            # 这一步必须放在清理旧标签**之前**:Text.tag_remove 本身是 O(n),
+            # 若无条件执行,每次按键都会有全文扫描的开销(实测 800 行时约 5 ms)。
+            idx = self.text.index("insert")
+            line, col0 = (int(x) for x in idx.split("."))
+            cur = self._char_at(line, col0 + 1)                    # 光标右
+            left = self._char_at(line, col0) if col0 > 0 else ""   # 光标左
+            if cur in "()[]{}":
+                target = (line, col0 + 1)
+            elif left in "()[]{}":
+                target = (line, col0)
+            else:
+                self._clear_bracket_tags()
+                return
+
+            self._clear_bracket_tags()
+
+            chars = self._bracket_list()
+            pos = self._find_bracket_at(chars, target[0], target[1])
+            if pos is None:
+                return
+            # 注释与字符串里的括号不参与配对,也不应被标成"未匹配"
+            # (否则 `// 说明 (行` 会一直显示红色下划线)
+            if chars[pos][3]:
+                return
+            other = self._match_bracket(chars, pos)
+            if other is None:
+                # 未配对:标红提示(编辑中途很常见)
+                a = self._idx(chars[pos][1], chars[pos][2])
+                b = self._idx(chars[pos][1], chars[pos][2] + 1)
+                self.text.tag_add("bracket_unmatched", a, b)
+                self._bracket_marks = [(a, b)]
+                self._bracket_tagged = True
+                return
+            for p in (pos, other):
+                a = self._idx(chars[p][1], chars[p][2])
+                b = self._idx(chars[p][1], chars[p][2] + 1)
+                self.text.tag_add("bracket_match", a, b)
+                self._bracket_marks.append((a, b))
+            self._bracket_tagged = True
+        except tk.TclError:
+            pass
 
     # ---------- 悬停提示 ----------
     def _on_motion(self, ev):

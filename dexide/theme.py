@@ -35,6 +35,9 @@ HL = {
     'decl':       C['mauve'],    # func/let/type/extern/release 声明关键字
     'param':      C['subtext1'], # 函数参数名(形参)
     'delim':      C['overlay0'], # 标点 ( ) [ ] ; , :
+    # ---- 括号配对(光标处的括号与它的配对项) ----
+    'bracket_match':     C['teal'],   # 配对成功的一对
+    'bracket_unmatched': C['red'],    # 找不到配对(常见于编辑中途)
 }
 
 # 关键字 → 高亮类别。

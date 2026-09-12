@@ -613,6 +613,236 @@ def test_editor_indent_and_editing():
                 os.remove(f)
 
 
+
+def test_bracket_highlight():
+    """括号配对高亮:光标处的括号与配对项;未配对标红;注释/字符串内不参与。"""
+    print("[editor] 括号配对高亮")
+    import tkinter as tk
+    from dexide.editor import CodeEditor
+    try:
+        root = tk.Tk()
+        root.withdraw()
+    except Exception as e:
+        print(f"  SKIP  (无 Tk: {e})")
+        return
+    from dexide.analyzer import ProjectAnalyzer
+    an = ProjectAnalyzer(SAMPLES)
+    an.reanalyze()
+    tmp = os.path.join(SAMPLES, "_ide_bracket_tmp.dex")
+
+    def check_at(text, line, col, label, want_match, want_unmatched):
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        ed = CodeEditor(root, tmp, an)
+        ed.set_text(text)
+        # mark_set 用 Tk 索引(1 基列 → Tk 列 col-1)
+        ed.text.mark_set("insert", f"{line}.{col - 1}")
+        ed.highlight_brackets()
+
+        def chars(tag):
+            rs = ed.text.tag_ranges(tag)
+            return [ed.text.get(rs[i], rs[i + 1]) for i in range(0, len(rs), 2)]
+
+        m, u = chars("bracket_match"), chars("bracket_unmatched")
+        ed.destroy()
+        check(label, m == want_match and u == want_unmatched,
+              f"match={m} unmatched={u}")
+
+    T = "func f(a, b) { return a; }\n"
+    check_at(T, 1, 7, "光标在 ( 配 )", ["(", ")"], [])
+    check_at(T, 1, 14, "光标在 { 配 }", ["{", "}"], [])
+    # 配对结果按源码顺序返回(先是靠前的那个)
+    check_at(T, 1, 26, "光标在 } 配 {", ["{", "}"], [])
+    check_at(T, 1, 12, "光标在 ) 配 (", ["(", ")"], [])
+    check_at(T, 1, 31, "行尾无括号则不高亮", [], [])
+    check_at("func f(a, b {\n", 1, 13, "缺 ) 时 { 标红", [], ["{"])
+    check_at("// note ( \nlet x = 1;\n", 1, 9, "注释里的括号不参与", [], [])
+    check_at('let s = "a(b";\n', 1, 11, "字符串里的括号不参与", [], [])
+    check_at("((a))\n", 1, 1, "嵌套:外层 ( 配最外层 )", ["(", ")"], [])
+    check_at("((a))\n", 1, 2, "嵌套:内层 ( 配内层 )", ["(", ")"], [])
+
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except OSError:
+        pass
+    try:
+        root.destroy()
+    except Exception:
+        pass
+
+
+
+def test_find_replace():
+    """查找替换:大小写不敏感、多匹配、环绕导航、替换当前/全部、关闭后清理。"""
+    print("[editor] 查找替换")
+    import tkinter as tk
+    from dexide.editor import CodeEditor
+    try:
+        root = tk.Tk()
+        root.withdraw()
+    except Exception as e:
+        print(f"  SKIP  (无 Tk: {e})")
+        return
+    from dexide.analyzer import ProjectAnalyzer
+    an = ProjectAnalyzer(SAMPLES)
+    an.reanalyze()
+    tmp = os.path.join(SAMPLES, "_ide_find_tmp.dex")
+    SRC = "let alpha = 1;\nlet Beta = 2;\nprint alpha;\nprint Beta;\n"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(SRC)
+    ed = CodeEditor(root, tmp, an)
+    ed.set_text(SRC)
+    ed.show_find()
+
+    def nmatch():
+        return len(ed.text.tag_ranges("find_all")) // 2
+
+    ed._find_var.set("alpha")
+    ed._refresh_find_marks()
+    check("找到全部匹配", nmatch() == 2, nmatch())
+    check("计数标签显示处数", ed._find_count.cget("text") == "2 处",
+          ed._find_count.cget("text"))
+
+    ed._find_var.set("beta")
+    ed._refresh_find_marks()
+    check("大小写不敏感匹配", nmatch() == 2, nmatch())
+
+    ed._find_var.set("zzz")
+    ed._refresh_find_marks()
+    check("无匹配时计数提示", ed._find_count.cget("text") == "无匹配",
+          ed._find_count.cget("text"))
+
+    ed._find_var.set("alpha")
+    ed._refresh_find_marks()
+    check("默认选中第 0 个", ed._find_idx == 0, ed._find_idx)
+    ed.find_next()
+    check("下一个前进到第 1 个", ed._find_idx == 1, ed._find_idx)
+    ed.find_next()
+    check("下一个在末尾环绕", ed._find_idx == 0, ed._find_idx)
+    ed.find_prev()
+    check("上一个在开头环绕", ed._find_idx == 1, ed._find_idx)
+
+    ed._find_var.set("alpha")
+    ed._repl_var.set("ALPHA")
+    ed._refresh_find_marks()
+    ed.replace_all()
+    body = ed.text.get("1.0", "end-1c")
+    check("全部替换(大小写不敏感)",
+          body == "let ALPHA = 1;\nlet Beta = 2;\nprint ALPHA;\nprint Beta;\n",
+          repr(body))
+
+    ed._find_var.set("print")
+    ed._repl_var.set("show")
+    ed._refresh_find_marks()
+    ed.replace_current()
+    body = ed.text.get("1.0", "end-1c")
+    check("替换当前只改一处", body.count("show") == 1 and body.count("print") == 1,
+          repr(body))
+
+    ed.hide_find()
+    check("关闭后清除高亮", nmatch() == 0, nmatch())
+    check("关闭后面板隐藏", not ed._find_panel.winfo_ismapped())
+
+    ed.destroy()
+    try:
+        root.destroy()
+    except Exception:
+        pass
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+
+
+
+def test_code_folding():
+    """代码折叠:区域识别、折叠隐藏、展开还原、嵌套、注释/字符串不产生假块。"""
+    print("[editor] 代码折叠")
+    import tkinter as tk
+    from dexide.editor import CodeEditor
+    try:
+        root = tk.Tk()
+        root.withdraw()
+    except Exception as e:
+        print(f"  SKIP  (无 Tk: {e})")
+        return
+    from dexide.analyzer import ProjectAnalyzer
+    an = ProjectAnalyzer(SAMPLES)
+    an.reanalyze()
+    tmp = os.path.join(SAMPLES, "_ide_fold_tmp.dex")
+    SRC = ("func f() {\n"
+           "    let a = 1;\n"
+           "    if a {\n"
+           "        print a;\n"
+           "    }\n"
+           "    return a;\n"
+           "}\n"
+           "let x = 1;\n")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(SRC)
+    ed = CodeEditor(root, tmp, an)
+    ed.set_text(SRC)
+    ed.compute_folds()
+    t = ed.text
+
+    check("识别出两个折叠块", sorted(ed._fold_regions) == [1, 3],
+          ed._fold_regions)
+    check("折叠块行数正确", ed._fold_regions.get(1, (0, 0))[1] == 6,
+          ed._fold_regions)
+
+    ed.fold(1)
+    rs = t.tag_ranges("fold_hidden")
+    check("折叠后产生隐藏区间", len(rs) == 2, [str(x) for x in rs])
+    check("隐藏区间覆盖块体", len(rs) == 2 and t.get(rs[0], rs[1]).lstrip().startswith("let a"),
+          t.get(rs[0], rs[1]) if len(rs) == 2 else "")
+    check("行尾给出折叠提示", "⋯" in t.get("1.0", "1.end"), t.get("1.0", "1.end"))
+    check("文本内容未被改动(折叠只是显示层)", t.get("1.0", "end-1c") != SRC
+          and SRC.replace("func f() {", "func f() {⋯ 6 行", 1) == t.get("1.0", "end-1c"),
+          repr(t.get("1.0", "end-1c")))
+
+    ed.fold(3)
+    check("支持嵌套折叠", 3 in ed._folded and 1 in ed._folded, ed._folded)
+
+    ed.unfold(3)
+    check("展开内层不影响外层", ed._folded == {1}, ed._folded)
+    ed.unfold(1)
+    check("全部展开后无隐藏区间", not t.tag_ranges("fold_hidden"))
+    check("展开后文本完全还原", t.get("1.0", "end-1c") == SRC,
+          repr(t.get("1.0", "end-1c")))
+
+    ed.fold(1)
+    ed.fold(3)
+    ed.unfold_all()
+    check("unfold_all 还原", t.get("1.0", "end-1c") == SRC and not ed._folded)
+
+    # 注释/字符串里的花括号不应产生折叠块
+    tricky = '// 说明 {\nlet s = "a{b";\n'
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(tricky)
+    ed.set_text(tricky)
+    ed.compute_folds()
+    check("注释/字符串里的花括号不产生假折叠块", not ed._fold_regions,
+          ed._fold_regions)
+
+    # 单行块 {} 不必折叠
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("func g() { return 1; }\n")
+    ed.set_text("func g() { return 1; }\n")
+    ed.compute_folds()
+    check("单行块不产生折叠", not ed._fold_regions, ed._fold_regions)
+
+    ed.destroy()
+    try:
+        root.destroy()
+    except Exception:
+        pass
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+
+
 def main():
     print("DEXIDE 测试")
     test_analyzer()
@@ -625,6 +855,9 @@ def main():
     test_syntax_mask()
     test_highlight_categories()
     test_editor_indent_and_editing()
+    test_bracket_highlight()
+    test_find_replace()
+    test_code_folding()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败")
     return 1 if FAIL else 0
 
