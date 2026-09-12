@@ -20,8 +20,10 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -421,6 +423,51 @@ def test_viewport(dll):
             o = m.ok("scene.outline")[0]
             check("去掉 collider 后按 sprite 算",
                   o["kind"] == "sprite" and o["w"] == 8 and o["h"] == 6, o)
+            # 轴心:默认 0.5 = 以实体位置为中心。框线必须与**引擎画出来的位置**逐字一致
+            # (引擎:原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放),否则用户看到的就是
+            # "只有框线在动、图像在别处"。实体在 (100,50),8×6 的图 → 框线 (96,47)。
+            check("轴心 0.5 时框线以实体为中心(与引擎同一公式)",
+                  abs(o["x"] - 96.0) < 0.01 and abs(o["y"] - 47.0) < 0.01, o)
+            m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "px", "value": 0})
+            m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "py", "value": 0})
+            o = m.ok("scene.outline")[0]
+            check("轴心改成左上角后框线跟着挪到实体位置",
+                  abs(o["x"] - 100.0) < 0.01 and abs(o["y"] - 50.0) < 0.01, o)
+            m.ok("comp.set", {"id": eid, "comp": "transform", "field": "sx", "value": 2.0})
+            m.ok("comp.set", {"id": eid, "comp": "transform", "field": "sy", "value": 2.0})
+            o = m.ok("scene.outline")[0]
+            check("缩放后框线宽高一起变(8×6 → 16×12)",
+                  abs(o["w"] - 16.0) < 0.01 and abs(o["h"] - 12.0) < 0.01, o)
+            # 视口用的是**活动相机**(camera.x/y/zoom,不是 transform),前端画网格/选中框
+            # 用的是 app.info 报的那个视图 —— 报错了就是"画面跟相机走、框线不跟"。
+            m.ok("view.set", {"on": False})
+            check("没有相机时视图就是 0,0,1",
+                  m.ok("app.info")["view"]["x"] == 0
+                  and m.ok("app.info")["view"]["zoom"] == 1, m.ok("app.info")["view"])
+            cam = m.ok("entity.add", {"name": "相机", "comps": ["transform", "camera"]})
+            m.ok("comp.set", {"id": cam["id"], "comp": "camera", "field": "x",
+                              "value": 40})
+            m.ok("comp.set", {"id": cam["id"], "comp": "camera", "field": "y",
+                              "value": 30})
+            m.ok("comp.set", {"id": cam["id"], "comp": "camera", "field": "zoom",
+                              "value": 2})
+            info = m.ok("app.info")
+            check("没有视图覆盖时报的是活动相机的视图(画面和框线才在同一个坐标系)",
+                  info["view"]["x"] == 40 and info["view"]["y"] == 30
+                  and info["view"]["zoom"] == 2 and info["view"]["on"] is False,
+                  info["view"])
+            r0 = m.ok("scene.render")
+            check("scene.render 也报实际生效的视图",
+                  r0["x"] == 40 and r0["y"] == 30 and r0["zoom"] == 2, r0)
+            # 相机不参与活动时(active=0)视图回落到 0,0,1
+            m.ok("comp.set", {"id": cam["id"], "comp": "camera", "field": "active",
+                              "value": 0})
+            check("相机标成不活动后视图回落",
+                  m.ok("app.info")["view"]["zoom"] == 1, m.ok("app.info")["view"])
+            m.ok("view.set", {"x": 10, "y": 20, "zoom": 4})
+            check("有视图覆盖时优先用覆盖值",
+                  m.ok("app.info")["view"]["x"] == 10
+                  and m.ok("app.info")["view"]["zoom"] == 4, m.ok("app.info")["view"])
         finally:
             m.close()
 
@@ -829,6 +876,314 @@ def test_graph_behavior(dll):
                   len(out) >= 3 and out[2].strip() == "0", out)
             check("生成的 logic.dex 在项目里", os.path.exists(r["path"]), r["path"])
         finally:
+            m.close()
+
+
+BLOCKS_MAIN_DEX = """# 积木驱动的入口:像 main.dex 模板那样跑几帧,把结果打出来
+include "dexgame";
+include "logic";
+
+func on_start() {
+    eng_init_offscreen(320, 180);    # 测试里不开真窗口;模板里这一步是 eng_init
+    eng_scene_load("scenes/main.json");
+    logic_start(0.016);
+}
+
+func on_update(dt: float) {
+    logic_update(dt);
+}
+
+func run_frames() {
+    on_start();
+    let i = 0;
+    while (i < 4) {
+        on_update(0.5);
+        i = i + 1;
+    }
+}
+
+run_frames();
+print eng_has(eng_find("玩家"), "transform");   # 场景真的装上了组件吗
+print eng_get_f(eng_find("玩家"), "transform", "x");
+print eng_get_f(eng_find("玩家"), "body", "vy");
+"""
+
+
+def test_blocks_model(dll):
+    """积木(给零基础用户的那一套):目录 / 增删改 / 一键示例 / 生成 / 校验 / 撤销。"""
+    print("[积木脚本(目录/增删改/一键示例/生成)]")
+    with tempdir("ds_blk_") as tmp:
+        proj = os.path.join(tmp, "proj")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": proj, "name": "blk", "template": "starter"})
+            info = m.ok("app.info")
+            check("新项目默认用积木生成逻辑", info["logic_mode"] == "blocks",
+                  info["logic_mode"])
+            types = m.ok("blocks.types")
+            names = [t["type"] for t in types]
+            check("积木目录有 16 种", len(types) == 16, len(types))
+            for want in ("on_start", "on_update", "on_key", "move", "jump",
+                         "camera_follow", "play_sound", "if_ground", "if_key",
+                         "if_field"):
+                check("目录里有 " + want, want in names, names)
+            move = [t for t in types if t["type"] == "move"][0]
+            check("积木句式是中文句子", "走" in move["text"] and "{0}" in move["text"],
+                  move["text"])
+            check("每个空都是下拉选项(不是让用户打字)",
+                  all(len(s.get("options") or []) > 0 for s in move["slots"]),
+                  move["slots"])
+            check("实体类是场景实体的下拉",
+                  [s for s in move["slots"] if s["kind"] == "entity"][0]["options"][0]["value"]
+                  in [e["name"] for e in m.ok("entity.list")], move["slots"][0])
+            check("数值槽带「自定义…」入口",
+                  any(o["value"] == "__custom__"
+                      for s in [x for x in m.ok("blocks.types")
+                                if x["type"] == "set_pos"][0]["slots"]
+                      if s["kind"] == "num"
+                      for o in (s.get("options") or [])), "num 槽")
+
+            # 一键示例:建出来就必须**可编辑**(每块都要有 block_id)
+            ids = []
+            for s in m.ok("blocks.info")["scripts"]:
+                for b in s["blocks"]:
+                    ids.append(b.get("block_id"))
+                    for c in (b.get("body") or []):
+                        ids.append(c.get("block_id"))
+            check("一键示例真的写了积木", len(ids) >= 2, ids)
+            check("一键示例的每块积木都有 block_id(否则界面上改不动/删不掉)",
+                  all(isinstance(i, int) and i > 0 for i in ids), ids)
+
+            # 手动加一段 + 加积木 + 改空 + 上移 + 删除
+            s2 = m.ok("blocks.script.add", {"event": "on_update"})["id"]
+            a = m.ok("blocks.add", {"id": s2, "type": "move"})["block_id"]
+            b = m.ok("blocks.add", {"id": s2, "type": "jump"})["block_id"]
+            check("新加的积木有 block_id", a > 0 and b > a, (a, b))
+            m.ok("blocks.set", {"id": s2, "block_id": a, "name": "dir", "value": "left"})
+            m.ok("blocks.set", {"id": s2, "block_id": b, "name": "obj", "value": "player"})
+            got = [x for x in m.ok("blocks.info")["scripts"] if x["id"] == s2][0]
+            check("改空生效",
+                  got["blocks"][0]["props"]["dir"] == "left"
+                  and got["blocks"][1]["props"]["obj"] == "player", got["blocks"])
+            m.ok("blocks.move", {"id": s2, "block_id": b, "dir": -1})
+            got = [x for x in m.ok("blocks.info")["scripts"] if x["id"] == s2][0]
+            check("上移生效", got["blocks"][0]["block_id"] == b, got["blocks"])
+            check("最上面那块不能再上移",
+                  "最上面" in m.err("blocks.move", {"id": s2, "block_id": b, "dir": -1}))
+            check("不认识的积木带原因",
+                  "没有这种积木" in m.err("blocks.add", {"id": s2, "type": "nope"}))
+            check("改不存在的空带原因",
+                  "没有" in m.err("blocks.set", {"id": s2, "block_id": b,
+                                                 "name": "nope", "value": "x"}))
+            m.ok("blocks.remove", {"id": s2, "block_id": a})
+            got = [x for x in m.ok("blocks.info")["scripts"] if x["id"] == s2][0]
+            check("删积木生效", len(got["blocks"]) == 1, got["blocks"])
+
+            # 校验:播放声音没选声音 = 错误(拦住生成)
+            m.ok("blocks.script.add", {"event": "on_key"})
+            s3 = m.ok("blocks.info")["scripts"][-1]["id"]
+            m.ok("blocks.add", {"id": s3, "type": "play_sound"})
+            m.ok("blocks.set", {"id": s3, "block_id": 0, "name": "key", "value": "32"})
+            v = m.ok("blocks.validate")
+            check("没选声音会被校验拦下", v["ok"] is False and v["errors"] >= 1, v)
+            check("生成代码前会挡住有问题的积木",
+                  "积木有" in m.err("blocks.generate"))
+            ps = [x for x in m.ok("blocks.info")["scripts"] if x["id"] == s3][0]
+            m.ok("blocks.remove", {"id": s3,
+                                   "block_id": ps["blocks"][0]["block_id"]})
+
+            # 代码生成:模板那段必须生成出"每帧往右走 + 按跳键就跳"
+            g = m.ok("blocks.generate")
+            src = g["source"]
+            check("生成的代码有 logic_update", "func logic_update" in src, src[:200])
+            check("生成的代码里是每帧移动(乘以 dt)", "* dt)" in src, src)
+            check("生成的代码里有 eng_find", "eng_find(" in src, src)
+            check("积木落盘到 scripts/logic.dex",
+                  os.path.exists(os.path.join(proj, "scripts", "logic.dex")))
+            check("blocks.json 也落盘了",
+                  os.path.exists(os.path.join(proj, "scripts", "blocks.json")))
+
+            # 撤销:积木的改动要能撤销(快照里带 blocks.json)
+            before = len(m.ok("blocks.info")["scripts"])
+            m.ok("blocks.script.add", {"event": "on_start"})
+            check("加一段后多了一段", len(m.ok("blocks.info")["scripts"]) == before + 1)
+            m.ok("undo")
+            check("撤销后回到原来的段数",
+                  len(m.ok("blocks.info")["scripts"]) == before,
+                  len(m.ok("blocks.info")["scripts"]))
+
+            # 模式切换:切到节点图之后,编译走的是节点图那套
+            r = m.ok("logic.mode", {"mode": "graph"})
+            check("logic.mode 能切到节点图", r["mode"] == "graph", r)
+            m.ok("project.save")
+            check("模式写进了 project.json",
+                  "graph" in open(os.path.join(proj, "project.json"),
+                                  encoding="utf-8").read())
+        finally:
+            m.close()
+
+
+def test_blocks_behavior(dll):
+    """积木的验收线:积木 → 代码 → 编译 → **真的跑出预期行为**。
+
+    模板是"每一帧按 speed=mid(150/秒)往右走",玩家起点 x=300(模板摆好的),
+    所以 4 帧 × dt=0.5 之后应该是 300 + 150×0.5×4 = 600 —— 这正是零基础用户
+    "点了运行就该看到"的效果。
+    """
+    print("[积木跑出预期行为(积木→代码→dexc→vm)]")
+    vm = os.path.join(ROOT, "vm", "vm.exe" if os.name == "nt" else "vm")
+    if not (os.path.exists(DEXC) and os.path.exists(vm)):
+        skip("积木驱动运行", "dexc.exe / vm.exe 未构建")
+        return
+    with tempdir("ds_blkrun_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "blkrun", "template": "starter"})
+            m.ok("scene.save")
+            m.ok("blocks.generate")
+            main_dex = os.path.join(tmp, "scripts", "main.dex")
+            with open(main_dex, "w", encoding="utf-8", newline="\n") as f:
+                f.write(BLOCKS_MAIN_DEX)
+            bc = os.path.join(tmp, "scripts", "main.dexbc")
+            c = subprocess.run([DEXC, "compile", main_dex, "-o", bc],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", cwd=tmp)
+            check("积木生成的代码能过 dexc", c.returncode == 0,
+                  (c.stdout or "") + (c.stderr or ""))
+            if c.returncode != 0:
+                return
+            run = subprocess.run([vm, "scripts/main.dexbc", "-L",
+                                  os.path.join(LIBS, "dexgame")],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", cwd=tmp)
+            out = (run.stdout or "").strip().splitlines()
+            check("积木驱动的程序能跑起来", run.returncode == 0,
+                  (run.stdout or "") + (run.stderr or ""))
+            check("场景真的装上了组件(不是「有实体没组件」的空壳)",
+                  len(out) >= 1 and out[0].strip() == "1", out)
+            check("「每一帧往右走」真的动了(300 起点 + 4×0.5×150 = 600)",
+                  len(out) >= 2 and abs(float(out[1]) - 600.0) < 0.01, out)
+            check("没有多余的动作(没按跳键就不该跳)",
+                  len(out) < 3 or abs(float(out[2])) < 0.01, out)
+        finally:
+            m.close()
+
+
+PREINIT_DEX = """# 故意**不**先 eng_init:场景加载必须照样把组件装上
+include "dexgame";
+
+print eng_scene_load("scenes/main.json");
+let p = eng_find("玩家");
+print eng_object_count();
+print eng_has(p, "transform");
+print eng_has(p, "sprite");
+print eng_get_f(p, "transform", "x");
+print eng_get_f(p, "transform", "y");
+"""
+
+
+def test_scene_load_before_init(dll):
+    """回归:engine 没初始化时加载场景,不能"加载成功但一个组件都没有"。
+
+    症状(实测过):IDE 生成的 main.dex 在 eng_init 之前 eng_scene_load,
+    `dg_comp_kind` 因为组件池没建而返回 -1,而场景加载把 -1 当成
+    "不认识的组件(新版本写的)"**静默跳过** —— 于是窗口里什么都没有,
+    还查不到原因。现在组件池按需初始化,加载结果必须完整。
+    """
+    print("[引擎未初始化就加载场景(静默丢组件的回归)]")
+    vm = os.path.join(ROOT, "vm", "vm.exe" if os.name == "nt" else "vm")
+    if not (os.path.exists(DEXC) and os.path.exists(vm)):
+        skip("未初始化加载场景", "dexc.exe / vm.exe 未构建")
+        return
+    with tempdir("ds_preinit_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "preinit", "template": "starter"})
+            m.ok("scene.save")
+            src = os.path.join(tmp, "pre.dex")
+            with open(src, "w", encoding="utf-8", newline="\n") as f:
+                f.write(PREINIT_DEX)
+            bc = os.path.join(tmp, "pre.dexbc")
+            c = subprocess.run([DEXC, "compile", src, "-o", bc],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", cwd=tmp)
+            check("未初始化加载场景的探针能编译", c.returncode == 0,
+                  (c.stdout or "") + (c.stderr or ""))
+            if c.returncode != 0:
+                return
+            run = subprocess.run([vm, "pre.dexbc", "-L", os.path.join(LIBS, "dexgame")],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", cwd=tmp)
+            out = (run.stdout or "").strip().splitlines()
+            check("引擎未初始化也能加载场景", len(out) >= 1 and out[0].strip() == "0", out)
+            check("实体数与场景一致(2 个)", len(out) >= 2 and out[1].strip() == "2", out)
+            check("transform 装上了", len(out) >= 3 and out[2].strip() == "1", out)
+            check("sprite 装上了", len(out) >= 4 and out[3].strip() == "1", out)
+            check("字段值读得回来(x=300,y=200)",
+                  len(out) >= 6 and abs(float(out[4]) - 300.0) < 0.01
+                  and abs(float(out[5]) - 200.0) < 0.01, out)
+        finally:
+            m.close()
+
+
+def test_template_game_really_runs(dll):
+    """用户按下「运行」必须**真的开出一个游戏窗口**(60ms 就退出的回归)。
+
+    症状(实测过):模板 main.dex 从不调 eng_init,而 eng_run 的循环条件是
+    `while eng_running()` —— 没初始化就没有窗口、eng_running() 恒为 0,
+    于是整个游戏 60 毫秒跑完、什么都不显示。这条测试直接编译**IDE 生成的
+    main.dex** 并跑起来:2 秒后进程必须还活着(窗口开着、帧循环在转),
+    然后把它杀掉。
+    """
+    print("[IDE 生成的游戏真的跑起来(窗口 + 帧循环)]")
+    vm = os.path.join(ROOT, "vm", "vm.exe" if os.name == "nt" else "vm")
+    if not (os.path.exists(DEXC) and os.path.exists(vm)):
+        skip("模板游戏真的跑起来", "dexc.exe / vm.exe 未构建")
+        return
+    with tempdir("ds_game_") as tmp:
+        m = Model(dll)
+        proc = None
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "跑起来", "template": "starter"})
+            m.ok("scene.save")
+            m.ok("blocks.generate")
+            tpl = open(os.path.join(tmp, "scripts", "main.dex"),
+                       encoding="utf-8").read()
+            check("模板里在 on_start 之前 eng_init(否则 on_start 加载场景时还没有设备)",
+                  "eng_init(" in tpl.split("eng_run(")[0], tpl[-300:])
+            check("模板里窗口标题来自项目名(不是写死的字符串)",
+                  "dexstudio_game_title()" in tpl, tpl[-300:])
+            info = open(os.path.join(tmp, "scripts", "project_info.dex"),
+                        encoding="utf-8").read()
+            check("project_info.dex 里有窗口标题函数",
+                  "func dexstudio_game_title()" in info, info)
+            bc = os.path.join(tmp, "scripts", "main.dexbc")
+            c = subprocess.run([DEXC, "compile", os.path.join(tmp, "scripts", "main.dex"),
+                                "-o", bc],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", cwd=tmp)
+            check("模板能编译", c.returncode == 0, (c.stdout or "") + (c.stderr or ""))
+            if c.returncode != 0:
+                return
+            proc = subprocess.Popen([vm, "scripts/main.dexbc", "-L",
+                                     os.path.join(LIBS, "dexgame")],
+                                    cwd=tmp, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT)
+            time.sleep(2.0)
+            alive = proc.poll() is None
+            if not alive:
+                out = (proc.stdout.read() or b"").decode("utf-8", "replace")
+                check("游戏进程活着(窗口开着、帧循环在转)", False,
+                      "2 秒内就退出了(rc=%s):%s" % (proc.returncode, out[-300:]))
+            else:
+                check("游戏进程活着(窗口开着、帧循环在转)", True)
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except Exception:
+                    pass
             m.close()
 
 
@@ -1260,6 +1615,457 @@ def test_graph_link_drag_visible():
           "pending 必须在 drag 的 guard 之前")
 
 
+def test_ui_contract(dll):
+    """界面能用下拉/复选而不是"让用户手打"的**契约**测试。
+
+    这一组盯的是 docs/DEXSTUDIO_UX_ISSUES.md 里的修复:字段元数据、场景管理、
+    父子关系、一键编译存盘、生成前校验、资源改名的引用同步。
+    每一条以前都是"静默做错"——所以必须在无窗口下钉住。"""
+    print("[界面契约:元数据 / 场景管理 / 父子 / 存盘 / 校验]")
+    with tempdir("ds_ui_") as tmp:
+        proj = os.path.join(tmp, "proj")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": proj, "name": "ui"})
+
+            # ---- 字段元数据:前端据此出下拉/复选/取色器/资源选择 ----
+            schema = {c["name"]: {f["name"]: f for f in c["fields"]}
+                      for c in m.ok("comp.schema")}
+            check("字段带中文标签", schema["transform"]["x"].get("label") not in (None, ""),
+                  schema["transform"]["x"])
+            check("collider.kind 是枚举且有值域",
+                  schema["collider"]["kind"].get("kind") == "enum"
+                  and len(schema["collider"]["kind"].get("enum") or []) == 3,
+                  schema["collider"]["kind"])
+            check("枚举值带中文标签",
+                  any(e["label"] == "胶囊" for e in schema["collider"]["kind"]["enum"]),
+                  schema["collider"]["kind"].get("enum"))
+            check("body.motion 是枚举", schema["body"]["motion"].get("kind") == "enum")
+            check("sprite.tex_path 是图片资源选择",
+                  schema["sprite"]["tex_path"].get("kind") == "image")
+            check("sprite.tint 是取色器", schema["sprite"]["tint"].get("kind") == "color")
+            check("sprite.flip 是位掩码多选",
+                  schema["sprite"]["flip"].get("kind") == "flags")
+            check("transform.parent 是实体下拉",
+                  schema["transform"]["parent"].get("kind") == "entity")
+            check("运行期字段只读", schema["sprite"]["texture"].get("readonly") is True)
+            check("引擎没实现的字段只读且说明原因",
+                  schema["transform"]["rot"].get("readonly") is True
+                  and "不读" in (schema["transform"]["rot"].get("hint") or ""),
+                  schema["transform"]["rot"])
+            check("数字字段带单位提示",
+                  schema["transform"]["x"].get("unit") == "像素",
+                  schema["transform"]["x"])
+
+            # ---- 下游数据:实体带 parent、outline 带渲染顺序 ----
+            a = m.ok("entity.add", {"name": "父"})
+            b = m.ok("entity.add", {"name": "子"})
+            lst = {e["name"]: e for e in m.ok("entity.list")}
+            check("entity.list 带 parent(层级树靠它)",
+                  "parent" in lst["父"] and lst["父"]["parent"] == -1, lst["父"])
+            out = {o["name"]: o for o in m.ok("scene.outline")}
+            check("scene.outline 带 layer/order/seq(命中测试按渲染顺序)",
+                  all(k in out["父"] for k in ("layer", "order", "seq")), out["父"])
+
+            # ---- 父子关系 ----
+            r = m.ok("entity.set_parent", {"id": b["id"], "parent": a["id"]})
+            check("设父级", r["parent"] == a["id"], r)
+            m.ok("comp.set", {"id": a["id"], "comp": "transform", "field": "x",
+                              "value": 200})
+            got = m.ok("entity.get", {"id": b["id"]})
+            check("子实体世界坐标含父级位移", got["x"] == 200, got["x"])
+            check("自己当父级被拒绝", "自己" in m.err("entity.set_parent",
+                                                     {"id": b["id"], "parent": b["id"]}))
+            check("成环被拒绝", "环" in m.err("entity.set_parent",
+                                             {"id": a["id"], "parent": b["id"]}))
+            check("父级不存在被拒绝",
+                  "不存在" in m.err("entity.set_parent", {"id": b["id"], "parent": 999999}))
+            m.ok("entity.set_parent", {"id": b["id"], "parent": -1})
+            check("可以断开父级",
+                  m.ok("entity.get", {"id": b["id"]})["x"] == 0)
+            # 删除父级时子实体的 parent 要一起断掉(否则位置"看起来没变"其实掉了)
+            m.ok("entity.set_parent", {"id": b["id"], "parent": a["id"]})
+            m.ok("entity.remove", {"id": a["id"]})
+            check("删掉父级后子实体的 parent 被清掉",
+                  m.ok("entity.list")[0]["parent"] == -1, m.ok("entity.list"))
+
+            # ---- 场景管理 ----
+            check("场景名不许路径穿越",
+                  "不合法" in m.err("scene.new", {"name": "../坏"}))
+            m.ok("scene.new", {"name": "第二关"})
+            check("场景列表里有它", "第二关.json" in m.ok("scene.list"))
+            m.ok("scene.rename", {"name": "第二关", "to": "第三关"})
+            check("改名后新名字在列表里", "第三关.json" in m.ok("scene.list"))
+            check("改名后旧名字不在了", "第二关.json" not in m.ok("scene.list"))
+            m.ok("scene.set_start", {"name": "第三关"})
+            check("起始场景记进了项目状态",
+                  "第三关" in json.dumps(m.ok("project.state").get("project"),
+                                         ensure_ascii=False),
+                  m.ok("project.state").get("project"))
+            m.ok("project.save")
+            check("存盘后起始场景写进了 project.json",
+                  "第三关" in open(os.path.join(proj, "project.json"),
+                                   encoding="utf-8").read())
+            m.ok("scene.delete", {"name": "第三关"})
+            check("删除后不在列表里", "第三关.json" not in m.ok("scene.list"))
+
+            # ---- 项目:文件夹对话框(不弹窗的入口)+ 最近项目 ----
+            check("project.pick(dry) 不弹窗", m.ok("project.pick", {"dry": 1})["dry"] is True)
+            check("最近项目里有它", any(it["path"].endswith("proj")
+                                        for it in m.ok("project.recent")["items"]))
+
+            # ---- 逻辑图:下拉候选 + 默认值 + 校验 ----
+            o = m.ok("graph.options")
+            check("选项里有运算符(且没有 DexLang 不认的 ^)", "^" not in o["ops"]
+                  and "+" in o["ops"], o["ops"])
+            check("选项里有默认动作名", "jump" in o["actions"], o["actions"])
+            check("选项里有按键表与鼠标键",
+                  len(o["keys"]) > 20 and len(o["mouse"]) == 3, len(o["keys"]))
+            check("选项里有组件→字段(下拉联动用)",
+                  len(o["schema"]) >= 8 and "transform" in
+                  [c["name"] for c in o["schema"]], len(o["schema"]))
+            m.ok("entity.add", {"name": "玩家"})
+            o = m.ok("graph.options")
+            check("选项里有场景里的实体(属性下拉用)",
+                  "玩家" in [e["name"] for e in o["entities"]], o["entities"])
+            names = [e["name"] for e in m.ok("entity.list")]
+            n = m.ok("graph.node.add", {"type": "set_field"})
+            info = m.ok("graph.info")["graph"]
+            nd = [x for x in info["nodes"] if x["id"] == n["id"]][0]
+            check("新「写字段」节点默认属性是合法值(以前是空串)",
+                  nd["props"]["obj"] in names and nd["props"]["comp"] == "transform"
+                  and nd["props"]["field"] == "x", nd["props"])
+            kn = m.ok("graph.node.add", {"type": "on_key"})
+            knode = [x for x in m.ok("graph.info")["graph"]["nodes"]
+                     if x["id"] == kn["id"]][0]
+            check("新「按键」节点的键码是有意义的(空格 32,以前是 0)",
+                  knode["props"]["key"] == 32, knode["props"])
+            check("校验:合法图没问题", m.ok("graph.validate")["count"] == 0)
+            ps = m.ok("graph.node.add", {"type": "play_sound"})
+            v = m.ok("graph.validate")
+            check("校验:没选声音会被指出来并带上节点号",
+                  v["count"] == 1 and v["issues"][0]["id"] == ps["id"], v)
+            check("生成代码前会挡住有问题的图",
+                  "问题" in m.err("graph.generate"), m.err("graph.generate"))
+            m.ok("graph.node.remove", {"id": ps["id"]})
+            m.ok("graph.node.add", {"type": "on_action"})
+            g = m.ok("graph.generate")
+            check("用到动作节点会自动绑默认键位",
+                  "eng_bind_default_actions" in g["source"], g["source"][:200])
+            check("生成物里没有空引用的调用",
+                  'eng_find("")' not in g["source"]
+                  and "eng_key_pressed(0.0)" not in g["source"], g["source"])
+
+            # ---- 「保存」要把逻辑图一起写盘 ----
+            m.ok("project.save")
+            lj = open(os.path.join(proj, "scripts", "logic.json"), encoding="utf-8").read()
+            check("project.save 写了逻辑图", "on_action" in lj, lj[:120])
+
+            # ---- 一键编译:存盘 + project_info.dex ----
+            if os.path.exists(DEXC):
+                # 前面的场景管理把当前场景换到了别的文件,这里明确切回 main.json
+                m.ok("scene.load", {"path": "scenes/main.json"})
+                m.ok("entity.add", {"name": "编译存盘探针"})
+                r = m.ok("build.compile")
+                check("build.compile 成功", r["ok"] is True, r.get("out", "")[-200:])
+                check("编译报出起始场景", "main.json" in (r.get("start_scene") or ""),
+                      r.get("start_scene"))
+                scene_txt = open(os.path.join(proj, "scenes", "main.json"),
+                                 encoding="utf-8").read()
+                check("编译前把场景存盘了(游戏跑的就是你看的那份)",
+                      "编译存盘探针" in scene_txt, scene_txt[:200])
+                check("生成了 scripts/project_info.dex",
+                      os.path.exists(os.path.join(proj, "scripts", "project_info.dex")))
+                pi = open(os.path.join(proj, "scripts", "project_info.dex"),
+                          encoding="utf-8").read()
+                check("project_info.dex 里是当前起始场景",
+                      "scenes/main.json" in pi, pi)
+                # 老项目兜底:main.dex 里写死的场景要被改写成当前起始场景
+                main_dex = os.path.join(proj, "scripts", "main.dex")
+                with open(main_dex, "w", encoding="utf-8") as f:
+                    f.write('include "dexgame";\nfunc on_start() {\n'
+                            '    eng_scene_load("scenes/main.json");\n}\n')
+                m.ok("scene.new", {"name": "第二关"})
+                r2 = m.ok("build.compile")
+                txt = open(main_dex, encoding="utf-8").read()
+                check("老项目写死的场景被改写为当前起始场景",
+                      'eng_scene_load("scenes/第二关.json")' in txt
+                      and r2["main_patched"] == 1, txt)
+            else:
+                skip("一键编译的存盘/起始场景检查", "dexc.exe 未构建")
+
+            # ---- 资源:改名连引用一起改 ----
+            # 用仓库里真实的 PNG(假装成图片会被引擎拒绝解码,那不是这条要测的东西)
+            real_png = None
+            for base, _dirs, files in os.walk(os.path.join(ROOT, "tests", "fixtures")):
+                for f in files:
+                    if f.lower().endswith(".png"):
+                        real_png = os.path.join(base, f)
+                        break
+                if real_png:
+                    break
+            if real_png is None:
+                skip("资源引用同步检查", "tests/fixtures 里没有 PNG")
+            else:
+                m.ok("res.import", {"src": real_png, "name": "hero.png"})
+                e2 = m.ok("entity.add", {"name": "有贴图的"})
+                m.ok("comp.add", {"id": e2["id"], "comp": "sprite"})
+                m.ok("comp.set", {"id": e2["id"], "comp": "sprite", "field": "tex_path",
+                                  "value": "res/hero.png"})
+                check("res.refs 数得出引用",
+                      m.ok("res.refs", {"name": "hero.png"})["refs"] == 1,
+                      m.ok("res.refs", {"name": "hero.png"}))
+                check("还被引用的资源不能直接删",
+                      "引用" in m.err("res.delete", {"name": "hero.png"}))
+                r = m.ok("res.rename", {"name": "hero.png", "to": "hero2.png",
+                                        "update_refs": 1})
+                check("改名连引用一起改", r["updated"] == 1, r)
+                check("场景里的引用真的变成新名字",
+                      m.ok("entity.get", {"id": e2["id"]})["comps"]["sprite"]["tex_path"]
+                      == "res/hero2.png",
+                      m.ok("entity.get", {"id": e2["id"]})["comps"]["sprite"])
+                check("导入的名字不许带路径",
+                      "不合法" in m.err("res.import", {"src": real_png,
+                                                       "name": "../x.png"}))
+
+            # ---- 代码页签:只读 + 外部打开 ----
+            check("file.read 能读脚本", "func" in m.ok("file.read",
+                                                       {"path": "scripts/main.dex"})["text"])
+            check("file.open_external(dry) 只回路径",
+                  m.ok("file.open_external", {"path": "scripts/main.dex",
+                                              "dry": 1})["opened"] is False)
+        finally:
+            m.close()
+
+
+def test_sprite_scale(dll):
+    """贴图必须能**缩放**:这是零基础用户最先要做的事("图太大,缩小它")。
+
+    为什么单独一条:引擎原来只会按 sw/sh 1:1 画(取多少画多大),用户拿一张
+    300×400 的角色图**没有任何办法**把它变成 60×80 的小人 —— 而且不知道这一点时
+    会以为"贴图没生效"。现在缩放走 `transform.sx/sy`(1.0 = 原大小),
+    这条测试直接**数渲染出来的像素**:缩放 0.5 之后面积应该约为 1/4。
+    """
+    print("[贴图缩放(transform.sx/sy 真的影响画面)]")
+    bmp = os.path.join(ROOT, "tests", "fixtures", "tiles.png")
+    if not os.path.exists(bmp):
+        skip("贴图缩放", "tests/fixtures/tiles.png 不存在")
+        return
+    with tempdir("ds_scale_") as tmp:
+        proj = os.path.join(tmp, "proj")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": proj, "name": "scale"})
+            m.ok("res.import", {"src": bmp, "name": "tiles.png"})
+            e = m.ok("entity.add", {"name": "小人",
+                                    "comps": ["transform", "sprite"]})
+            # 新加的 sprite 默认就是"整张贴图"(sw/sh = 0)
+            got = m.ok("entity.get", {"id": e["id"]})["comps"]["sprite"]
+            check("新的 sprite 默认画整张贴图(sw/sh = 0)", got["sw"] == 0
+                  and got["sh"] == 0, got)
+            # 模拟**老项目/老模板**留下的 32×32 裁切:换贴图时必须自动改成整张
+            for f in ("sw", "sh"):
+                m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": f,
+                                  "value": 32})
+            r = m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "tex_path",
+                                  "value": "res/tiles.png"})
+            check("换贴图时把旧模板留下的 32×32 裁切改成整张贴图",
+                  r.get("value") == "res/tiles.png", r)
+            got = m.ok("entity.get", {"id": e["id"]})["comps"]["sprite"]
+            check("裁切被清成 0 = 整张贴图", got["sw"] == 0 and got["sh"] == 0, got)
+            check("用户能看到程序的这句说明(不然像是偷偷改了东西)",
+                  "整张贴图" in (r.get("note") or ""), r)
+            # 用户自己裁过的大小不能被顺手改掉
+            for f, v in (("sw", 16), ("sh", 8)):
+                m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": f,
+                                  "value": v})
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "tex_path",
+                              "value": "res/tiles.png"})
+            got = m.ok("entity.get", {"id": e["id"]})["comps"]["sprite"]
+            check("自己裁的 16×8 不会被顺手改掉", got["sw"] == 16 and got["sh"] == 8,
+                  got)
+            for f in ("sw", "sh"):
+                m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": f,
+                                  "value": 0})
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "x",
+                              "value": 0})
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "y",
+                              "value": 0})
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "px",
+                              "value": 0})
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "py",
+                              "value": 0})
+
+            def drawn():
+                r = m.ok("scene.render")
+                w, h, px = read_bmp(r["path"])
+                # 背景 = IDE 的清屏色 0xAARRGGBB=0xFF1E1E2E → 读出来 (R,G,B)=(0x1E,0x1E,0x2E)
+                return sum(1 for (pr, pg, pb) in px
+                           if not (pr == 0x1E and pg == 0x1E and pb == 0x2E)), (w, h)
+
+            full, size = drawn()
+            check("整张贴图被画出来了", full > 500, (full, size))
+            g = m.ok("entity.get", {"id": e["id"]})
+            check("引擎加载了贴图(texture >= 0)", g["comps"]["sprite"]["texture"] >= 0,
+                  g["comps"]["sprite"])
+            for f, v in (("sx", 0.5), ("sy", 0.5)):
+                m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": f,
+                                  "value": v})
+            half, _ = drawn()
+            ratio = half / max(1, full)
+            check("缩放 0.5 之后画面上的面积约为 1/4", 0.15 < ratio < 0.40,
+                  "%.3f(%d → %d)" % (ratio, full, half))
+            # 缩放要反映到选中框上(否则用户拖的是"看不见的框")
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "sx",
+                              "value": 1})
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "sy",
+                              "value": 1})
+            one = [o for o in m.ok("scene.outline") if o["id"] == e["id"]][0]
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "sx",
+                              "value": 0.5})
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "sy",
+                              "value": 0.5})
+            halfo = [o for o in m.ok("scene.outline") if o["id"] == e["id"]][0]
+            check("选中框跟着缩放一起变小",
+                  abs(halfo["w"] * 2 - one["w"]) < 1.0
+                  and abs(halfo["h"] * 2 - one["h"]) < 1.0,
+                  (one["w"], one["h"], halfo["w"], halfo["h"]))
+        finally:
+            m.close()
+
+
+def test_outline_matches_pixels(dll):
+    """选中框必须框住**真的画出来的像素**。
+
+    用户报的症状是"改了贴图,框线变了但图像没出现" —— 根因之一就是框线的
+    坐标公式和引擎画图的公式**不是同一个**:引擎是
+    `原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放`,宿主写的是 `世界坐标 + 轴心`。
+    于是框线偏到图片右下角外面。这条测试直接比"框线"和"画面上的非背景像素包围盒"。
+    """
+    print("[选中框与画面像素对齐]")
+    bmp = os.path.join(ROOT, "tests", "fixtures", "tiles.png")
+    if not os.path.exists(bmp):
+        skip("选中框与像素对齐", "tests/fixtures/tiles.png 不存在")
+        return
+    with tempdir("ds_obox_") as tmp:
+        proj = os.path.join(tmp, "proj")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": proj, "name": "obox"})
+            m.ok("res.import", {"src": bmp, "name": "tiles.png"})
+            e = m.ok("entity.add", {"name": "小人",
+                                    "comps": ["transform", "sprite"]})
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "tex_path",
+                              "value": "res/tiles.png"})
+            for f, v in (("x", 100), ("y", 50)):
+                m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": f,
+                                  "value": v})
+
+            def box():
+                return [o for o in m.ok("scene.outline") if o["id"] == e["id"]][0]
+
+            def pix_bbox():
+                r = m.ok("scene.render")
+                w, h, px = read_bmp(r["path"])
+                xs = [i % w for i, c in enumerate(px)
+                      if not (c[0] == 0x1E and c[1] == 0x1E and c[2] == 0x2E)]
+                ys = [i // w for i, c in enumerate(px)
+                      if not (c[0] == 0x1E and c[1] == 0x1E and c[2] == 0x2E)]
+                if not xs:
+                    return None
+                return min(xs), min(ys), max(xs), max(ys)
+
+            o = box()
+            tw, th = o["w"], o["h"]        # sw=0 → 引擎按整张贴图画
+            check("轴心 0.5 时框线以实体位置为中心",
+                  abs(o["x"] - (100 - tw / 2.0)) < 0.01
+                  and abs(o["y"] - (50 - th / 2.0)) < 0.01, o)
+            b = pix_bbox()
+            check("画面上真的有像素", b is not None, b)
+            if b:
+                check("像素落在框线里(框线不是偏的)",
+                      b[0] >= o["x"] - 1.5 and b[1] >= o["y"] - 1.5
+                      and b[2] <= o["x"] + o["w"] + 0.5
+                      and b[3] <= o["y"] + o["h"] + 0.5,
+                      "bbox=%s outline=(%s,%s,%s,%s)" % (b, o["x"], o["y"],
+                                                        o["w"], o["h"]))
+                check("像素包围盒的左上角与框线左上角对齐(偏差 ≤ 2px;右/下边依赖图的内容)",
+                      abs(b[0] - o["x"]) <= 2 and abs(b[1] - o["y"]) <= 2,
+                      "bbox=%s outline=%s" % (b, (o["x"], o["y"], o["w"], o["h"])))
+            # 轴心改成左上角:框线与像素必须**一起**挪,而且挪的量一样
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "px",
+                              "value": 0})
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "py",
+                              "value": 0})
+            o2 = box()
+            check("轴心 0 时框线左上角就在实体位置",
+                  abs(o2["x"] - 100.0) < 0.01 and abs(o2["y"] - 50.0) < 0.01, o2)
+            b2 = pix_bbox()
+            if b and b2:
+                check("像素也跟着挪了同样的距离",
+                      abs((b2[0] - b[0]) - (o2["x"] - o["x"])) <= 2
+                      and abs((b2[1] - b[1]) - (o2["y"] - o["y"])) <= 2,
+                      "bbox %s → %s, outline %s → %s" % (b, b2, o["x"], o2["x"]))
+        finally:
+            m.close()
+
+
+def read_bmp(path):
+    """读 32/24bpp BMP,返回 (w, h, [(r,g,b), ...])(与 test_gal.py 同一实现)。"""
+    with open(path, "rb") as f:
+        data = f.read()
+    off = struct.unpack_from("<I", data, 10)[0]
+    w = struct.unpack_from("<i", data, 18)[0]
+    h = struct.unpack_from("<i", data, 22)[0]
+    bpp = struct.unpack_from("<H", data, 28)[0]
+    topdown = h < 0
+    h = abs(h)
+    bytespp = bpp // 8
+    row = ((w * bytespp) + 3) // 4 * 4
+    px = []
+    for y in range(h):
+        sy = y if topdown else (h - 1 - y)
+        base = off + sy * row
+        for x in range(w):
+            i = base + x * bytespp
+            px.append((data[i + 2], data[i + 1], data[i]))
+    return w, h, px
+
+
+def test_web_wiring():
+    """前端接线的静态哨兵:两道以前真出过问题的坑。
+
+    1. 引用了 index.html 里不存在的元素 id → `el('x').onclick` 抛 TypeError,
+       整块接线停摆(表现是"按钮点了没反应");
+    2. `hidden` 属性被作者样式里的 display 盖掉 → 该藏的面板一直显示。
+    """
+    print("[前端接线哨兵]")
+    p = os.path.join(ROOT, "tools", "check_web_ids.py")
+    if not os.path.exists(p):
+        skip("前端 id 覆盖检查", "tools/check_web_ids.py 不存在")
+    else:
+        r = subprocess.run([sys.executable, p], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        check("JS 引用的每个元素 id 都在 index.html 里", r.returncode == 0,
+              (r.stdout or "") + (r.stderr or ""))
+    css = os.path.join(ROOT, "dexstudio", "web", "style.css")
+    if os.path.exists(css):
+        with open(css, encoding="utf-8") as f:
+            txt = f.read()
+        check("[hidden] 有 !important(否则 display:flex 会盖掉它)",
+              "[hidden]" in txt and "none !important" in txt)
+    app = os.path.join(ROOT, "dexstudio", "web", "app.js")
+    if os.path.exists(app):
+        with open(app, encoding="utf-8") as f:
+            src = f.read()
+        check("「挂组件」按钮接线了", "btn-comp-add').onclick" in src)
+        check("「改名」按钮接线了", "btn-rename').onclick" in src)
+        check("页面自测断言 computed display", "hiddenNow(" in src)
+        check("页面自测真的点了按钮", ".click();" in src)
+        check("新建/打开项目走文件夹对话框(不再 prompt 手打路径)",
+              "project.pick" in src and "prompt('项目目录" not in src)
+
+
 def test_packaged_exe():
     """B7:发布形态 —— **exe 旁边没有 web/ 目录**也要能用。
 
@@ -1330,8 +2136,8 @@ def test_web_assets():
     # index.html 的 script 标签都能在 web/ 下找到对应文件
     with open(os.path.join(ROOT, "dexstudio", "web", "index.html"), encoding="utf-8") as fp:
         html = fp.read()
-    for name in ("app.js", "scene.js", "viewport.js", "graph.js", "highlight.js",
-                 "code.js"):
+    for name in ("app.js", "ui.js", "scene.js", "viewport.js", "graph.js",
+                 "highlight.js", "code.js"):
         check(f"index.html 引用了 {name}", f'src="{name}"' in html)
         check(f"{name} 存在", os.path.exists(os.path.join(ROOT, "dexstudio", "web",
                                                          name)))
@@ -1364,6 +2170,10 @@ def test_cli():
     check("--selftest 覆盖中文与编码", "中文与编码" in (r.stdout or ""), r.stdout)
     check("--selftest 覆盖恢复提示语义",
           "本次运行自己写的自动保存不提示恢复" in (r.stdout or ""), r.stdout)
+    check("--selftest 覆盖父子关系与场景管理",
+          "父子关系" in (r.stdout or "") and "场景管理" in (r.stdout or ""), r.stdout)
+    check("--selftest 覆盖「编译前存盘」",
+          "编译前先把场景存盘" in (r.stdout or ""), r.stdout)
 
 
 def test_webview_chain():
@@ -1388,6 +2198,49 @@ def test_webview_chain():
     # 页面那一层(渲染图/层级树/属性面板/瓦片刷子)由页面自己验,结果回传给宿主断言
     check("界面自测跑起来了", "界面自测" in (r.stdout or ""), (r.stdout or "")[-600:])
     check("界面自测全过", "0 项失败" in (r.stdout or ""), (r.stdout or "")[-600:])
+
+
+def test_page_with_project():
+    """带**真资源**跑一遍页面自测:缩略图真的解码、声音真的能播、换贴图后选中框对。
+
+    为什么要单独一条:不带项目跑的时候,页面自测里这一整段是 SKIP 的 —— 而用户报的
+    恰好就是这一段("导入的图是裂图标""声音试听没反应""改了贴图只有框线在动")。
+    """
+    print("[带项目的页面自测(缩略图/试听/换贴图)]")
+    png = os.path.join(ROOT, "tests", "fixtures", "tiles.png")
+    wav = os.path.join(ROOT, "tests", "fixtures", "beep.wav")
+    if not os.path.exists(EXE):
+        skip("带项目页面自测", "dexstudio.exe 未构建")
+        return
+    if not (os.path.exists(png) and os.path.exists(wav)):
+        skip("带项目页面自测", "缺少 tests/fixtures 里的图片/声音")
+        return
+    dll = load_model()
+    if dll is None:
+        skip("带项目页面自测", "libdexstudio.dll 未构建")
+        return
+    with tempdir("ds_wvproj_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "页面自测", "template": "starter"})
+            m.ok("res.import", {"src": png, "name": "英雄.png"})
+            m.ok("res.import", {"src": wav, "name": "音效.wav"})
+            m.ok("scene.save")
+        finally:
+            m.close()               # 先放开项目,再让 exe 去开它
+        r = subprocess.run([EXE, "--project", tmp, "--wv-selftest"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=240)
+        out = r.stdout or ""
+        check("带项目跑页面自测能过", r.returncode == 0, out[-500:])
+        check("页面自测不再跳过资源检查(缩略图/试听真的跑了)",
+              "没有音频资源" not in out and "没有图片资源" not in out, out[-500:])
+        check("缩略图真的解码了(用户报的裂图标)",
+              "缩略图真的解码了" in out, out[-500:])
+        check("声音真的能解码并播放(用户报的试听没反应)",
+              "声音能解码并播放" in out, out[-500:])
+        check("换贴图后选中框 = 整张贴图(用户报的框线动了没图)",
+              "选中框 = 整张贴图" in out and "裁切清 0" in out, out[-500:])
 
 
 def main():
@@ -1418,11 +2271,20 @@ def main():
     test_build_in_chinese_path(dll)
     test_recover_session(dll)
     test_asset_paths(dll)
+    test_ui_contract(dll)
+    test_sprite_scale(dll)
+    test_outline_matches_pixels(dll)
+    test_blocks_model(dll)
+    test_blocks_behavior(dll)
+    test_scene_load_before_init(dll)
+    test_template_game_really_runs(dll)
     test_graph_link_drag_visible()
+    test_web_wiring()
     test_web_assets()
     test_packaged_exe()
     test_cli()
     test_webview_chain()
+    test_page_with_project()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败" + (f", {SKIP} 跳过" if SKIP else ""))
     return 1 if FAIL else 0
 

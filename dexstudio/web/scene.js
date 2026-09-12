@@ -1,30 +1,99 @@
-/* DexStudio 场景编辑器的三块视图:层级树 / 图层 / 属性面板 + 瓦片调色板。
+/* DexStudio 场景编辑器的几块视图:层级树 / 图层 / 属性面板 + 瓦片调色板。
  *
  * 这里是**纯视图**:数据全部来自 DS.entities / DS.outline / DS.schema(都是 C 模型
  * 层给的),编辑动作全部翻译成 ds_command。属性面板完全由 `comp.schema` 生成 ——
- * 引擎加一个组件,这里一行都不用改。 */
+ * 而且现在是**按元数据生成控件**:enum→下拉、bool→复选、color→取色器、
+ * image/audio→资源下拉、entity→实体下拉、readonly→禁用并说明原因。
+ * (以前"int 一律数字框、字符串一律文本框",于是用户得自己记住
+ *  collider.kind 的 0/1/2 是什么意思、贴图路径怎么写。)
+ */
 'use strict';
 
 /* ------------------------------------------------------------ 层级树 */
 
+/* 父子关系按 transform.parent 缩进显示:以前树是平铺的,parent 字段形同不存在。 */
 function renderTree() {
   const ul = $('tree');
   const filter = ($('tree-filter').value || '').toLowerCase();
   ul.innerHTML = '';
-  const list = DS.entities.filter((e) =>
-    !filter || (e.name || '').toLowerCase().indexOf(filter) >= 0);
-  list.forEach((e) => {
-    const o = outlineOf(e.id) || {};
-    const li = document.createElement('li');
-    if (isSelected(e.id)) li.className = 'sel';
-    const dot = '<span class="dot ' + (o.kind || '') + '"></span>';
-    li.innerHTML = '<span class="nm">' + dot + esc(e.name || '(无名)') + '</span>' +
-      '<span class="meta">' + Math.round(e.x) + ',' + Math.round(e.y) + '</span>';
-    li.onclick = (ev) => select([e.id], ev.shiftKey || ev.ctrlKey || ev.metaKey);
-    li.ondblclick = () => centerOn(e.id);
-    ul.appendChild(li);
+  const all = DS.entities;
+  const kids = new Map();
+  const rootIds = [];
+  const byIdMap = new Map(all.map((e) => [e.id, e]));
+  const parentOf = (e) => {
+    const p = Number((e.parent === undefined ? -1 : e.parent));
+    return (p > 0 && byIdMap.has(p) && p !== e.id) ? p : -1;
+  };
+  all.forEach((e) => {
+    const p = parentOf(e);
+    if (p < 0) rootIds.push(e.id);
+    else {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(e.id);
+    }
   });
-  if (!list.length) {
+  const matches = (e) => !filter || (e.name || '').toLowerCase().indexOf(filter) >= 0;
+  const hit = new Set();
+  all.forEach((e) => {
+    if (!matches(e)) return;
+    /* 过滤时把祖先也留下(否则缩进看起来像断了) */
+    let cur = e.id;
+    let guard = 0;
+    while (cur > 0 && guard++ < 64) {
+      hit.add(cur);
+      const node = byIdMap.get(cur);
+      if (!node) break;
+      const p = parentOf(node);
+      if (p < 0 || hit.has(p)) break;
+      cur = p;
+    }
+  });
+  let painted = 0;
+  const walk = (id, depth) => {
+    const e = byIdMap.get(id);
+    if (!e || !hit.has(id)) return;
+    if (matches(e)) {
+      const o = outlineOf(e.id) || {};
+      const li = document.createElement('li');
+      if (isSelected(e.id)) li.className = 'sel';
+      li.draggable = true;
+      li.dataset.id = String(e.id);
+      li.style.paddingLeft = (6 + depth * 12) + 'px';
+      const dot = '<span class="dot ' + (o.kind || '') + '"></span>';
+      li.innerHTML = '<span class="nm">' +
+        (depth ? '<span class="tw">└</span>' : '') + dot + esc(e.name || '(无名)') +
+        '</span><span class="meta">' + Math.round(e.x) + ',' + Math.round(e.y) + '</span>';
+      li.onclick = (ev) => select([e.id], ev.shiftKey || ev.ctrlKey || ev.metaKey);
+      li.ondblclick = () => centerOn(e.id);
+      li.ondragstart = (ev) => {
+        ev.dataTransfer.setData('text/plain', String(e.id));
+        ev.dataTransfer.effectAllowed = 'move';
+      };
+      li.ondragover = (ev) => {
+        if (ev.dataTransfer.types.indexOf('text/plain') >= 0) {
+          ev.preventDefault();
+          li.classList.add('drop');
+        }
+      };
+      li.ondragleave = () => li.classList.remove('drop');
+      li.ondrop = async (ev) => {
+        ev.preventDefault();
+        li.classList.remove('drop');
+        const src = parseInt(ev.dataTransfer.getData('text/plain'), 10);
+        if (!src || src === e.id) return;
+        try {
+          await call('entity.set_parent', { id: src, parent: e.id }, '设为子实体');
+          await refresh();
+          toast((byIdMap.get(src) || {}).name + ' 现在是 ' + e.name + ' 的子实体', 'ok');
+        } catch (err) { /* 已提示 */ }
+      };
+      ul.appendChild(li);
+      painted++;
+    }
+    (kids.get(id) || []).forEach((k) => walk(k, depth + 1));
+  };
+  rootIds.forEach((id) => walk(id, 0));
+  if (!painted) {
     ul.innerHTML = '<li class="meta">' +
       (DS.entities.length ? '(过滤后为空)' : '(空场景 —— 点「+ 实体」开始)') + '</li>';
   }
@@ -53,38 +122,69 @@ function renderLayers() {
     ul.innerHTML = '<li class="meta">(没有实体)</li>';
     return;
   }
-  Array.from(counts.keys()).sort((a, b) => a - b).forEach((k) => {
+  const keys = Array.from(counts.keys()).sort((a, b) => a - b);
+  keys.forEach((k, i) => {
     const ids = DS.outline.filter((o) => (o.layer || 0) === k).map((o) => o.id);
     const li = document.createElement('li');
-    li.innerHTML = '<span>图层 ' + k + '</span>' +
-      '<span class="meta">' + counts.get(k) + ' 个</span>';
-    li.onclick = (ev) => select(ids, ev.shiftKey || ev.ctrlKey || ev.metaKey);
+    li.innerHTML = '<span>图层 ' + k + '<span class="meta">  ' +
+      (i === 0 ? '(最先画/在最下面)' : (i === keys.length - 1 ? '(最后画/在最上面)' : '')) +
+      '</span></span>' +
+      '<span class="meta">' + counts.get(k) + ' 个 ' +
+      '<button class="link" data-shift="-1" title="整层往下挪(数字 -1)">↓</button>' +
+      '<button class="link" data-shift="1" title="整层往上挪(数字 +1)">↑</button>' +
+      '</span>';
+    li.onclick = (ev) => {
+      if (ev.target.dataset && ev.target.dataset.shift) return;
+      select(ids, ev.shiftKey || ev.ctrlKey || ev.metaKey);
+    };
+    li.querySelectorAll('button[data-shift]').forEach((b) => {
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        shiftLayer(k, parseInt(b.dataset.shift, 10), ids);
+      };
+    });
     ul.appendChild(li);
   });
-  /* 全部图层共用的格子顺序由 sprite/tilemap 的 layer 字段决定 —— 这里顺便
-   * 提示一句,免得用户以为图层面板能排序 */
   const note = document.createElement('li');
   note.className = 'meta';
-  note.textContent = '(顺序由组件的 layer / order 字段决定)';
+  note.textContent = '(顺序 = 组件的 layer / order 字段:数字小的先画。↑↓ 整层挪一格)';
   ul.appendChild(note);
+}
+
+/* 整层上移/下移:改这一层所有实体的 layer 字段(一条撤销记录)。
+ * 图层不是独立对象,就是组件字段,所以"新建图层"= 把实体的 layer 设成一个新数字。 */
+async function shiftLayer(k, delta, ids) {
+  const targets = ids || DS.outline.filter((o) => (o.layer || 0) === k).map((o) => o.id);
+  const items = [];
+  targets.forEach((id) => {
+    const e = byId(id);
+    const comps = (e && e.comps) || [];
+    if (comps.indexOf('sprite') >= 0) {
+      items.push({ id, comp: 'sprite', field: 'layer', value: k + delta });
+    }
+    if (comps.indexOf('tilemap') >= 0) {
+      items.push({ id, comp: 'tilemap', field: 'layer', value: k + delta });
+    }
+  });
+  if (!items.length) { toast('这一层里没有可调的实体', 'warn'); return; }
+  try {
+    await call('comp.set_many', { items }, '调整图层');
+    await refresh();
+  } catch (e) { /* 已提示 */ }
 }
 
 /* ------------------------------------------------------------ 属性面板 */
 
-const TYPE_LABEL = { 1: 'float', 2: 'int/bool', 3: 'string' };
-
-/* 哪些字段其实是"路径"?改完要能看出错在哪(引擎会立刻尝试加载)。 */
-const PATH_FIELDS = { tex_path: 1, path: 1 };
-
 async function renderInspector() {
   const box = $('inspector');
-  const id = DS.sel.length === 1 ? DS.sel[0] : (DS.sel.length ? DS.sel[DS.sel.length - 1] : 0);
   const multi = DS.sel.length > 1;
+  const id = DS.sel.length ? DS.sel[DS.sel.length - 1] : 0;
   $('ent-ops').hidden = !id;
   $('comp-add-row').hidden = !id;
   $('sel-name').textContent = !id ? '未选中'
     : (multi ? '选中 ' + DS.sel.length + ' 个(显示最后一个)' : '#' + id);
   box.innerHTML = '';
+  renderParentSelect(id);
   if (!id) {
     box.innerHTML = '<p class="hint">在层级树或视口里点一个实体。</p>';
     $('comp-add-sel').innerHTML = '';
@@ -101,24 +201,35 @@ async function renderInspector() {
   }
   const comps = detail.comps || {};
   const have = Object.keys(comps);
-  /* 挂组件下拉:自省出来的组件里去掉已经挂上的 */
+  /* 挂组件下拉:自省出来的组件里去掉已经挂上的,并带上中文说明 */
   const sel = $('comp-add-sel');
   sel.innerHTML = '';
   DS.schema.filter((c) => have.indexOf(c.name) < 0).forEach((c) => {
     const op = document.createElement('option');
     op.value = c.name;
-    op.textContent = c.name;
+    op.textContent = COMP_HINT[c.name] ? (c.name + '  —  ' + COMP_HINT[c.name]) : c.name;
     sel.appendChild(op);
   });
   $('btn-comp-add').disabled = !sel.options.length;
+
+  if (multi) {
+    const note = document.createElement('div');
+    note.className = 'batch-note';
+    note.textContent = '多选:' + DS.sel.length + ' 个实体。下面的字段会同时写给' +
+      '所有挂了这个组件的实体(一条撤销记录)。';
+    box.appendChild(note);
+  }
 
   have.forEach((cname) => {
     const spec = DS.schema.find((c) => c.name === cname) || { fields: [] };
     const div = document.createElement('div');
     div.className = 'comp';
+    div.dataset.comp = cname;
     const head = document.createElement('div');
     head.className = 'head';
-    head.innerHTML = '<span>' + esc(cname) + '</span>' +
+    head.innerHTML = '<span>' + esc(cname) +
+      (COMP_HINT[cname] ? ' <span class="hint">' + esc(COMP_HINT[cname]) + '</span>' : '') +
+      '</span>' +
       '<span class="mini"><button class="link" data-rm="' + esc(cname) + '">移除</button></span>';
     div.appendChild(head);
     spec.fields.forEach((f) => {
@@ -142,51 +253,90 @@ async function renderInspector() {
   });
 }
 
+/* 组件的中文说明(自省只给名字;这层说明是给"不知道这些是什么"的人看的) */
+const COMP_HINT = {
+  transform: '位置',
+  sprite: '画一张图',
+  camera: '决定视口看哪儿',
+  animation: '逐帧动画',
+  collider: '碰撞形状',
+  body: '物理运动',
+  tilemap: '瓦片地图',
+  audio: '声音',
+};
+
+/* 父级下拉:值只有一个,而且程序全知道 —— 以前是让用户手填实体 id */
+function renderParentSelect(id) {
+  const sel = $('ent-parent');
+  if (!sel) return;
+  const e = id ? byId(id) : null;
+  const cur = e ? Number(e.parent === undefined ? -1 : e.parent) : -1;
+  sel.innerHTML = '';
+  const none = document.createElement('option');
+  none.value = '-1';
+  none.textContent = '(没有父实体)';
+  sel.appendChild(none);
+  DS.entities.forEach((o) => {
+    if (o.id === id) return;
+    const op = document.createElement('option');
+    op.value = String(o.id);
+    op.textContent = o.name || ('#' + o.id);
+    if (o.id === cur) op.selected = true;
+    sel.appendChild(op);
+  });
+  sel.disabled = !id;
+}
+
+/* 一个字段 = 一行:标签(中文 + 单位) + 按元数据生成的控件 */
 function fieldRow(id, comp, f, value) {
   const row = document.createElement('div');
-  row.className = 'field';
+  row.className = 'field' + (f.readonly ? ' readonly' : '') + (f.kind === 'flags' ? ' flags' : '');
   const lab = document.createElement('label');
-  lab.innerHTML = esc(f.name) + (f.persist ? '' : ' <span class="rt">运行期</span>');
-  lab.title = f.name + ' (' + (TYPE_LABEL[f.type] || f.type) +
-    (f.persist ? ',存盘' : ',不存盘') + ')';
+  lab.innerHTML = esc(f.label || f.name) +
+    (f.unit ? '<span class="unit">(' + esc(f.unit) + ')</span>' : '') +
+    (f.persist === false || f.readonly ? '<span class="ro">只读</span>' : '');
+  lab.title = comp + '.' + f.name + '  ' + (f.hint || '') +
+    (f.readonly ? '' : '(改这里会立刻生效)');
   row.appendChild(lab);
-  const inp = document.createElement('input');
-  if (f.type === 3) {
-    inp.type = 'text';
-    inp.value = (value === null || value === undefined) ? '' : String(value);
-    if (PATH_FIELDS[f.name]) inp.title = '文件路径(相对项目根目录):设置后引擎会立刻加载';
-  } else if (f.type === 2 && isBoolField(f.name)) {
-    inp.type = 'checkbox';
-    inp.checked = !!value;
-  } else {
-    inp.type = 'number';
-    inp.step = (f.type === 1) ? '0.5' : '1';
-    inp.value = (value === null || value === undefined) ? '' : value;
-  }
-  inp.onchange = async () => {
-    let v = inp.value;
-    if (inp.type === 'checkbox') v = inp.checked;
-    else if (inp.type === 'number') v = parseFloat(v) || 0;
+
+  const targets = DS.sel.length > 1 ? DS.sel.slice() : [id];
+  const isParent = (comp === 'transform' && f.name === 'parent');
+  const inp = makeFieldControl(f, value, DS.options, async (v) => {
     try {
-      await call('comp.set', { id, comp, field: f.name, value: v },
-                 '设置 ' + comp + '.' + f.name);
+      if (isParent) {
+        await setParent(parseInt(v, 10));
+        return;
+      }
+      if (targets.length > 1) {
+        /* 批量:只写给真的挂了这个组件的实体(一条撤销记录) */
+        const items = targets
+          .filter((t) => ((byId(t) || {}).comps || []).indexOf(comp) >= 0)
+          .map((t) => ({ id: t, comp, field: f.name, value: v }));
+        await call('comp.set_many', { items }, '设置 ' + comp + '.' + f.name);
+      } else {
+        await call('comp.set', { id, comp, field: f.name, value: v },
+                   '设置 ' + comp + '.' + f.name);
+      }
       row.classList.remove('err');
       await refresh();
     } catch (err) {
       row.classList.add('err');
       log('er', comp + '.' + f.name + ':' + err.message);
     }
-  };
+  });
+  if (f.readonly) {
+    const tag = (inp.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select') {
+      inp.disabled = true;
+    } else if (inp.querySelectorAll) {
+      Array.prototype.forEach.call(inp.querySelectorAll('input,select'),
+                                   (x) => { x.disabled = true; });
+    }
+    inp.title = f.hint || '这个字段由引擎维护,不用手改';
+  }
   row.appendChild(inp);
   return row;
 }
-
-/* 引擎里"int 但其实当布尔用"的字段(自省只给类型码,没有语义标签)*/
-const BOOL_FIELDS = {
-  active: 1, loop: 1, is_trigger: 1, sleeping: 1, flip: 1, visible: 1,
-  play_on_start: 1,
-};
-function isBoolField(name) { return !!BOOL_FIELDS[name]; }
 
 /* 拖拽移动之后批量写回(一次一条撤销记录) */
 async function moveSelection(idPositions) {
@@ -244,7 +394,8 @@ async function updatePalette() {
     img.hidden = true;
     const cells = wrap.querySelector('.cells');
     if (cells) cells.innerHTML = '';
-    log('warn', '这个瓦片地图还没有图集(tex_path)—— 用属性面板设一个 PNG,或点「新建瓦片地图」。');
+    /* 没有图集时给出**可点的下一步**,而不是只打印一句提示 */
+    toast('这个瓦片地图还没有图集:在右边「图集」字段里选一张图片', 'warn');
   }
   pickTile(DS.tile);
 }

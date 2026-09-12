@@ -102,6 +102,8 @@ int ds_engine_load(DsEngine *e, const char *dll_path, const char *exe_dir)
     BIND_I(width); BIND_I(height); BIND_I(set_view);
     BIND_I(tex_width); BIND_I(tex_height);
     BIND_I(set_asset_dir);
+    /* 物理:预览要关掉自动推进(见 ds_model_create 的说明) */
+    BIND_I(physics_set_auto); BIND_I(physics_pause);
     BIND_I(tilemap_load_csv); BIND_I(tilemap_load_file); BIND_I(tilemap_save_csv);
     BIND_I(tilemap_tile); BIND_I(tilemap_cols); BIND_I(tilemap_rows);
     BIND_F(world_x); BIND_F(world_y);

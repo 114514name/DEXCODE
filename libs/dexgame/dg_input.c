@@ -53,6 +53,9 @@ static float   g_axis[DG_AXIS_COUNT];   /* 已做过去死区处理 */
 static int     g_pad_connected = 0;
 static int     g_pad_checked = 0;
 static int     g_pad_index = 0;         /* 用第几个手柄(0..3)*/
+/* 用过合成输入(eng_input_feed*)之后置 1:硬件轮询不再覆盖状态。
+ * 详见 dg_input_begin_frame 的说明(插着手柄的机器上"喂 A 键"会被冲掉)。 */
+static int     g_synth = 0;
 
 /* XInput 运行时加载 */
 typedef struct {
@@ -157,7 +160,13 @@ void dg_input_begin_frame(void) {
        消息是在 eng_frame_begin() 里的 pump 才进来的,如果 begin 就拷贝,
        本帧新按下的键立刻变成"上一帧也按着",pressed 永远为假
        (第一版就是这么错的)。拷贝放在帧**结束**。 */
-    dg_input_poll_pad();
+    /* 合成输入优先:一旦用过 eng_input_feed*,就不再让**硬件**轮询覆盖状态。
+       为什么必须有这条:手柄轮询(XInputGetState)每帧会把 g_pad_now 整个重写成
+       真实手柄的状态 —— 于是"喂 A 键"在**插着手柄的机器上**会被立刻冲掉,
+       同一份测试在这台机器上过、在那台机器上挂(实测:插上手柄后 test_input
+       的"手柄按键也能触发同一个动作"稳定失败)。合成通道是给无人值守测试与
+       IDE 脚本化试玩用的,它必须是权威的。 */
+    if (!g_synth) dg_input_poll_pad();
     g_wheel = 0;
 }
 
@@ -288,6 +297,7 @@ int   dg_input_pad_connected(void) { return g_pad_connected; }
 /* ---------- 合成输入(测试 / IDE 脚本化试玩)---------- */
 int dg_input_feed(int code, int down) {
     if (!dg_code_valid(code)) { dg_error("input code %d is not a valid key code", code); return -1; }
+    g_synth = 1;                    /* 见 dg_input_begin_frame:合成输入优先于硬件轮询 */
     if (code < DG_CODE_KEY_MAX) g_key_now[code] = down ? 1 : 0;
     else if (code < DG_CODE_MOUSE + 3) g_mouse_now[code - DG_CODE_MOUSE] = down ? 1 : 0;
     else if (code < DG_CODE_PAD + DG_PAD_BUTTONS) g_pad_now[code - DG_CODE_PAD] = down ? 1 : 0;
@@ -300,6 +310,7 @@ int dg_input_feed_axis(int axis, float value) {
     if (axis < 0 || axis >= DG_AXIS_COUNT) { dg_error("pad axis %d out of range 0..%d", axis, DG_AXIS_COUNT - 1); return -1; }
     if (value < -1.0f) value = -1.0f;
     if (value > 1.0f) value = 1.0f;
+    g_synth = 1;
     g_axis[axis] = value;
     return 0;
 }

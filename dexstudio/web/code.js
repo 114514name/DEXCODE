@@ -75,7 +75,7 @@ const Code = (function () {
     Highlight.render(el('code'), text, marks);
     const lines = text ? text.split('\n').length : 0;
     el('code-info').textContent = current + ' · ' + lines + ' 行' +
-      (codeOf(current) ? ' · 由逻辑图生成(改图,别改这里)' : '');
+      (codeOf(current) ? ' · 由逻辑图生成(改图,别改这里)' : ' · 只读:点「外部编辑」改它');
   }
 
   const codeOf = (name) => name === 'logic.dex';
@@ -111,6 +111,11 @@ const Code = (function () {
     lastBuild = r;
     renderBuild(r);
     await show(current);           /* 重新标一遍诊断行 */
+    if (r.ok) {
+      toast('编译通过' + (r.warnings ? '(' + r.warnings + ' 个警告)' : ''), 'ok');
+    } else {
+      toast('编译失败:见「编译」页签(' + r.errors + ' 个错误)', 'err');
+    }
     return r;
   }
 
@@ -123,6 +128,7 @@ const Code = (function () {
       const r = await call('build.run', { detach: 1 }, '运行');
       el('buildout').innerHTML += '<div class="diag ok">已启动游戏窗口(pid ' +
         r.pid + ',exe ' + esc(r.exe) + ')。关掉窗口或点「停止」结束。</div>';
+      toast('游戏窗口已启动(场景 ' + (b.start_scene || '?') + ')', 'ok');
       return r;
     } catch (e) {
       el('buildout').innerHTML += '<div class="diag err">运行失败:' +
@@ -159,6 +165,13 @@ const Code = (function () {
       ' · 错误 ' + r.errors + ' · 警告 ' + r.warnings +
       (r.bytecode_exists ? ' · ' + esc(r.bytecode.replace(/\\/g, '/').split('/').pop())
                          : ' · 没有产出字节码') + '</div>');
+    /* 「运行」到底会跑什么:以前完全看不见,于是"我改的东西有没有跑进去"
+     * 只能靠猜(这也是"编译不存盘"那个 bug 能长期存在的土壤)。 */
+    if (r.scene_file || r.start_scene) {
+      parts.push('<div class="diag ok">将运行:场景 ' +
+        esc(String(r.start_scene || r.scene_file).replace(/\\/g, '/')) +
+        (r.main_patched ? '(已把 main.dex 里的场景改成它)' : '') + '</div>');
+    }
     (r.diag || []).forEach((d) => {
       const base = (d.file || '').replace(/\\/g, '/').split('/').pop();
       parts.push('<div class="diag ' + (d.level === 'error' ? 'err' : 'warn') +
@@ -187,6 +200,17 @@ const Code = (function () {
     el('btn-code-compile').onclick = compile;
     el('btn-code-run').onclick = run;
     el('btn-code-stop').onclick = stop;
+    /* 代码页签是**只读**的(改 DexLang 代码用外部编辑器;逻辑图生成的
+     * logic.dex 改了就白改)。所以给一个"用系统默认程序打开"的出口,
+     * 而不是造一个半吊子编辑器。 */
+    el('btn-code-open').onclick = async () => {
+      if (!current) { toast('先选一个脚本文件', 'warn'); return; }
+      try {
+        const r = await call('file.open_external', { path: 'scripts/' + current },
+                             '用外部编辑器打开');
+        toast('已用系统默认程序打开 ' + (r.path || current), 'ok');
+      } catch (e) { /* 已提示 */ }
+    };
     setInterval(poll, 2000);
   }
 

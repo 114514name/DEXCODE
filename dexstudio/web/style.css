@@ -15,6 +15,11 @@
   --border: #3b3b58;
 }
 * { box-sizing: border-box; }
+/* `hidden` 属性必须真的隐藏。
+ * 这一行是**必须的**:下面 .recover{display:flex} / .row{display:flex} 之类的作者样式
+ * 会盖掉浏览器默认样式里的 [hidden]{display:none},于是"设了 hidden 的元素照样显示"
+ * (实测:恢复提示条、橡皮选项、改名行在没选中实体时全都露着)。 */
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -53,6 +58,7 @@ body.mode-graph section.graph-only { display: block; }
 body.mode-graph section.grow.graph-only { display: flex; }
 
 .graph-bar {
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
   display: flex; align-items: center; gap: 8px; padding: 5px 8px;
   background: var(--bg2); border-bottom: 1px solid var(--border);
   flex: none; flex-wrap: wrap;
@@ -73,10 +79,14 @@ body.mode-graph section.grow.graph-only { display: flex; }
 }
 
 /* ---------- 顶栏 ---------- */
+/* 工具栏**不换行**:窗口一窄(比如 150% 缩放下的 960×600),换行会把顶栏撑成好几行,
+ * 把中间的画布挤成 0 高度 —— 实测就是这样(视口/逻辑图/代码全变 0×0)。
+ * 放不下就横向滚动,画布的高度永远稳定。 */
 .topbar {
   display: flex; align-items: center; gap: 12px;
   padding: 6px 12px; background: var(--bg2);
   border-bottom: 1px solid var(--border); flex: none;
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
 }
 .brand { font-weight: 600; letter-spacing: .3px; white-space: nowrap; }
 .brand .ver { color: var(--fg-dim); font-weight: 400; font-size: 12px; }
@@ -130,6 +140,7 @@ ul.layers li .meta { font-size: 11px; }
 /* ---------- 视口 ---------- */
 .center { padding: 0; overflow: hidden; }
 .viewport-bar {
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
   display: flex; align-items: center; gap: 8px; padding: 5px 8px;
   background: var(--bg2); border-bottom: 1px solid var(--border);
   flex: none; flex-wrap: wrap;
@@ -209,6 +220,7 @@ body.mode-code .scene-only,
 body.mode-code .graph-only { display: none; }
 body.mode-code .code-only { display: flex; }
 .code-bar {
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
   display: flex; align-items: center; gap: 8px; padding: 5px 8px;
   background: var(--bg2); border-bottom: 1px solid var(--border);
   flex: none; flex-wrap: wrap;
@@ -273,3 +285,131 @@ pre.code .cl.flash { animation: codeflash .6s ease-in-out 2; }
   font-size: 12.5px; flex: none;
 }
 .recover button { background: #5a4826; border-color: var(--warn); color: #ffe8c0; }
+
+/* ---------- 本次修复新增的控件样式 ---------- */
+select.tiny-wide { width: 130px; }
+select.grow-sel { flex: 1; min-width: 0; }
+button.primary { background: var(--accent); color: #16162a; border-color: var(--accent);
+                 font-weight: 600; }
+.inspector .field.readonly input, .inspector .field.readonly select {
+  opacity: .6; cursor: not-allowed; }
+.inspector .field .unit { color: #6c7086; font-size: 10px; margin-left: 4px; }
+.inspector .field .ro { color: #6c7086; font-size: 10px; margin-left: 4px; }
+.inspector .field.flags { align-items: start; }
+.inspector .field .flagbox { display: flex; flex-wrap: wrap; gap: 8px; }
+.inspector .comp.issue { outline: 1px solid var(--err); }
+.batch-note { background: #2f3b5c; border-radius: 6px; padding: 5px 8px;
+              margin-bottom: 8px; font-size: 11.5px; color: var(--fg-dim); }
+ul.tree li .tw { color: #6c7086; font-size: 10px; margin-right: 3px; }
+ul.tree li.drop { outline: 1px dashed var(--accent2); background: var(--bg3); }
+
+/* 小对话框(替代 prompt/confirm:键盘输入只出现在"名字"上,且都有默认值) */
+.modal { position: fixed; inset: 0; background: rgba(10,10,18,.6); display: flex;
+         align-items: center; justify-content: center; z-index: 50; }
+.modal-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+             padding: 14px 16px; min-width: 360px; max-width: 560px;
+             box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+.modal-box h3 { margin: 0 0 8px; font-size: 14px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.modal .field { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 8px;
+                align-items: center; margin-bottom: 8px; }
+.modal .field label { color: var(--fg-dim); font-size: 12px; }
+.modal .field input, .modal .field select { width: 100%; }
+.modal .choices { display: flex; flex-direction: column; gap: 4px; }
+.modal .choices label { display: flex; gap: 6px; align-items: center; font-size: 12.5px; }
+
+/* 一闪而过的提示(替代"点了没反应") */
+.toast { position: fixed; right: 16px; bottom: 16px; z-index: 60; max-width: 460px;
+         background: var(--bg3); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+         border-radius: 6px; padding: 8px 12px; font-size: 12.5px;
+         box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.toast.err { border-left-color: var(--err); }
+.toast.warn { border-left-color: var(--warn); }
+.toast.ok { border-left-color: var(--ok); }
+
+/* 逻辑图上"有问题"的节点 */
+.log.build .diag.issue { color: var(--err); cursor: pointer; }
+
+/* ---------- 积木模式(B11):给零基础用户的 Scratch 式界面 ---------- */
+.blocks-only { display: none; }
+body.mode-blocks .scene-only { display: none; }
+body.mode-blocks .blocks-only { display: flex; }
+body.mode-blocks section.blocks-only { display: block; }
+body.mode-blocks section.grow.blocks-only { display: flex; }
+body.mode-blocks .blocks-bar {
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  flex: none; flex-wrap: wrap;
+}
+.blocks-bar .sep { width: 1px; height: 18px; background: var(--border); }
+.blocks-bar .group { display: flex; align-items: center; gap: 4px; }
+.blocks-bar .viewinfo { margin-left: auto; color: var(--fg-dim); font-size: 11px; }
+body.mode-blocks .blocks-wrap { flex: 1; min-height: 0; overflow: auto; background: #161622;
+               padding: 12px; }
+body.mode-blocks .blocks-code { flex: none; height: 170px; display: flex; flex-direction: column;
+               border-top: 1px solid var(--border); background: #14141f; }
+body.mode-blocks .blocks-code .tabs { background: var(--bg2); }
+pre.code-small { flex: 1; margin: 0; overflow: auto; padding: 6px 10px;
+                 font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px;
+                 color: var(--fg-dim); white-space: pre; }
+
+/* 积木:圆角、按类分色(Scratch 的观感) */
+#block-area .script { margin-bottom: 16px; }
+#block-area .hat {
+  display: flex; align-items: center; gap: 6px; width: fit-content;
+  background: #d8a657; color: #241c0e; border-radius: 14px 14px 6px 6px;
+  padding: 6px 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 2px 0 rgba(0,0,0,.35);
+}
+#block-area .hat.sel { outline: 2px solid #fff; }
+#block-area .hat .hat-label { opacity: .7; }
+#block-area .stack { display: flex; flex-direction: column; gap: 4px;
+                     padding-left: 14px; border-left: 2px solid rgba(255,255,255,.06);
+                     margin-left: 6px; min-height: 12px; }
+#block-area .block {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  width: fit-content; max-width: 100%;
+  border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer;
+  color: #10121c; box-shadow: 0 2px 0 rgba(0,0,0,.35);
+}
+#block-area .block.cat-act { background: #6aa9f0; }
+#block-area .block.cat-if { background: #9d7ff0; }
+#block-area .block.sel { outline: 2px solid #fff; }
+#block-area .block .blk-ops, #block-area .hat .blk-ops { margin-left: 8px; }
+#block-area .blk-ops .link { color: rgba(0,0,0,.55); text-decoration: none;
+                             font-size: 11px; padding: 0 2px; }
+#block-area .blk-ops .link:hover { color: #000; }
+#block-area .blk-slot {
+  background: rgba(255,255,255,.92); color: #16162a; border: none;
+  border-radius: 10px; padding: 1px 4px; font-size: 12.5px; max-width: 190px;
+}
+#block-area .blk-num {
+  width: 64px; background: rgba(255,255,255,.92); color: #16162a;
+  border: none; border-radius: 10px; padding: 1px 4px; font-size: 12.5px;
+}
+#block-area .if-body { width: 100%; border-left: 3px solid rgba(0,0,0,.25);
+                       margin: 4px 0 4px 8px; padding-left: 8px; }
+#block-area .if-label { font-size: 11.5px; color: rgba(0,0,0,.55); }
+#block-area .blk-drop { color: #6c7086; font-size: 11.5px; padding: 3px 0; }
+#block-area .blk-empty { color: var(--fg-dim); }
+/* 左栏积木盒子 */
+#block-palette .blk-item {
+  display: block; width: 100%; text-align: left; margin-bottom: 5px;
+  padding: 5px 8px; font-size: 12.5px; border: none; border-radius: 6px;
+  color: #10121c; font-weight: 600;
+}
+#block-palette .blk-item.cat-hat { background: #d8a657; }
+#block-palette .blk-item.cat-act { background: #6aa9f0; }
+#block-palette .blk-item.cat-if { background: #9d7ff0; }
+#block-palette .blk-item:hover { filter: brightness(1.12); }
+#block-palette .blk-hole {
+  background: rgba(255,255,255,.85); border-radius: 9px; padding: 0 4px;
+  margin: 0 2px; font-weight: 400; font-size: 12px;
+}
+
+/* 积木模式专属元素:不在积木模式时必须真的隐藏(见上面 [hidden] 的同一个教训) */
+.blocks-only { display: none !important; }
+body.mode-blocks .blocks-only { display: flex !important; }
+body.mode-blocks section.blocks-only { display: block !important; }
+body.mode-blocks section.grow.blocks-only { display: flex !important; }

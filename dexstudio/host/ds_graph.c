@@ -21,6 +21,7 @@
  * ==========================================================================*/
 #include "ds_graph.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -325,6 +326,96 @@ static Dsj *cmd_types(DsModel *m)
     return a;
 }
 
+/* ------------------------------------------------------------ 下拉候选(给前端)
+ *
+ * 逻辑图里的 obj/comp/field/action/key/path 以前全是手打的字符串或数字 ——
+ * 打错一个字就静默无效。这些集合**程序全知道**,所以由 C 一次性交给前端:
+ * 实体名、组件→字段、默认动作名、按键码表、运算符表。
+ * (与节点目录同一套路:前端只负责画,不在 JS 里硬编码第二份真相。) */
+
+static void keys_push(Dsj *a, int code, const char *label)
+{
+    Dsj *o = dsj_obj();
+    dsj_set_int(o, "value", code);
+    dsj_set_str(o, "label", label);
+    dsj_push(a, o);
+}
+
+static Dsj *cmd_options(DsModel *m)
+{
+    Dsj *r = ds_model_scene_options(m);     /* entities / images / audios / schema */
+    int i;
+    /* 运算符:DexLang 真正有的那些。注意**没有** ^(词法器不认,选它编译必错)。 */
+    {
+        static const char *OPS[] = {"+", "-", "*", "/", "%",
+                                    "<", "<=", "==", "!=", ">=", ">"};
+        Dsj *a = dsj_arr();
+        for (i = 0; i < (int)(sizeof OPS / sizeof OPS[0]); i++)
+            dsj_push(a, dsj_str(OPS[i]));
+        dsj_set(r, "ops", a);
+    }
+    /* 默认动作名(与 dexgame_fast.dex 的 eng_bind_default_actions 一致) */
+    {
+        static const char *ACTS[] = {"left", "right", "up", "down", "jump",
+                                     "action", "back"};
+        Dsj *a = dsj_arr();
+        for (i = 0; i < (int)(sizeof ACTS / sizeof ACTS[0]); i++)
+            dsj_push(a, dsj_str(ACTS[i]));
+        dsj_set(r, "actions", a);
+    }
+    /* 按键码表(统一编号,见 libs/dexgame/dg_input.c 头部注释) */
+    {
+        Dsj *a = dsj_arr();
+        char buf[64];
+        static const struct { int code; const char *label; } SPEC[] = {
+            {32, "空格"}, {13, "回车"}, {27, "Esc"}, {9, "Tab"}, {8, "退格"},
+            {16, "Shift"}, {17, "Ctrl"}, {18, "Alt"},
+            {37, "方向键 左"}, {38, "方向键 上"}, {39, "方向键 右"}, {40, "方向键 下"},
+        };
+        for (i = 0; i < (int)(sizeof SPEC / sizeof SPEC[0]); i++)
+            keys_push(a, SPEC[i].code, SPEC[i].label);
+        for (i = 0; i < 26; i++) {                     /* A..Z */
+            snprintf(buf, sizeof buf, "字母 %c", 'A' + i);
+            keys_push(a, 65 + i, buf);
+        }
+        for (i = 0; i < 10; i++) {                     /* 0..9 */
+            snprintf(buf, sizeof buf, "数字 %d", i);
+            keys_push(a, 48 + i, buf);
+        }
+        for (i = 0; i < 12; i++) {                     /* F1..F12 */
+            snprintf(buf, sizeof buf, "F%d", i + 1);
+            keys_push(a, 112 + i, buf);
+        }
+        keys_push(a, 300, "手柄 上"); keys_push(a, 301, "手柄 下");
+        keys_push(a, 302, "手柄 左"); keys_push(a, 303, "手柄 右");
+        keys_push(a, 304, "手柄 Start"); keys_push(a, 305, "手柄 Back");
+        keys_push(a, 306, "手柄 左摇杆按下"); keys_push(a, 307, "手柄 右摇杆按下");
+        keys_push(a, 308, "手柄 LB"); keys_push(a, 309, "手柄 RB");
+        keys_push(a, 310, "手柄 A"); keys_push(a, 311, "手柄 B");
+        keys_push(a, 312, "手柄 X"); keys_push(a, 313, "手柄 Y");
+        {
+            static const char *AX[6] = {"左摇杆 X", "左摇杆 Y", "右摇杆 X",
+                                        "右摇杆 Y", "左扳机 LT", "右扳机 RT"};
+            for (i = 0; i < 6; i++) {
+                snprintf(buf, sizeof buf, "%s 正向", AX[i]);
+                keys_push(a, 400 + i, buf);
+                snprintf(buf, sizeof buf, "%s 负向", AX[i]);
+                keys_push(a, 500 + i, buf);
+            }
+        }
+        dsj_set(r, "keys", a);
+    }
+    /* 鼠标键(工程内部统一编号:256 左 / 257 右 / 258 中) */
+    {
+        Dsj *a = dsj_arr();
+        keys_push(a, 256, "鼠标 左键");
+        keys_push(a, 257, "鼠标 右键");
+        keys_push(a, 258, "鼠标 中键");
+        dsj_set(r, "mouse", a);
+    }
+    return r;
+}
+
 /* ------------------------------------------------------------ 命令:改图 */
 
 static Dsj *cmd_graph_new(DsModel *m)
@@ -420,6 +511,47 @@ static Dsj *cmd_node_add(DsModel *m, Dsj *args)
     /* 剩下的"枚举式字符串"属性也给个可用默认值(前端下拉框直接就有选中项) */
     if (prop_type_of(d, "as") == 's') dsj_set_str(props, "as", "f");
     if (prop_type_of(d, "axis") == 's') dsj_set_str(props, "axis", "x");
+    /* 关键的一步:**引用型属性给成场景里真实存在的第一个实体/资源**。
+     * 以前这里一律留空,于是刚加的「写字段」节点生成 eng_find("") —— 编译通过、
+     * 运行期静默无效(用户只会觉得"图连好了却没反应")。 */
+    {
+        Dsj *opt = ds_model_scene_options(m);
+        char obj[160] = "", cam[160] = "", snd[1024] = "";
+        Dsj *ents = dsj_get(opt, "entities");
+        Dsj *auds = dsj_get(opt, "audios");
+        int i, ne = dsj_len(ents);
+        for (i = 0; i < ne; i++) {
+            Dsj *e = dsj_at(ents, i);
+            const char *nm = dsj_get_str(e, "name", "");
+            Dsj *comps;
+            if (!nm || !*nm) continue;
+            if (!obj[0]) snprintf(obj, sizeof obj, "%s", nm);
+            comps = dsj_get(e, "comps");
+            if (!cam[0] && comps && dsj_get(comps, "camera"))
+                snprintf(cam, sizeof cam, "%s", nm);
+        }
+        if (dsj_len(auds) > 0) {
+            Dsj *a0 = dsj_at(auds, 0);
+            if (a0 && a0->str) snprintf(snd, sizeof snd, "%s", a0->str);
+        }
+        if (prop_type_of(d, "obj") == 's' && !dsj_get_str(props, "obj", "")[0])
+            dsj_set_str(props, "obj", obj);
+        if (prop_type_of(d, "cam") == 's' && !dsj_get_str(props, "cam", "")[0])
+            dsj_set_str(props, "cam", cam[0] ? cam : obj);
+        if (prop_type_of(d, "path") == 's' && !dsj_get_str(props, "path", "")[0])
+            dsj_set_str(props, "path", snd);
+        if (prop_type_of(d, "comp") == 's' && !dsj_get_str(props, "comp", "")[0])
+            dsj_set_str(props, "comp", "transform");
+        if (prop_type_of(d, "field") == 's' && !dsj_get_str(props, "field", "")[0])
+            dsj_set_str(props, "field", "x");
+        if (prop_type_of(d, "action") == 's' && !dsj_get_str(props, "action", "")[0])
+            dsj_set_str(props, "action", "jump");
+        if (prop_type_of(d, "key") == 'i' && dsj_get_num(props, "key", 0) == 0)
+            dsj_set_num(props, "key", 32);            /* 空格 */
+        if (prop_type_of(d, "btn") == 'i' && dsj_get_num(props, "btn", 0) == 0)
+            dsj_set_num(props, "btn", 256);           /* 鼠标左键 */
+        dsj_free(opt);
+    }
     dsj_set(n, "props", props);
     dsj_push(nodes, n);
     ds_model_edit_close(m, tok, 1);
@@ -446,30 +578,133 @@ static void unlink_node(DsModel *m, long long id)
     }
 }
 
+/* 把一组 id(或单个 id)收集成数组,方便批量命令共用 */
+static Dsj *ids_arg(Dsj *args)
+{
+    Dsj *ids = dsj_get(args, "ids");
+    Dsj *out = dsj_arr();
+    int i;
+    if (ids && ids->t == DSJ_ARR) {
+        for (i = 0; i < dsj_len(ids); i++) {
+            Dsj *it = dsj_at(ids, i);
+            if (it && it->t == DSJ_NUM) dsj_push(out, dsj_int((long long)it->num));
+        }
+    }
+    if (!dsj_len(out)) {
+        long long id = dsj_get_int(args, "id", 0);
+        if (id) dsj_push(out, dsj_int(id));
+    }
+    return out;
+}
+
 static Dsj *cmd_node_remove(DsModel *m, Dsj *args)
 {
-    long long id = dsj_get_int(args, "id", 0);
+    Dsj *ids = ids_arg(args);
     Dsj *nodes = graph_nodes(m), *r;
-    int i;
     void *tok;
-    if (!node_by_id(m, id)) {
-        ds_model_error(m, "图里没有节点 %lld", id);
+    int k, removed = 0;
+    if (!dsj_len(ids)) {
+        dsj_free(ids);
+        ds_model_error(m, "graph.node.remove 需要 args.id 或 args.ids");
         return NULL;
     }
     tok = ds_model_edit_open(m);
-    unlink_node(m, id);
-    for (i = 0; i < dsj_len(nodes); i++) {
-        if (dsj_get_int(dsj_at(nodes, i), "id", 0) == id) {
-            dsj_free(dsj_at(nodes, i));
-            memmove(nodes->items + i, nodes->items + i + 1,
-                    (size_t)(dsj_len(nodes) - i - 1) * sizeof *nodes->items);
-            nodes->n--;
-            break;
+    for (k = 0; k < dsj_len(ids); k++) {
+        long long id = (long long)dsj_at(ids, k)->num;
+        int i;
+        if (!node_by_id(m, id)) continue;
+        unlink_node(m, id);
+        for (i = 0; i < dsj_len(nodes); i++) {
+            if (dsj_get_int(dsj_at(nodes, i), "id", 0) == id) {
+                dsj_free(dsj_at(nodes, i));
+                memmove(nodes->items + i, nodes->items + i + 1,
+                        (size_t)(dsj_len(nodes) - i - 1) * sizeof *nodes->items);
+                nodes->n--;
+                removed++;
+                break;
+            }
         }
     }
-    ds_model_edit_close(m, tok, 1);
+    ds_model_edit_close(m, tok, removed ? 1 : 0);
+    if (!removed) {
+        /* 单个 id 时把 id 报出来(错误信息越具体越好);批量时只说"这些" */
+        if (dsj_len(ids) == 1)
+            ds_model_error(m, "图里没有节点 %lld", (long long)dsj_at(ids, 0)->num);
+        else
+            ds_model_error(m, "图里没有这些节点");
+        dsj_free(ids);
+        return NULL;
+    }
+    dsj_free(ids);
     r = dsj_obj();
-    dsj_set_int(r, "removed", id);
+    dsj_set_int(r, "removed", removed);
+    return r;
+}
+
+/* 再做一个(复制节点 + 它的属性;连线不复制 —— 复制连线往往不是用户想要的)。
+ * 支持一次复制多个(框选之后 Ctrl+D)。 */
+static Dsj *cmd_node_duplicate(DsModel *m, Dsj *args)
+{
+    double dx = dsj_get_num(args, "dx", 30);
+    double dy = dsj_get_num(args, "dy", 30);
+    Dsj *ids = ids_arg(args);
+    Dsj *made = dsj_arr(), *r;
+    void *tok;
+    int k;
+    if (!dsj_len(ids)) {
+        dsj_free(ids);
+        ds_model_error(m, "graph.node.duplicate 需要 args.id 或 args.ids");
+        return NULL;
+    }
+    tok = ds_model_edit_open(m);
+    for (k = 0; k < dsj_len(ids); k++) {
+        long long id = (long long)dsj_at(ids, k)->num;
+        Dsj *n = node_by_id(m, id), *copy;
+        long long nid;
+        if (!n) continue;
+        nid = node_next_id(m);
+        copy = dsj_clone(n);
+        dsj_set_int(copy, "id", nid);
+        dsj_set_num(copy, "x", dsj_get_num(n, "x", 0) + dx);
+        dsj_set_num(copy, "y", dsj_get_num(n, "y", 0) + dy);
+        dsj_push(graph_nodes(m), copy);
+        dsj_push(made, dsj_int(nid));
+    }
+    ds_model_edit_close(m, tok, dsj_len(made) > 0);
+    dsj_free(ids);
+    if (!dsj_len(made)) {
+        dsj_free(made);
+        ds_model_error(m, "图里没有这些节点");
+        return NULL;
+    }
+    r = dsj_obj();
+    dsj_set(r, "ids", made);
+    dsj_set_int(r, "id", dsj_len(made) ? (long long)dsj_at(made, 0)->num : 0);
+    return r;
+}
+
+/* 批量移动(拖动一组选中的节点):**一次编辑 = 一条撤销记录** */
+static Dsj *cmd_node_move_many(DsModel *m, Dsj *args)
+{
+    Dsj *items = dsj_get(args, "items");
+    Dsj *r = dsj_obj();
+    void *tok;
+    int i, n = 0;
+    if (!items || items->t != DSJ_ARR || dsj_len(items) == 0) {
+        ds_model_error(m, "graph.node.move_many 需要 args.items 数组");
+        return NULL;
+    }
+    tok = ds_model_edit_open(m);
+    for (i = 0; i < dsj_len(items); i++) {
+        Dsj *it = dsj_at(items, i);
+        Dsj *n2 = it ? node_by_id(m, dsj_get_int(it, "id", 0)) : NULL;
+        if (!n2) continue;
+        dsj_set_num(n2, "x", dsj_get_num(it, "x", dsj_get_num(n2, "x", 0)));
+        dsj_set_num(n2, "y", dsj_get_num(it, "y", dsj_get_num(n2, "y", 0)));
+        n++;
+    }
+    ds_model_edit_close(m, tok, n > 0);
+    dsj_set_int(r, "moved", n);
     return r;
 }
 
@@ -675,6 +910,185 @@ static Dsj *cmd_unlink(DsModel *m, Dsj *args)
     ds_model_edit_close(m, tok, removed ? 1 : 0);
     r = dsj_obj();
     dsj_set_int(r, "removed", removed);
+    return r;
+}
+
+/* ------------------------------------------------------------ 生成前的校验
+ *
+ * 以前属性留空也能生成:产出 `eng_set_f(eng_find(""), "", "", 3.0)` 这种**能编译但
+ * 运行期什么都不做**的代码,用户完全查不出问题在哪(GitHub issue 式体验)。
+ * 现在生成前先过一遍:缺什么、引用了哪个不存在的实体,一次性列出来并**带上节点 id**,
+ * 前端可以把对应节点标红。graph.validate 把同一份结果交给界面。 */
+static int opts_has_entity(Dsj *opts, const char *name)
+{
+    Dsj *ents = dsj_get(opts, "entities");
+    int i;
+    if (!name || !*name) return 0;
+    for (i = 0; i < dsj_len(ents); i++) {
+        if (!strcmp(dsj_get_str(dsj_at(ents, i), "name", ""), name)) return 1;
+    }
+    return 0;
+}
+
+static int opts_has_comp(Dsj *opts, const char *comp)
+{
+    Dsj *sch = dsj_get(opts, "schema");
+    int i;
+    if (!comp || !*comp) return 0;
+    for (i = 0; i < dsj_len(sch); i++) {
+        if (!strcmp(dsj_get_str(dsj_at(sch, i), "name", ""), comp)) return 1;
+    }
+    return 0;
+}
+
+static int opts_has_field(Dsj *opts, const char *comp, const char *field)
+{
+    Dsj *sch = dsj_get(opts, "schema");
+    int i, k;
+    Dsj *fields;
+    if (!comp || !*comp || !field || !*field) return 0;
+    for (i = 0; i < dsj_len(sch); i++) {
+        Dsj *co = dsj_at(sch, i);
+        if (strcmp(dsj_get_str(co, "name", ""), comp)) continue;
+        fields = dsj_get(co, "fields");
+        for (k = 0; k < dsj_len(fields); k++) {
+            Dsj *f = dsj_at(fields, k);
+            if (f && f->str && !strcmp(f->str, field)) return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static void issue_add(Dsj *issues, long long id, const char *type, const char *field,
+                      const char *level, const char *fmt, ...)
+{
+    Dsj *o = dsj_obj();
+    char msg[512];
+    const DsgTypeDef *d = type_def(type);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    dsj_set_int(o, "id", id);
+    dsj_set_str(o, "type", type);
+    dsj_set_str(o, "title", d && d->title ? d->title : type);
+    dsj_set_str(o, "field", field ? field : "");
+    dsj_set_str(o, "level", level);
+    dsj_set_str(o, "msg", msg);
+    dsj_push(issues, o);
+}
+
+/* 引用型属性(实体名)分两级:
+ *   · 空            → **错误**:生成的代码必然无效;
+ *   · 场景里找不到  → **警告**:逻辑图是全局的,而项目可以有多个场景
+ *                     (你可能正在别的场景里编逻辑),所以不能拿它拦编译。 */
+static void validate_field_ref(Dsj *issues, Dsj *opts, Dsj *n, const char *field)
+{
+    const char *v = dsj_get_str(dsj_get(n, "props"), field, "");
+    if (!v || !*v) {
+        issue_add(issues, dsj_get_int(n, "id", 0), dsj_get_str(n, "type", ""), field,
+                  "error", "还没有填 %s", field);
+        return;
+    }
+    if (!opts_has_entity(opts, v)) {
+        issue_add(issues, dsj_get_int(n, "id", 0), dsj_get_str(n, "type", ""), field,
+                  "warn", "当前场景里没有叫 '%s' 的实体(换场景了?还是名字写错了?)", v);
+    }
+}
+
+/* 把整张图的问题收集到 issues(数组;空 = 没问题) */
+static void validate_graph(DsModel *m, Dsj *issues)
+{
+    Dsj *opts = ds_model_scene_options(m);
+    Dsj *nodes = graph_nodes(m);
+    int i;
+    for (i = 0; i < dsj_len(nodes); i++) {
+        Dsj *n = dsj_at(nodes, i);
+        const char *type = dsj_get_str(n, "type", "");
+        Dsj *p = dsj_get(n, "props");
+        long long id = dsj_get_int(n, "id", 0);
+        const DsgTypeDef *d = type_def(type);
+        if (!d) { issue_add(issues, id, type, "", "error", "节点类型不认识"); continue; }
+        if (!strcmp(type, "set_field") || !strcmp(type, "add_field")
+            || !strcmp(type, "field")) {
+            const char *obj = dsj_get_str(p, "obj", "");
+            const char *comp = dsj_get_str(p, "comp", "");
+            const char *field = dsj_get_str(p, "field", "");
+            validate_field_ref(issues, opts, n, "obj");
+            if (!comp || !*comp) {
+                issue_add(issues, id, type, "comp", "error", "还没有选组件");
+            } else if (!opts_has_comp(opts, comp)) {
+                issue_add(issues, id, type, "comp", "error", "没有叫 '%s' 的组件", comp);
+            } else if (!field || !*field) {
+                issue_add(issues, id, type, "field", "error", "还没有选字段");
+            } else if (!opts_has_field(opts, comp, field)) {
+                issue_add(issues, id, type, "field", "error", "组件 %s 没有字段 '%s'",
+                          comp, field);
+            }
+            (void)obj;
+        } else if (!strcmp(type, "destroy") || !strcmp(type, "on_ground")) {
+            validate_field_ref(issues, opts, n, "obj");
+        } else if (!strcmp(type, "camera_to")) {
+            validate_field_ref(issues, opts, n, "cam");
+            validate_field_ref(issues, opts, n, "obj");
+        } else if (!strcmp(type, "play_sound")) {
+            const char *path = dsj_get_str(p, "path", "");
+            if (!path || !*path)
+                issue_add(issues, id, type, "path", "error",
+                          "还没有选声音(点下面的下拉挑一个 res/ 里的音频)");
+        } else if (!strcmp(type, "on_action") || !strcmp(type, "action_down")
+                   || !strcmp(type, "action_pressed")) {
+            const char *act = dsj_get_str(p, "action", "");
+            if (!act || !*act)
+                issue_add(issues, id, type, "action", "error", "还没有选动作");
+        } else if (!strcmp(type, "on_key") || !strcmp(type, "key_down")) {
+            if (dsj_get_num(p, "key", 0) <= 0)
+                issue_add(issues, id, type, "key", "error", "还没有选按键");
+        } else if (!strcmp(type, "mouse_down")) {
+            if (dsj_get_num(p, "btn", 0) <= 0)
+                issue_add(issues, id, type, "btn", "error", "还没有选鼠标键");
+        }
+    }
+    dsj_free(opts);
+}
+
+/* 把 issues 拼成一句人话(带节点号,前端可以据此高亮)。只有**错误**会拦住生成;
+ * 警告(比如"当前场景里没有这个实体")照常生成 —— 逻辑图是全局的,项目可以有多个场景。 */
+static void issues_summary(Dsj *issues, int errors, char *out, size_t outsz)
+{
+    int i, n = dsj_len(issues), shown = 0;
+    size_t o = 0;
+    if (n <= 0 || errors <= 0) { if (outsz) out[0] = 0; return; }
+    o += (size_t)snprintf(out + o, outsz - o, "逻辑图有 %d 处问题:", errors);
+    for (i = 0; i < n && shown < 3 && o + 8 < outsz; i++) {
+        Dsj *it = dsj_at(issues, i);
+        if (strcmp(dsj_get_str(it, "level", "error"), "error")) continue;
+        o += (size_t)snprintf(out + o, outsz - o, "\n  · #%lld %s:%s",
+                              dsj_get_int(it, "id", 0),
+                              dsj_get_str(it, "title", ""),
+                              dsj_get_str(it, "msg", ""));
+        shown++;
+    }
+    if (errors > shown) snprintf(out + o, outsz - o, "\n  …还有 %d 处(点「校验」看全部)",
+                                 errors - shown);
+}
+
+static Dsj *cmd_validate(DsModel *m)
+{
+    Dsj *issues = dsj_arr();
+    Dsj *r = dsj_obj();
+    int i, errs = 0, warns = 0;
+    validate_graph(m, issues);
+    for (i = 0; i < dsj_len(issues); i++) {
+        if (!strcmp(dsj_get_str(dsj_at(issues, i), "level", "error"), "error")) errs++;
+        else warns++;
+    }
+    dsj_set_bool(r, "ok", errs == 0);
+    dsj_set_int(r, "count", dsj_len(issues));
+    dsj_set_int(r, "errors", errs);
+    dsj_set_int(r, "warnings", warns);
+    dsj_set(r, "issues", issues);
     return r;
 }
 
@@ -1063,14 +1477,52 @@ static void emit_event_chains(DsModel *m, Gen *g, const char *event_type, char *
 char *ds_graph_generate(DsModel *m, char *err, unsigned errsz)
 {
     Gen g;
+    Dsj *issues;
+    int uses_action = 0;
     memset(&g, 0, sizeof g);
     if (err) *err = 0;
 
+    /* 先生成前校验:缺属性(错误)→ 直接失败并**说清是哪个节点**。
+     * "实体不在当前场景"只是警告(多场景项目里很常见),不拦。 */
+    issues = dsj_arr();
+    validate_graph(m, issues);
+    {
+        int i, errs = 0;
+        for (i = 0; i < dsj_len(issues); i++) {
+            if (!strcmp(dsj_get_str(dsj_at(issues, i), "level", "error"), "error")) errs++;
+        }
+        if (errs > 0) {
+            if (err) issues_summary(issues, errs, err, errsz);
+            dsj_free(issues);
+            return NULL;
+        }
+    }
+    dsj_free(issues);
+
+    /* 用到动作类节点时才 include dexgame_fast 并绑默认键位(与 main.dex 里那次
+     * 重复也没关系:DexLang 的 include 会去重)。以前谁都没绑,于是
+     * eng_action_pressed("jump") 永远返回 0 —— 图连好了、按空格没反应。 */
+    {
+        Dsj *nodes = graph_nodes(m);
+        int i;
+        for (i = 0; i < dsj_len(nodes); i++) {
+            const char *t = dsj_get_str(dsj_at(nodes, i), "type", "");
+            if (!strcmp(t, "on_action") || !strcmp(t, "action_down")
+                || !strcmp(t, "action_pressed")) { uses_action = 1; break; }
+        }
+    }
+
     gput(&g, "# 由 DexStudio 的逻辑图生成 —— 不要手改(改图,或者改 main.dex)\n");
-    gput(&g, "include \"dexgame\";\n\n");
+    gput(&g, "include \"dexgame\";\n");
+    if (uses_action) gput(&g, "include \"dexgame_fast\";\n");
+    gput(&g, "\n");
 
     gline(&g, "func logic_start(dt: float) {");
     g.depth++;
+    if (uses_action) {
+        gline(&g, "# 默认键位(与 dexgame_fast 的 eng_bind_default_actions 同一份)");
+        gline(&g, "eng_bind_default_actions();");
+    }
     emit_event_chains(m, &g, "on_start", err, errsz);
     g.depth--;
     gline(&g, "}");
@@ -1161,13 +1613,17 @@ int ds_graph_generate_to_file(DsModel *m, char *out_path, unsigned pathsz,
 Dsj *ds_graph_command(DsModel *m, const char *cmd, Dsj *args)
 {
     if (!strcmp(cmd, "graph.types")) return cmd_types(m);
+    if (!strcmp(cmd, "graph.options")) return cmd_options(m);
+    if (!strcmp(cmd, "graph.validate")) return cmd_validate(m);
     if (!strcmp(cmd, "graph.new")) return cmd_graph_new(m);
     if (!strcmp(cmd, "graph.info")) return cmd_graph_info(m);
     if (!strcmp(cmd, "graph.save")) return cmd_graph_save(m);
     if (!strcmp(cmd, "graph.node.add")) return cmd_node_add(m, args);
     if (!strcmp(cmd, "graph.node.remove")) return cmd_node_remove(m, args);
+    if (!strcmp(cmd, "graph.node.duplicate")) return cmd_node_duplicate(m, args);
     if (!strcmp(cmd, "graph.node.set")) return cmd_node_set(m, args);
     if (!strcmp(cmd, "graph.node.move")) return cmd_node_move(m, args);
+    if (!strcmp(cmd, "graph.node.move_many")) return cmd_node_move_many(m, args);
     if (!strcmp(cmd, "graph.link")) return cmd_link(m, args);
     if (!strcmp(cmd, "graph.unlink")) return cmd_unlink(m, args);
     if (!strcmp(cmd, "graph.generate")) return cmd_generate(m);

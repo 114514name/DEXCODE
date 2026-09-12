@@ -103,3 +103,8 @@ _native_test*
 
 # DexStudio 打包输出(python main.py package-dexstudio)
 dist/
+
+# DexStudio 自己的默认新建目录:从 dexstudio/host/ 双击 exe 建项目时会落在
+# 这里(那是**用户数据**,不该入库,也不该被体检/清理脚本当成源码)。
+/dexstudio/host/mygame/
+/dexstudio/host/_zigtmp/

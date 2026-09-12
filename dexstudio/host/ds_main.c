@@ -91,6 +91,38 @@ static int extract_embedded_web(char *out, size_t outsz)
     return 1;
 }
 
+/* 清理**旧版本**留下的解包目录(web-<别的哈希>)。不清理的话每换一次前端资源就
+ * 在 %LOCALAPPDATA% 里多留一份拷贝(曾经累积了 5 份,越用越乱)。 */
+typedef struct { const char *keep; int removed; } CleanOld;
+static void clean_old_cb(const char *name, long long size, unsigned long attrs, void *ud)
+{
+    CleanOld *c = (CleanOld *)ud;
+    char *env, path[MAX_PATH * 3];
+    (void)size;
+    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return;
+    if (strncmp(name, "web-", 4) != 0) return;
+    if (c->keep && !strcmp(name, c->keep)) return;
+    env = dsu_env("LOCALAPPDATA");
+    if (!env || !*env) { free(env); return; }
+    snprintf(path, sizeof path, "%s\\DexStudio\\%s", env, name);
+    dsu_rmdir(path);
+    c->removed++;
+    free(env);
+}
+
+static void clean_old_web_dirs(const char *keep)
+{
+    char *env = dsu_env("LOCALAPPDATA");
+    char pat[MAX_PATH * 3];
+    CleanOld c;
+    if (!env || !*env) { free(env); return; }
+    snprintf(pat, sizeof pat, "%s\\DexStudio\\*", env);
+    c.keep = keep;
+    c.removed = 0;
+    dsu_list(pat, clean_old_cb, &c);
+    free(env);
+}
+
 static int find_web_dir(const char *override, char *out, size_t outsz)
 {
     char cand[MAX_PATH * 3];
@@ -110,7 +142,14 @@ static int find_web_dir(const char *override, char *out, size_t outsz)
     }
     /* 发布形态:exe 旁边没有 web/ —— 用**内嵌**的那份,解包到缓存目录再用。
      * 缓存目录带内容哈希,所以换了前端资源会自动换目录(不会读到旧文件)。 */
-    return extract_embedded_web(out, outsz);
+    {
+        int ok = extract_embedded_web(out, outsz);
+        if (ok) {
+            const char *slash = strrchr(out, '\\');
+            clean_old_web_dirs(slash ? slash + 1 : out);
+        }
+        return ok;
+    }
 }
 
 /* 把字符串安全地塞进 JSON(路径里有反斜杠时,不转义就会得到
@@ -160,6 +199,8 @@ static int cmd_webview_version(void)
 
 /* 自测:模型层的端到端(不需要窗口) */
 static int g_pass, g_fail;
+
+static int json_int_field(const char *json, const char *key, int dflt);
 
 static void check(const char *name, int cond, const char *detail)
 {
@@ -252,6 +293,146 @@ static int cmd_selftest(void)
           r && strstr(r, "\"recoverable\":false"), r);
     ds_command(m, "{\"cmd\":\"autosave.clear\"}");
 
+    /* ---- 本次修复的回归点:下拉候选 / 父子 / 场景管理 / 存盘 / 生成前校验 ----
+     * 这些以前全是"静默做错"的地方(死按钮、编译不存盘、空属性生成代码),
+     * 所以每一步都要在无窗口自测里钉住。 */
+    printf("[下拉候选与场景管理]\n");
+    r = ds_command(m, "{\"cmd\":\"project.pick\",\"args\":{\"dry\":1}}");
+    check("project.pick(dry) 不弹对话框",
+          r && strstr(r, "\"picked\":false") && strstr(r, "\"dry\":true"), r);
+    r = ds_command(m, "{\"cmd\":\"project.recent\"}");
+    check("最近项目列表里有刚建的项目", r && strstr(r, "selftest"), r);
+    r = ds_command(m, "{\"cmd\":\"scene.options\"}");
+    check("场景选项给出实体与组件字段(下拉的候选)",
+          r && strstr(r, "\"entities\"") && strstr(r, "\"schema\"")
+            && strstr(r, "\"transform\""), r);
+    r = ds_command(m, "{\"cmd\":\"graph.options\"}");
+    check("逻辑图选项给出按键表/动作表/运算符表",
+          r && strstr(r, "\"keys\"") && strstr(r, "jump") && strstr(r, "\"ops\""), r);
+    check("运算符表里没有 DexLang 不认的 ^", r && !strstr(r, "\"^\""), r);
+    r = ds_command(m, "{\"cmd\":\"comp.schema\"}");
+    check("字段带人类语义(label/kind)",
+          r && strstr(r, "\"label\"") && strstr(r, "\"kind\""), r);
+    check("枚举字段带值域(collider.kind)",
+          r && strstr(r, "矩形(AABB)") && strstr(r, "胶囊"), r);
+    check("颜色字段被标成 color(sprite.tint)", r && strstr(r, "\"color\""), r);
+    check("引擎没实现的字段被标成只读(transform.rot)",
+          r && strstr(r, "引擎目前不读这个字段"), r);
+    r = ds_command(m, "{\"cmd\":\"scene.new\",\"args\":{\"name\":\"../坏\"}}");
+    check("场景名不允许路径穿越", r && strstr(r, "\"ok\":false"), r);
+    r = ds_command(m, "{\"cmd\":\"scene.new\",\"args\":{\"name\":\"第二关\"}}");
+    check("新建场景", r && strstr(r, "\"ok\":true"), r);
+    r = ds_command(m, "{\"cmd\":\"scene.rename\",\"args\":{\"name\":\"第二关\",\"to\":\"第三关\"}}");
+    check("场景改名", r && strstr(r, "第三关"), r);
+    r = ds_command(m, "{\"cmd\":\"scene.set_start\",\"args\":{\"name\":\"第三关\"}}");
+    check("设为起始场景", r && strstr(r, "第三关"), r);
+    r = ds_command(m, "{\"cmd\":\"scene.delete\",\"args\":{\"name\":\"第三关\"}}");
+    check("删除场景", r && strstr(r, "\"deleted\":true"), r);
+
+    printf("[父子关系]\n");
+    {
+        int ida = 0, idb = 0;
+        r = ds_command(m, "{\"cmd\":\"entity.add\",\"args\":{\"name\":\"父母\"}}");
+        ida = json_int_field(r, "id", 0);
+        r = ds_command(m, "{\"cmd\":\"entity.add\",\"args\":{\"name\":\"孩子\"}}");
+        idb = json_int_field(r, "id", 0);
+        snprintf(req, sizeof req,
+                 "{\"cmd\":\"entity.set_parent\",\"args\":{\"id\":%d,\"parent\":%d}}",
+                 idb, ida);
+        r = ds_command(m, req);
+        check("设父级", r && strstr(r, "\"ok\":true"), r);
+        snprintf(req, sizeof req,
+                 "{\"cmd\":\"entity.set_parent\",\"args\":{\"id\":%d,\"parent\":%d}}",
+                 idb, idb);
+        r = ds_command(m, req);
+        check("自己当自己的父级被拒绝", r && strstr(r, "\"ok\":false"), r);
+        snprintf(req, sizeof req,
+                 "{\"cmd\":\"entity.set_parent\",\"args\":{\"id\":%d,\"parent\":%d}}",
+                 ida, idb);
+        r = ds_command(m, req);
+        check("成环被拒绝", r && strstr(r, "\"ok\":false") && strstr(r, "环"), r);
+        snprintf(req, sizeof req,
+                 "{\"cmd\":\"comp.set\",\"args\":{\"id\":%d,\"comp\":\"transform\","
+                 "\"field\":\"x\",\"value\":123}}", ida);
+        ds_command(m, req);
+        snprintf(req, sizeof req, "{\"cmd\":\"entity.get\",\"args\":{\"id\":%d}}", idb);
+        r = ds_command(m, req);
+        check("子实体的世界坐标含父级位移", r && strstr(r, "\"x\":123"), r);
+    }
+
+    printf("[一键编译:存盘 + 起始场景 + 生成前校验]\n");
+    /* 编译要 dexc.exe;发布形态(干净目录)里可能找不到 —— 那就跳过这一段,
+     * 而不是把"发布目录里 --selftest 全过"这条验收搞坏。 */
+    {
+        char cand[MAX_PATH * 3];
+        int have_dexc = 0;
+        snprintf(cand, sizeof cand, "%s\\tools\\dexc\\dexc.exe", g_exe_dir);
+        if (dsu_exists(cand)) have_dexc = 1;
+        if (!have_dexc) {
+            snprintf(cand, sizeof cand, "%s\\..\\..\\tools\\dexc\\dexc.exe", g_exe_dir);
+            if (dsu_exists(cand)) have_dexc = 1;
+        }
+        if (!have_dexc && dsu_exists("tools\\dexc\\dexc.exe")) have_dexc = 1;
+        if (!have_dexc) {
+            printf("  SKIP  编译相关检查(这个目录里找不到 tools/dexc/dexc.exe)\n");
+            goto after_compile_checks;
+        }
+    }
+    ds_command(m, "{\"cmd\":\"scene.load\",\"args\":{\"path\":\"scenes/main.json\"}}");
+    ds_command(m, "{\"cmd\":\"entity.add\",\"args\":{\"name\":\"编译前存盘探针\"}}");
+    r = ds_command(m, "{\"cmd\":\"build.compile\"}");
+    check("build.compile 成功", r && strstr(r, "\"ok\":true"), r);
+    {
+        char p[MAX_PATH * 3];
+        char *txt;
+        snprintf(p, sizeof p, "%s\\scenes\\main.json", tmp);
+        txt = ds_file_read_text(p, NULL);
+        check("编译前先把场景存盘了(游戏跑的就是你看到的那份)",
+              txt && strstr(txt, "存盘探针"), p);
+        free(txt);
+        snprintf(p, sizeof p, "%s\\scripts\\project_info.dex", tmp);
+        txt = ds_file_read_text(p, NULL);
+        check("起始场景生成成了 DexLang 模块(scripts/project_info.dex)",
+              txt && strstr(txt, "dexstudio_start_scene"), p);
+        free(txt);
+    }
+after_compile_checks:
+    ds_command(m, "{\"cmd\":\"graph.new\"}");
+    ds_command(m, "{\"cmd\":\"graph.node.add\",\"args\":{\"type\":\"set_field\"}}");
+    r = ds_command(m, "{\"cmd\":\"graph.validate\"}");
+    check("新加的「写字段」节点默认属性就是合法的",
+          r && strstr(r, "\"count\":0"), r);
+    ds_command(m, "{\"cmd\":\"graph.node.add\",\"args\":{\"type\":\"play_sound\"}}");
+    r = ds_command(m, "{\"cmd\":\"graph.validate\"}");
+    check("没选声音的节点会被校验指出来",
+          r && strstr(r, "\"count\":1") && strstr(r, "声音"), r);
+    r = ds_command(m, "{\"cmd\":\"graph.generate\"}");
+    check("有问题的图**不再**生成代码(并说清是哪个节点)",
+          r && strstr(r, "\"ok\":false") && strstr(r, "问题"), r);
+    ds_command(m, "{\"cmd\":\"graph.new\"}");
+    r = ds_command(m, "{\"cmd\":\"graph.generate\"}");
+    check("空图仍然能生成(三个回调都在)", r && strstr(r, "logic_update"), r);
+    ds_command(m, "{\"cmd\":\"graph.node.add\",\"args\":{\"type\":\"on_action\"}}");
+    r = ds_command(m, "{\"cmd\":\"graph.generate\"}");
+    check("用到动作节点时会自动绑默认键位(以前按空格永远没反应)",
+          r && strstr(r, "eng_bind_default_actions"), r);
+    ds_command(m, "{\"cmd\":\"graph.new\"}");
+    ds_command(m, "{\"cmd\":\"graph.node.add\",\"args\":{\"type\":\"on_update\"}}");
+    r = ds_command(m, "{\"cmd\":\"project.save\"}");
+    check("project.save 成功", r && strstr(r, "\"ok\":true"), r);
+    {
+        char p[MAX_PATH * 3];
+        char *txt;
+        snprintf(p, sizeof p, "%s\\scripts\\logic.json", tmp);
+        txt = ds_file_read_text(p, NULL);
+        check("「保存」也把逻辑图写盘了(以前只有「保存图」才写)",
+              txt && strstr(txt, "on_update"), p);
+        free(txt);
+    }
+    r = ds_command(m, "{\"cmd\":\"file.open_external\",\"args\":{\"path\":\"scripts/main.dex\",\"dry\":1}}");
+    check("file.open_external(dry) 只回路径不开进程",
+          r && strstr(r, "\"opened\":false") && strstr(r, "main.dex"), r);
+
     printf("[错误路径]\n");
     r = ds_command(m, "{\"cmd\":\"entity.get\",\"args\":{\"id\":999999}}");
     check("无效实体带原因", r && strstr(r, "\"ok\":false") && strstr(r, "不存在"), r);
@@ -328,6 +509,32 @@ static const char *on_js_message(void *user, const char *json)
     return resp;
 }
 
+/* 关窗口时如果还有没保存的改动,先问一句 —— 以前直接 DestroyWindow,
+ * 而自动保存是 30 秒一次,于是"改完就关"必定丢东西。 */
+static int confirm_close(Host *h, HWND hwnd)
+{
+    int rc;
+    if (!h || !h->model || !ds_model_dirty(h->model)) return 1;
+    /* 先自动保存一次:即使选"直接退出",也留下可恢复的那一份 */
+    ds_command(h->model, "{\"cmd\":\"autosave.tick\"}");
+    rc = MessageBoxW(hwnd,
+        L"场景/逻辑图还有未保存的改动。\n\n"
+        L"「是」= 保存并退出\n「否」= 直接退出(已自动保存一份,下次可恢复)\n"
+        L"「取消」= 回去继续编辑",
+        L"DexStudio", MB_YESNOCANCEL | MB_ICONWARNING);
+    if (rc == IDCANCEL) return 0;
+    if (rc == IDYES) {
+        if (!ds_model_project_save(h->model)) {
+            wchar_t *w = dsu_w(ds_model_errbuf(h->model));
+            MessageBoxW(hwnd, w ? w : L"保存失败", L"DexStudio 保存失败",
+                        MB_OK | MB_ICONERROR);
+            free(w);
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     Host *h = (Host *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
@@ -352,6 +559,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         PostQuitMessage(0);
         return 0;
     case WM_CLOSE:
+        if (!confirm_close(h, hwnd)) return 0;
         DestroyWindow(hwnd);
         return 0;
     default:
@@ -367,6 +575,25 @@ static int run_window(const char *project, const char *web_override, int wv_self
     MSG msg;
     Host *host = calloc(1, sizeof *host);
     RECT rc = {0, 0, 1440, 900};
+    HANDLE once = NULL;
+
+    /* 单实例:WebView2 的用户数据目录是固定的,第二个实例会失败在一句
+     * "创建 WebView2 控制器失败(hr=0x800700aa)" 上 —— 用户完全看不懂。
+     * 这里直接检测:**已经有一个在跑就把它的窗口激活**,自己退出。 */
+    if (!wv_selftest) {
+        once = CreateMutexW(NULL, FALSE, L"Local\\DexStudio_SingleInstance");
+        if (once && GetLastError() == ERROR_ALREADY_EXISTS) {
+            HWND prev = FindWindowA("DexStudioWindow", NULL);
+            if (prev) {
+                ShowWindow(prev, SW_RESTORE);
+                SetForegroundWindow(prev);
+                if (once) CloseHandle(once);
+                free(host);
+                return 0;
+            }
+            /* 找不到窗口(上次崩了留下的?):继续启动,不拦着用户 */
+        }
+    }
 
     /* DPI 感知:必须在创建窗口之前;失败(如清单已设)不算错 */
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

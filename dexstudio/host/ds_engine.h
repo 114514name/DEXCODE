@@ -46,6 +46,10 @@ typedef struct {
     DsFnI tex_width, tex_height;
     /* 资源根:让场景里的相对路径(res/hero.png)在 IDE 这边也能打开 */
     DsFnI set_asset_dir;
+    /* 物理自动推进开关:编辑器预览**不能**跑物理 —— 否则每刷新一次,
+     * 带 body 的实体会按重力往下掉几千像素(实测:玩家从 y=3486 继续掉),
+     * 用户看到的就是"贴图设了但画面上什么都没有",而且存盘会把模拟出来的位置写进去。*/
+    DsFnI physics_set_auto, physics_pause;
     /* 瓦片地图(编辑器的刷子直接改 CSV 再让引擎重新加载) */
     DsFnI tilemap_load_csv, tilemap_load_file, tilemap_save_csv;
     DsFnI tilemap_tile, tilemap_cols, tilemap_rows;

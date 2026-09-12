@@ -329,7 +329,7 @@ def cmd_build_dexc(args):
 
 
 DEXSTUDIO_MODEL_SOURCES = ["ds_utf8.c", "ds_json.c", "ds_engine.c", "ds_model.c",
-                           "ds_graph.c", "ds_run.c", "ds_res.c"]
+                           "ds_graph.c", "ds_blocks.c", "ds_run.c", "ds_res.c"]
 DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_embed.c", "ds_webview.c",
                                                "ds_main.c"]
 
@@ -354,9 +354,13 @@ https://developer.microsoft.com/microsoft-edge/webview2/ )。
   dexstudio.exe                        开 IDE
   dexstudio.exe --project <目录>       直接打开一个项目
   dexstudio.exe --command '{"cmd":"app.info"}'   无窗口跑一条模型命令
-  dexstudio.exe --selftest             无窗口自测(14 项)
-  dexstudio.exe --wv-selftest          离屏验证整条链 + 页面自测(58 项)
+  dexstudio.exe --selftest             无窗口自测(51 项)
+  dexstudio.exe --wv-selftest          离屏验证整条链 + 页面自测(95 项;
+                                       带 --project <绝对路径> 是 120 项,多跑缩略图/试听/换贴图)
   dexstudio.exe --web <目录>           用磁盘上的前端资源(开发用)
+
+怎么用(零基础):新建项目 → 左栏「积木」页签 → 点积木拼玩法(空都是下拉,不用打字)→
+顶栏「运行」看效果;要写代码再切「代码」页签,或直接改 scripts/main.dex。
 
 发布说明见仓库 docs/DEXGAME_DESIGN.md §9.7。
 """
@@ -440,7 +444,7 @@ def cmd_build_dexstudio(args):
     host_srcs = [os.path.join(h, s) for s in DEXSTUDIO_HOST_SOURCES]
     # 只链接系统库:WebView2Loader 的三个导出是**运行时** LoadLibrary 拿的,
     # 所以不需要它的导入库(与 dexgame 用 d3dcompiler/xaudio2 的做法一致)。
-    sys_libs = ["-luser32", "-lgdi32", "-lole32", "-luuid", "-lcomdlg32"]
+    sys_libs = ["-luser32", "-lgdi32", "-lole32", "-luuid", "-lcomdlg32", "-lshell32"]
     # -Wl,--out-implib:zig cc -shared 会按**第一个输入文件**给导入库命名并扔在
     #   当前目录(这里会变成 ds_json.lib,污染工作树)。引到 gitignored 目录去。
     implib = ["-Wl,--out-implib=" + os.path.join(ROOT, "_zigtmp", "dexstudio.lib")]

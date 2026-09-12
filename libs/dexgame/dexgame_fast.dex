@@ -28,7 +28,18 @@
 include "dexgame";
 
 # 引擎主循环:三个回调都是函数名(空串 = 不需要)
+#
+# 注意:这里**自动补一次 eng_init**。原因很实际:on_start 里通常要设清屏色、
+# 绑键位、eng_scene_load —— 这些都需要引擎已经起来(没有设备时贴图加载不了,
+# 场景会加载成"有实体没组件"的空壳)。谁都不想为了跑起来先背一串初始化参数,
+# 所以没初始化就自动开一个 960x540 的窗口;要自定义标题/尺寸就先自己调 eng_init。
 func eng_run(on_start: string, on_update: string, on_draw: string) {
+    if eng_running() == 0 {
+        if eng_init("dexgame", 960, 540, 1) != 0 {
+            print "启动游戏窗口失败: " + eng_last_error();
+            return;
+        }
+    }
     if on_start != "" {
         call(on_start);
     }
@@ -53,6 +64,12 @@ func eng_run2(on_update: string, on_draw: string) {
 
 # 便捷:固定帧数版本(无人值守跑测试/截图用)
 func eng_run_frames(on_start: string, on_update: string, on_draw: string, frames: int) {
+    if eng_running() == 0 {
+        if eng_init("dexgame", 960, 540, 1) != 0 {
+            print "启动游戏窗口失败: " + eng_last_error();
+            return;
+        }
+    }
     if on_start != "" {
         call(on_start);
     }

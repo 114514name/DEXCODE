@@ -339,7 +339,13 @@ void dg_scene_shutdown(void) {
 }
 
 int dg_comp_kind(const char *name) {
-    if (!name || !g_pools_ready) return -1;
+    if (!name) return -1;
+    /* 组件池只是内存表(不含 D3D),所以查名字前按需初始化 —— 否则在 eng_init()
+       之前做任何组件操作都会得到 -1,而**场景加载把 -1 当成"不认识的组件"跳过**,
+       结果是"加载成功但一个组件都没有"这种最难查的静默失败(踩过:
+       IDE 生成的 main.dex 在 eng_init 之前 eng_scene_load,整个场景空掉)。 */
+    if (!g_pools_ready) dg_scene_init();
+    if (!g_pools_ready) return -1;
     for (int k = 1; k < DG_C_COUNT; k++)
         if (g_pools[k].name && strcmp(g_pools[k].name, name) == 0) return k;
     dg_error("unknown component '%s' (have: transform/sprite/camera/animation/collider/body/tilemap/audio)",
@@ -774,6 +780,7 @@ static int32_t dg_scene_parse(const char *text) {
 
     /* 第一遍:只创建实体并记录 index → 实体 id 的映射。
        第二遍才填字段 —— 因为 parent 引用可能指向后面的对象。 */
+    if (!g_pools_ready) dg_scene_init();
     dg_object_clear();
 
     int32_t id_map[DG_MAX_OBJECTS];
@@ -1382,6 +1389,17 @@ int32_t dg_draw_scene(void) {
         const float sw = s->sw > 0.0f ? s->sw : (float)tw;
         const float sh = s->sh > 0.0f ? s->sh : (float)th;
 
+        /* 缩放:**transform.sx/sy**(1.0 = 原大小)。
+         * 为什么必须在这里实现:sprita 的 sw/sh 是"图集里取哪一块",取多少就画多大
+         * (1:1,没有缩放)—— 于是用户拿一张 300×400 的角色图**没有任何办法**把它
+         * 变成屏幕上 60×80 的小人,而这是零基础用户最先要做的事(实测:他们的场景里
+         * 玩家 sw=32/sh=32 配 300×400 的图,画出来只有左上角一小块)。
+         * 顺带让 transform.sx/sy 不再是"改了没效果"的字段。 */
+        const DgTransform *tr =
+            (const DgTransform *)dg_comp_get(id, DG_C_TRANSFORM);
+        const float kx = (tr && tr->sx != 0.0f) ? tr->sx : 1.0f;
+        const float ky = (tr && tr->sy != 0.0f) ? tr->sy : 1.0f;
+
         /* 源区域 → uv。约定与 `test_dexgame.py::test_atlas_png` 的 M1 结论一致:
            - 区域跨**多个**纹素:用区域边界(sx/W .. (sx+sw)/W)。这样 1:1 绘制时
              屏幕像素中心正好落在纹素中心,放大时也不会整体缩半个纹素;
@@ -1393,16 +1411,16 @@ int32_t dg_draw_scene(void) {
         float u1 = (sw <= 1.0f) ? u0 : (s->sx + sw) / (float)tw;
         float v0 = (sh <= 1.0f) ? (s->sy + half) / (float)th : s->sy / (float)th;
         float v1 = (sh <= 1.0f) ? v0 : (s->sy + sh) / (float)th;
-        /* 轴心:px/py ∈ [0,1] 表示绘制原点在子矩形里的相对位置 */
-        float x = wx - sw * s->px;
-        float y = wy - sh * s->py;
+        /* 轴心:px/py ∈ [0,1] 表示绘制原点在子矩形里的相对位置(缩放后一起放大) */
+        float x = wx - sw * s->px * kx;
+        float y = wy - sh * s->py * ky;
         /* 相机约定:(x, y) 是**显示在屏幕左上角的世界坐标**,zoom 为缩放。
            于是没有相机(或相机在 0,0)时 世界坐标 == 屏幕坐标 —— 最不意外。
            若游戏要"相机居中跟随",把 cam.x 设为 target_x - 屏宽/2 即可。
            (先前这里多加了屏幕中心偏移,导致无相机时整个世界被平移半个屏幕。)*/
         x = (x - cx) * zx;
         y = (y - cy) * zx;
-        const float dw = sw * zx, dh = sh * zx;
+        const float dw = sw * zx * kx, dh = sh * zx * ky;
 
         if (s->flip & 1) { float t = u0; u0 = u1; u1 = t; }
         if (s->flip & 2) { float t = v0; v0 = v1; v1 = t; }

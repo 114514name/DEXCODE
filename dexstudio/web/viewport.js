@@ -41,6 +41,13 @@ const Viewport = (function () {
     ctx = canvas.getContext('2d');
     wireMouse();
     window.addEventListener('resize', () => { resize(); draw(); });
+    /* 容器尺寸变化就跟着重算。为什么不能只靠 window resize:
+     * ① 离屏/无人值守启动时,窗口尺寸是**创建之后**才设上来的,页面首帧看到的
+     *    容器可能是 0×0(实测:离屏自测里画布恒为 0×0,像素断言全废);
+     * ② 模式切换(场景↔逻辑↔代码)会换布局,不一定触发 window resize。 */
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => { resize(); draw(); }).observe(canvas.parentElement);
+    }
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') { space.down = true; }
     });
@@ -238,10 +245,20 @@ const Viewport = (function () {
 
   /* ---------- 命中测试 ---------- */
 
+  /* 渲染顺序:layer → order → 创建顺序(和引擎的 qsort 判据一致)。
+   * 以前按"创建顺序"倒着取第一个命中的,和画面不一致 —— 点最上面的精灵
+   * 可能选中它下面那个实体(outline 里的 seq 就是创建顺序)。 */
+  function drawOrder() {
+    return DS.outline.slice().sort((a, b) =>
+      (a.layer || 0) - (b.layer || 0) ||
+      (a.order || 0) - (b.order || 0) ||
+      (a.seq || 0) - (b.seq || 0));
+  }
+
   function hitTest(wx, wy) {
-    /* 从上到下(后画的在上):outline 的顺序就是实体创建顺序 */
-    for (let i = DS.outline.length - 1; i >= 0; i--) {
-      const o = DS.outline[i];
+    const list = drawOrder();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const o = list[i];
       if (!o.w || !o.h) continue;
       if (wx >= o.x && wx <= o.x + o.w && wy >= o.y && wy <= o.y + o.h) return o.id;
     }
@@ -494,6 +511,16 @@ const Viewport = (function () {
         seen.add((r << 16) | (g << 8) | b);
       }
       return { colors: seen.size, nonBg, sampled };
+    },
+    /* 画布上某一个点(画布 CSS 坐标)的颜色 —— 自检用:
+     * "实体所在位置的那个像素到底是不是贴图"只有实测才能回答。 */
+    pixelAt: (cx, cy) => {
+      if (!ctx) return null;
+      const dpr = window.devicePixelRatio || 1;
+      const x = Math.round(cx * dpr), y = Math.round(cy * dpr);
+      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
     },
     hasColor: (hex) => {
       if (!ctx) return false;

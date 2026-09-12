@@ -15,6 +15,7 @@
  * 绝对 → exe 同目录 → 仓库根(exe_dir/../..)→ cwd 的顺序试。
  * ==========================================================================*/
 #include "ds_run.h"
+#include "ds_blocks.h"
 #include "ds_utf8.h"
 
 #include <stdio.h>
@@ -405,7 +406,9 @@ static Dsj *cmd_file_read(DsModel *m, Dsj *args)
     return r;
 }
 
-/* 编译:先把图/场景存盘(一键 = 不用先点保存),再调 dexc。 */
+/* 编译:先把场景/项目/逻辑图**存盘**(一键 = 不用先点保存),再调 dexc。
+ * 为什么必须存盘:游戏进程读的是磁盘上的场景,而 IDE 视口读的是内存里的 ——
+ * 不存盘就会出现"IDE 里摆好了,运行起来还是旧场景"(实测踩到过)。 */
 static Dsj *cmd_build_compile(DsModel *m, Dsj *args)
 {
     const char *rel = dsj_get_str(args, "path", "scripts/main.dex");
@@ -415,19 +418,42 @@ static Dsj *cmd_build_compile(DsModel *m, Dsj *args)
     RunResult rr;
     Dsj *r, *diag;
     char err[512];
-    int generated = 1;
+    int generated = 0, patched = 0;
     if (!script || !file_exists(script)) {
         seterr(m, "找不到脚本:%s", script ? script : rel);
         free(script);
         return NULL;
     }
-    /* 一键编译:顺手把逻辑图生成一遍,免得"改了图忘了生成" */
-    if (ds_graph_generate_to_file(m, NULL, 0, err, sizeof err)) {
+    /* ① 存盘:项目 + 当前场景 + 逻辑图(project_save 三样都写) */
+    if (ds_project_dir(m) && *ds_project_dir(m)) {
+        if (!ds_model_project_save(m)) {
+            char why[512];
+            snprintf(why, sizeof why, "%s",
+                     ds_model_errbuf(m)[0] ? ds_model_errbuf(m) : "未知原因");
+            seterr(m, "编译前的存盘失败:%s", why);
+            free(script);
+            return NULL;
+        }
+    }
+    /* ② 玩法 → scripts/logic.dex。**用哪一套生成由 project.json 的 logic_mode 决定**
+     *    (新项目默认积木,老项目默认节点图)。失败就整个失败:以前静默跳过,
+     *    于是用户改了玩法点编译、"成功",跑起来还是旧逻辑。 */
+    {
+        const char *mode = ds_model_logic_mode(m);
+        int ok = !strcmp(mode, "blocks")
+                 ? ds_blocks_generate_to_file(m, NULL, 0, err, sizeof err)
+                 : ds_graph_generate_to_file(m, NULL, 0, err, sizeof err);
+        if (!ok) {
+            seterr(m, "%s", err);
+            free(script);
+            return NULL;
+        }
         generated = 1;
-    } else if (dsj_get_bool(args, "require_graph", 0)) {
-        seterr(m, "生成逻辑图失败:%s", err);
-        free(script);
-        return NULL;
+    }
+    /* ③ 起始场景 → scripts/project_info.dex(游戏 on_start 读它),老项目顺手改写 */
+    if (ds_project_dir(m) && *ds_project_dir(m)) {
+        ds_write_project_info(m);
+        patched = ds_patch_main_scene(m);
     }
     dexc = resolve_tool(m, dsj_get_str(args, "dexc", ""), "tools/dexc/dexc.exe");
     if (!dexc) {
@@ -455,6 +481,9 @@ static Dsj *cmd_build_compile(DsModel *m, Dsj *args)
     dsj_set_bool(r, "bytecode_exists", file_exists(out_file));
     dsj_set_str(r, "out", rr.out ? rr.out : "");
     dsj_set_bool(r, "graph_generated", generated);
+    dsj_set_int(r, "main_patched", patched);
+    dsj_set_str(r, "start_scene", ds_model_start_scene(m));
+    dsj_set_str(r, "scene_file", ds_model_scene_path(m));
     diag = dsj_arr();
     parse_diag(rr.out, script, diag);
     dsj_set(r, "diag", diag);
@@ -589,6 +618,49 @@ static Dsj *cmd_build_status(DsModel *m)
     return r;
 }
 
+/* 用系统默认程序打开脚本(代码页签是**只读**的:改 DexLang 代码用外部编辑器,
+ * 免得在 IDE 里造一个半吊子编辑器)。dry:1 只回"会开哪个文件",不真的开进程。 */
+static Dsj *cmd_file_open_external(DsModel *m, Dsj *args)
+{
+    const char *rel = dsj_get_str(args, "path", "scripts/main.dex");
+    char *full = proj_path(m, rel);
+    Dsj *r = dsj_obj();
+    if (!full) {
+        seterr(m, "路径无效");
+        return NULL;
+    }
+    if (!file_exists(full)) {
+        seterr(m, "文件不存在:%s", full);
+        free(full);
+        return NULL;
+    }
+    dsj_set_str(r, "path", full);
+    if (dsj_get_bool(args, "dry", 0)) {
+        dsj_set_bool(r, "opened", 0);
+        dsj_set_bool(r, "dry", 1);
+        free(full);
+        return r;
+    }
+#if defined(_WIN32)
+    {
+        wchar_t *w = dsu_w(full);
+        HINSTANCE rc = w ? ShellExecuteW(NULL, L"open", w, NULL, NULL, SW_SHOWNORMAL)
+                         : (HINSTANCE)0;
+        free(w);
+        if ((INT_PTR)rc <= 32) {
+            seterr(m, "打不开 %s(系统没有关联的编辑器?)", full);
+            free(full);
+            return NULL;
+        }
+    }
+    dsj_set_bool(r, "opened", 1);
+#else
+    dsj_set_bool(r, "opened", 0);
+#endif
+    free(full);
+    return r;
+}
+
 Dsj *ds_run_command(DsModel *m, const char *cmd, Dsj *args)
 {
     if (!strcmp(cmd, "build.compile")) return cmd_build_compile(m, args);
@@ -597,6 +669,7 @@ Dsj *ds_run_command(DsModel *m, const char *cmd, Dsj *args)
     if (!strcmp(cmd, "build.status")) return cmd_build_status(m);
     if (!strcmp(cmd, "project.scripts")) return cmd_scripts(m);
     if (!strcmp(cmd, "file.read")) return cmd_file_read(m, args);
+    if (!strcmp(cmd, "file.open_external")) return cmd_file_open_external(m, args);
     seterr(m, "未知命令 '%s'", cmd);
     return NULL;
 }

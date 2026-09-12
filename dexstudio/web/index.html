@@ -1,9 +1,11 @@
 <!DOCTYPE html>
-<!-- DexStudio 前端外壳(B3:场景编辑器)。
-     布局:顶栏 / 左(项目·场景·层级树·图层)/ 中(视口)/ 右(属性面板·瓦片调色板·输出)。
+<!-- DexStudio 前端外壳。
+     布局:顶栏 / 左(项目·场景·层级树·图层·资源)/ 中(视口)/ 右(属性·瓦片·节点属性)。
      前端只做**视图与交互**:一切状态改动都经 ds_command(json) → json 送到 C 模型层。
-     视口里的画面是引擎离屏渲染出来的 BMP(dexstudio-preview.local),
-     用 <canvas> 画出来之后,网格/选中框/瓦片格都画在同一个坐标系里。 -->
+
+     一条设计纪律(见 docs/DEXSTUDIO_UX_ISSUES.md):
+     **凡是程序能列出来的,一律给下拉框/复选框/按钮,不让用户手打路径、名字、数字。**
+     所以这里的输入框只出现在"名字"这类真的只能打字的地方,而且都带默认值。 -->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -15,7 +17,7 @@
   <script>
     (function () {
       /* 注意大小写:WebView2 注入的是 **chrome.webview**(全小写),
-         不是文档里常见写法 chrome.webView —— 写错的表现是"页面正常渲染但一条
+         不是文档里常见的 chrome.webView —— 写错的表现是"页面正常渲染但一条
          消息都收不到"。这里两个都认,免得换运行时版本时踩。 */
       var chromeObj = window.chrome || {};
       var bridge = chromeObj.webview || chromeObj.webView;
@@ -46,17 +48,21 @@
   <header class="topbar">
     <div class="brand">DexStudio <span class="ver" id="version">…</span></div>
     <div class="modes">
-      <button id="mode-scene" class="tab on" title="场景编辑器 (F1)">场景</button>
-      <button id="mode-graph" class="tab" title="逻辑图编辑器 (F2)">逻辑</button>
-      <button id="mode-code" class="tab" title="代码页签 (F3)">代码</button>
+      <button id="mode-scene" class="tab on" title="摆东西:实体、贴图、位置 (F1)">场景</button>
+      <button id="mode-blocks" class="tab" title="让它动起来:积木(推荐,不用写代码)(F2)">积木</button>
+      <button id="mode-graph" class="tab" title="节点图(进阶,UE 蓝图式)(F3)">节点</button>
+      <button id="mode-code" class="tab" title="代码页签(看生成的 DexLang)(F4)">代码</button>
     </div>
     <div class="top-actions">
-      <button id="btn-new" title="新建项目">新建项目</button>
-      <button id="btn-open" title="打开已有项目">打开项目</button>
-      <button id="btn-save" title="保存场景与项目 (Ctrl+S)">保存</button>
-      <button id="btn-reload" title="丢弃改动,从文件重载场景">重载</button>
+      <button id="btn-new" title="选一个文件夹,当场建一个能跑的新项目">新建项目…</button>
+      <button id="btn-open" title="选一个已有项目文件夹">打开项目…</button>
+      <select id="recent" title="最近打开过的项目" class="tiny-wide">
+        <option value="">最近项目…</option>
+      </select>
+      <button id="btn-save" title="保存场景 + 逻辑图 + 项目 (Ctrl+S)">保存</button>
+      <button id="btn-reload" title="丢弃改动,从文件重新载入场景">重载</button>
       <span class="sep"></span>
-      <button id="btn-add" title="添加一个空实体">+ 实体</button>
+      <button id="btn-add" title="添加一个实体(可先选模板)">+ 实体</button>
       <button id="btn-dup" title="复制选中实体 (Ctrl+D)">复制</button>
       <button id="btn-del" title="删除选中实体 (Delete)">删除</button>
       <span class="sep"></span>
@@ -64,8 +70,10 @@
       <button id="btn-redo" title="重做 (Ctrl+Y)">重做</button>
       <span class="sep"></span>
       <button id="btn-compile" title="保存 + 生成逻辑图 + 编译 (Ctrl+B)">编译</button>
-      <button id="btn-run" title="编译并开一个独立游戏窗口 (F5)">运行</button>
+      <button id="btn-run" title="保存 + 编译,然后开一个独立游戏窗口 (F5)">运行</button>
       <button id="btn-stop" title="停掉游戏窗口">停止</button>
+      <span class="sep"></span>
+      <button id="btn-help" title="怎么用 / 快捷键">帮助</button>
     </div>
     <div class="status" id="status">连接中…</div>
   </header>
@@ -82,12 +90,14 @@
         <h2>项目 / 场景</h2>
         <p class="hint" id="scene-path">未打开项目</p>
         <div class="row">
-          <input id="scene-name" value="main" size="8" title="场景名">
-          <button id="btn-scene-new">新建</button>
-          <button id="btn-scene-list">列表</button>
+          <select id="scene-sel" class="wide" title="切换正在编辑的场景"></select>
         </div>
         <div class="row">
-          <button id="btn-scene-json">看场景 JSON</button>
+          <button id="btn-scene-new">新建…</button>
+          <button id="btn-scene-rename">改名…</button>
+          <button id="btn-scene-del">删除</button>
+          <label class="chk" title="游戏启动时加载这个场景(运行时读的就是它)">
+            <input type="checkbox" id="chk-start-scene"> 游戏从这里开始</label>
         </div>
       </section>
       <section class="grow scene-only">
@@ -97,6 +107,7 @@
         </h2>
         <input id="tree-filter" placeholder="过滤名字…" class="wide">
         <ul class="tree" id="tree"></ul>
+        <p class="hint">拖动一行到另一行 = 设成它的子实体(跟着父实体移动)</p>
       </section>
       <section class="scene-only">
         <h2>图层</h2>
@@ -107,13 +118,19 @@
           <span class="mini"><button id="btn-res-import" class="link">导入…</button>
           <button id="btn-res-refresh" class="link">刷新</button></span>
         </h2>
-        <p class="hint">点图片=给选中实体设贴图 · 右键=删/改名</p>
+        <p class="hint">点图片=给选中实体设贴图 · 点声音=试听 · 右键=改名/删除</p>
         <div class="reslist" id="res-list"></div>
       </section>
       <section class="grow graph-only">
         <h2>节点面板</h2>
-        <p class="hint">点一下加到画布:右键删节点 / 拖引脚连线 / Alt 或中键平移</p>
+        <input id="graph-filter" placeholder="过滤节点…" class="wide">
+        <p class="hint">点一下加到画布(Ctrl+D 复制节点 / 右键删节点 / 拖引脚连线 / Alt 或中键平移)</p>
         <div class="palette" id="graph-palette"></div>
+      </section>
+      <section class="grow blocks-only">
+        <h2>积木盒子</h2>
+        <p class="hint">点一下积木就加进去(不用拖)。先选一段脚本,再把动作放进去。</p>
+        <div class="palette" id="block-palette"></div>
       </section>
     </aside>
 
@@ -128,13 +145,21 @@
           <button id="btn-zoom-out" title="缩小 (-)">−</button>
           <button id="btn-zoom-in" title="放大 (+)">＋</button>
           <button id="btn-zoom-1" title="1:1">1:1</button>
-          <button id="btn-fit" title="回到原点 / 适应 (F)">适应</button>
+          <button id="btn-fit" title="缩放到所有实体 (F)">适应</button>
         </span>
         <span class="sep"></span>
         <span class="group">
           <label class="chk"><input type="checkbox" id="chk-grid" checked> 网格</label>
-          <input id="grid-size" type="number" value="16" min="1" max="256" step="1" class="tiny" title="网格大小(世界单位)">
-          <label class="chk"><input type="checkbox" id="chk-snap" checked> 吸附</label>
+          <select id="grid-size" class="tiny" title="网格大小(世界单位)">
+            <option value="4">4</option>
+            <option value="8">8</option>
+            <option value="16" selected>16</option>
+            <option value="24">24</option>
+            <option value="32">32</option>
+            <option value="48">48</option>
+            <option value="64">64</option>
+          </select>
+          <label class="chk"><input type="checkbox" id="chk-snap" checked> 吸附到网格</label>
         </span>
         <span class="sep"></span>
         <span class="group" id="brush-tools" hidden>
@@ -145,12 +170,37 @@
       </div>
       <div class="viewport scene-only" id="viewport">
         <canvas id="view"></canvas>
-        <div class="vp-hint" id="vp-hint">没有打开项目 —— 先「新建项目」</div>
+        <div class="vp-hint" id="vp-hint">没有打开项目 —— 先「新建项目…」<br>
+          <span class="hint">摆好实体后,去「积木」页签让它动起来</span></div>
+      </div>
+      <div class="blocks-bar blocks-only">
+        <span class="group">
+          <button id="btn-block-new" title="手动新开一段脚本">+ 新的一段</button>
+          <button id="btn-block-check" title="检查有没有空没选">检查</button>
+          <button id="btn-block-gen" title="生成 scripts/logic.dex(编译/运行也会做)">生成代码</button>
+        </span>
+        <span class="sep"></span>
+        <span class="group">
+          <span class="hint">一键示例:</span>
+          <button id="btn-tpl-move" title="每一帧往右走 + 按跳键就跳">会走会跳</button>
+          <button id="btn-tpl-camera" title="相机跟着主角,不让他跑出画面">相机跟着</button>
+          <button id="btn-tpl-sound" title="按下空格播放一个声音">按空格出声</button>
+        </span>
+        <span class="viewinfo" id="block-mode-info"></span>
+      </div>
+      <div class="blocks-wrap blocks-only">
+        <div id="block-area"></div>
+      </div>
+      <div class="blocks-code blocks-only">
+        <div class="tabs"><span class="hint">生成的代码(可以不用看;想学 DexLang 时对照一下)</span></div>
+        <pre id="block-code" class="code-small"></pre>
       </div>
       <div class="graph-bar graph-only">
         <span class="group">
-          <button id="btn-graph-save" title="把图存到 scripts/logic.json">保存图</button>
-          <button id="btn-graph-gen" title="生成 scripts/logic.dex(编译交给 B5)">生成代码</button>
+          <button id="btn-graph-save" title="把图存到 scripts/logic.json(「保存」也会存)">保存图</button>
+          <button id="btn-graph-check" title="检查有没有漏填属性/引用到不存在的实体">校验</button>
+          <button id="btn-graph-gen" title="生成 scripts/logic.dex(编译也会做)">生成代码</button>
+          <button id="btn-graph-dup" title="复制选中节点 (Ctrl+D)">复制节点</button>
           <button id="btn-graph-del" title="删除选中节点 (Delete)">删除节点</button>
         </span>
         <span class="sep"></span>
@@ -167,6 +217,7 @@
         <span class="group">
           <select id="code-file" title="scripts/*.dex"></select>
           <button id="btn-code-reload">重新载入</button>
+          <button id="btn-code-open" title="用系统默认编辑器打开这个文件(IDE 里只读)">外部编辑</button>
         </span>
         <span class="sep"></span>
         <span class="group">
@@ -185,8 +236,12 @@
           <button class="tab" data-tab="self">自检</button>
           <button class="tab" data-tab="sel">选中</button>
           <button class="tab" data-tab="build">编译</button>
-          <span class="mini"><button id="btn-selfcheck" class="link">跑一遍自检</button>
-          <button id="btn-clear-log" class="link">清空</button></span>
+          <span class="mini">
+            <label class="chk" title="把每条命令的 JSON 也打出来(排查用)">
+              <input type="checkbox" id="chk-debug"> 调试流量</label>
+            <button id="btn-selfcheck" class="link">跑一遍自检</button>
+            <button id="btn-clear-log" class="link">清空</button>
+          </span>
         </div>
         <div class="log" id="log"></div>
         <div class="log selfcheck" id="selfcheck" hidden></div>
@@ -199,11 +254,15 @@
       <section class="grow scene-only">
         <h2>属性 <span class="count" id="sel-name">未选中</span></h2>
         <div class="row" id="ent-ops" hidden>
-          <input id="ent-name" size="10" title="实体名">
-          <button id="btn-rename">改名</button>
+          <input id="ent-name" size="10" title="实体名(回车提交)">
+          <button id="btn-rename" title="改名(逻辑图里按名字引用实体,会一起改)">改名</button>
+          <button id="btn-locate" title="把视口对准这个实体(找不到它的时候用)">定位</button>
+          <select id="ent-parent" class="grow-sel" title="父实体:跟着它一起移动">
+            <option value="-1">(没有父实体)</option>
+          </select>
         </div>
         <div class="row" id="comp-add-row" hidden>
-          <select id="comp-add-sel"></select>
+          <select id="comp-add-sel" title="选一个组件挂到选中实体上"></select>
           <button id="btn-comp-add">挂组件</button>
         </div>
         <div id="inspector" class="inspector">
@@ -214,30 +273,64 @@
         <h2>瓦片调色板 <span class="count" id="palette-info"></span></h2>
         <div class="palette-wrap"><img id="palette" alt="图集"></div>
         <div class="row">
-          <button id="btn-tile-empty" class="on">空 (-1)</button>
+          <button id="btn-tile-empty" class="on">橡皮/空 (-1)</button>
           <span class="hint" id="tile-pick">未选图块</span>
+        </div>
+        <div class="row">
+          <button id="btn-tilemap-new" title="给这个实体建一张瓦片地图(不用手打文件名)">新建瓦片地图…</button>
+          <button id="btn-tile-clear">整图清空</button>
         </div>
         <div class="row">
           <label class="chk">图集列数 <input id="atlas-cols" type="number" min="1" max="64" class="tiny"></label>
           <label class="chk">首块 <input id="atlas-first" type="number" min="0" max="255" class="tiny"></label>
-        </div>
-        <div class="row">
-          <button id="btn-tile-apply">应用图集设置</button>
-          <button id="btn-tile-clear">整图清空</button>
+          <button id="btn-tile-apply">应用</button>
+          <button id="btn-atlas-auto" title="按图集宽度 ÷ 格子宽度自动算列数">自动算</button>
         </div>
       </section>
       <section class="grow graph-only">
         <h2>节点属性 <span class="count" id="graph-sel">未选中</span></h2>
         <div id="graph-inspector" class="inspector"></div>
       </section>
+      <section class="grow blocks-only">
+        <h2>玩法怎么搭</h2>
+        <p class="hint">① 左边点一个<b>起头</b>积木(比如「每一帧」)</p>
+        <p class="hint">② 再点<b>动作</b>积木,它就进到那一段里</p>
+        <p class="hint">③ 每个空都点下拉改(角色 / 方向 / 速度)</p>
+        <p class="hint">④ 想加条件就点「如果…」,它会张开一个肚子,<br>&nbsp;&nbsp;&nbsp;&nbsp;先点它,再点动作积木就放进肚子里</p>
+        <p class="hint">⑤ 顶栏「运行」立刻能玩</p>
+        <hr>
+        <div class="row">
+          <label class="chk"><input type="radio" name="logicmode" id="lm-blocks" checked> 用积木生成逻辑</label>
+        </div>
+        <div class="row">
+          <label class="chk"><input type="radio" name="logicmode" id="lm-graph"> 用节点图生成(进阶)</label>
+        </div>
+        <p class="hint">两套都指向 <code>scripts/logic.dex</code>,选哪个就用哪个生成。</p>
+      </section>
     </aside>
   </main>
 
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <h3 id="modal-title">标题</h3>
+      <p class="hint" id="modal-hint" hidden></p>
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-ok" class="primary">确定</button>
+        <button id="modal-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
   <script src="app.js"></script>
+  <script src="ui.js"></script>
   <script src="scene.js"></script>
   <script src="viewport.js"></script>
   <script src="highlight.js"></script>
   <script src="graph.js"></script>
+  <script src="blocks.js"></script>
   <script src="code.js"></script>
 </body>
 </html>

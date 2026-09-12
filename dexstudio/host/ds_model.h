@@ -49,6 +49,12 @@ const char *ds_project_dir(DsModel *m);
  * 图的 DOM、项目根目录、带原因的失败、以及"一次编辑"的撤销包装。 */
 Dsj *ds_model_graph(DsModel *m);              /* 内存里的图(可改;没有时为空图) */
 void ds_model_set_graph(DsModel *m, Dsj *g);  /* 接管 g 的所有权 */
+/* 积木脚本(实现在 ds_blocks.c):与图并列的另一套"玩法"表示 */
+Dsj *ds_model_blocks(DsModel *m);
+void ds_model_set_blocks(DsModel *m, Dsj *g);
+/* 当前用哪一套生成 logic.dex:"blocks"(默认,给零基础)或 "graph" */
+const char *ds_model_logic_mode(DsModel *m);
+void ds_model_set_logic_mode(DsModel *m, const char *mode);
 void ds_model_error(DsModel *m, const char *fmt, ...);
 /* 一次编辑:open 拍快照,close 时 changed=1 才压撤销栈(逻辑图的改动也要能撤销)。 */
 void *ds_model_edit_open(DsModel *m);
@@ -85,6 +91,8 @@ Dsj *ds_run_command(DsModel *m, const char *cmd, Dsj *args);
 /* 资源与自动保存(实现在 ds_res.c) */
 Dsj *ds_res_command(DsModel *m, const char *cmd, Dsj *args);
 int ds_res_recoverable(DsModel *m);
+/* 弹系统「选择文件夹」对话框(实现在 ds_res.c)。成功返回 1 并把 UTF-8 路径写进 out。 */
+int ds_pick_folder_utf8(char *out, size_t outsz);
 /* 场景快照 / 外部文件快照 / 按快照恢复(撤销与自动保存共用) */
 char *ds_scene_snapshot(DsModel *m);
 Dsj *ds_files_snapshot(DsModel *m);
@@ -93,6 +101,22 @@ const char *ds_model_scene_path(DsModel *m);
 void ds_model_mark_dirty(DsModel *m);
 int ds_model_autosave_seq(DsModel *m);
 int ds_model_dirty(DsModel *m);
+/* 存盘(项目 + 当前场景 + 逻辑图)与"起始场景"(编译/运行要用) */
+int ds_model_project_save(DsModel *m);
+const char *ds_model_start_scene(DsModel *m);
+
+/* ------------------------------------------------- 场景/字段/资源语义(给 UI 与 ds_graph/ds_run/ds_res)
+ * 这几条都是"把程序知道的东西交给前端",好让界面能用下拉/复选而不是让用户手打。 */
+/* 逻辑图/属性面板的下拉候选:entities[{id,name,comps{comp{field:type}}}] + images/audios + schema */
+Dsj *ds_model_scene_options(DsModel *m);
+/* 把"资源名"在场景字符串字段与逻辑图里的引用数出来(new_name=NULL)/一并改掉 */
+int ds_model_asset_refs(DsModel *m, const char *name, const char *new_name, int apply);
+/* 生成 scripts/project_info.dex(= 当前起始场景的 DexLang 形式);成功返回 1 */
+int ds_write_project_info(DsModel *m);
+/* 老项目兜底:改写 main.dex 里写死的 eng_scene_load("...")。1=改了 0=不用改 -1=写失败 */
+int ds_patch_main_scene(DsModel *m);
+/* 把项目路径推进"最近打开"列表(存在 %LOCALAPPDATA%\DexStudio\recent.json) */
+void ds_model_recent_push(DsModel *m, const char *path);
 /* 本次运行的会话标识(自动保存里记一份:用来区分"上次运行留下的"和"这次自己写的") */
 const char *ds_model_session(DsModel *m);
 /* 可写的缓存目录(优先 %LOCALAPPDATA%,回退 %TEMP%,最后 exe 同目录)。

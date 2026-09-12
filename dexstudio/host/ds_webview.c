@@ -582,6 +582,20 @@ static HRESULT STDMETHODCALLTYPE CtrlHandler_Invoke(
             st->lpVtbl->Release(st);
         }
     }
+    /* 控制器就绪时按父窗口客户区再设一次 bounds。
+     * 为什么必须有这一次:控制器是**异步**就绪的,而调用方 `ds_wv_set_bounds()` 是在
+     * `ds_wv_create()` 返回后立刻调的 —— 那时 controller 还是 NULL,设置被丢掉;
+     * 之后如果窗口又被系统移动/缩放(离屏自测把窗口放在 -4000,-4000,Windows 会挪它),
+     * WM_SIZE 才带着**新的**尺寸来,而那次 WM_SIZE 又可能早于 host->wv 赋值。
+     * 症状:页面视口退化成几十像素 → 画布 0×0、所有像素断言失效(实测就是这么坏的)。 */
+    if (wv->parent) {
+        RECT rc;
+        if (GetClientRect((HWND)wv->parent, &rc)) {
+            WVTR("控制器就绪,设 bounds %ldx%ld\n", (long)(rc.right - rc.left),
+                 (long)(rc.bottom - rc.top));
+            controller->lpVtbl->put_Bounds(controller, rc);
+        }
+    }
     wv->ready = 1;
     WVTR("webview 可用,准备导航 pending=%d\n", wv->has_pending);
     if (wv->has_pending) apply_navigation(wv);
@@ -608,20 +622,37 @@ DsWebView *ds_wv_create(void *parent_hwnd, DsWebMessageFn on_message, void *user
     wv->parent = parent_hwnd;
     wv->on_message = on_message;
     wv->user = user;
-    /* 用户数据目录:放在 %LOCALAPPDATA%\DexStudio(不要污染仓库) */
+    /* 用户数据目录:放在 %LOCALAPPDATA%\DexStudio(不要污染仓库)。
+     * DEXSTUDIO_WV_DATA 可以覆盖它 —— 用途有两个:
+     *   ① 自动化测试可以各用各的目录(否则用户正开着 IDE 时,离屏自测会以
+     *      "创建 WebView2 控制器失败(hr=0x800700aa)" 失败,原因完全看不出);
+     *   ② 想同时开两个实例调不同项目时也有办法。 */
     {
         wchar_t *lad = NULL;
         size_t n = 0;
-        _wgetenv_s(&n, NULL, 0, L"LOCALAPPDATA");
-        if (n) {
+        _wgetenv_s(&n, NULL, 0, L"DEXSTUDIO_WV_DATA");
+        if (n > 1) {
             lad = malloc(n * sizeof(wchar_t));
-            _wgetenv_s(&n, lad, n, L"LOCALAPPDATA");
+            _wgetenv_s(&n, lad, n, L"DEXSTUDIO_WV_DATA");
         }
-        if (lad) {
-            _snwprintf(user_data, MAX_PATH * 2, L"%ls\\DexStudio\\WebView2", lad);
+        if (lad && lad[0]) {
+            _snwprintf(user_data, MAX_PATH * 2, L"%ls", lad);
             free(lad);
+            lad = NULL;
         } else {
-            wcscpy(user_data, L"DexStudioWebView2");
+            free(lad);
+            lad = NULL;
+            _wgetenv_s(&n, NULL, 0, L"LOCALAPPDATA");
+            if (n) {
+                lad = malloc(n * sizeof(wchar_t));
+                _wgetenv_s(&n, lad, n, L"LOCALAPPDATA");
+            }
+            if (lad) {
+                _snwprintf(user_data, MAX_PATH * 2, L"%ls\\DexStudio\\WebView2", lad);
+                free(lad);
+            } else {
+                wcscpy(user_data, L"DexStudioWebView2");
+            }
         }
     }
     eh = calloc(1, sizeof *eh);

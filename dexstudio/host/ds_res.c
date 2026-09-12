@@ -26,10 +26,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 #if defined(_WIN32)
 #  include <windows.h>
 #  include <commdlg.h>
+#  include <shobjidl.h>
+#  include <objbase.h>
 #endif
 
 #define DS_AUTOSAVE_DIR ".dexstudio"
@@ -89,6 +92,9 @@ static char *res_dir(DsModel *m)
     return ds_path_join(root, "res");
 }
 
+/* 资源名必须是**纯文件名**(定义在后面,这里先声明:导入路径也要校验) */
+static int name_is_safe(const char *name);
+
 const char *ds_res_url(const char *name)
 {
     /* 只在 JSON 里给前端一个相对 URL;前端自己拼虚拟主机前缀 */
@@ -119,6 +125,54 @@ static void utf8_multisz_to_wide(const char *s, wchar_t *out, size_t outsz)
     out[outsz - 1] = 0;
 }
 #endif
+
+/* 「选择文件夹」对话框(新建/打开项目用)。
+ * 以前前端只能 prompt() 让用户手打路径 —— 键盘负担最大的一处。
+ * 同一套 UTF-8 纪律:走 IFileDialog 的宽字符接口,拿回来再转 UTF-8。 */
+int ds_pick_folder_utf8(char *out, size_t outsz)
+{
+#if defined(_WIN32)
+    IFileDialog *dlg = NULL;
+    IShellItem *item = NULL;
+    HRESULT hr;
+    int ok = 0;
+    if (out && outsz) out[0] = 0;
+    hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    /* RPC_E_CHANGED_MODE = 已经初始化过(别的线程模式),照样能用 */
+    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) return 0;
+    hr = CoCreateInstance(&CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_IFileDialog, (void **)&dlg);
+    if (SUCCEEDED(hr) && dlg) {
+        DWORD opts = 0;
+        if (SUCCEEDED(dlg->lpVtbl->GetOptions(dlg, &opts))) {
+            dlg->lpVtbl->SetOptions(dlg, opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+                                             | FOS_PATHMUSTEXIST);
+        }
+        dlg->lpVtbl->SetTitle(dlg, L"选择一个文件夹");
+        if (SUCCEEDED(dlg->lpVtbl->Show(dlg, NULL))
+            && SUCCEEDED(dlg->lpVtbl->GetResult(dlg, &item)) && item) {
+            LPWSTR wpath = NULL;
+            if (SUCCEEDED(item->lpVtbl->GetDisplayName(item, SIGDN_FILESYSPATH, &wpath))
+                && wpath) {
+                char *u = dsu_u(wpath);
+                if (u) {
+                    snprintf(out, outsz, "%s", u);
+                    free(u);
+                    ok = out[0] ? 1 : 0;
+                }
+                CoTaskMemFree(wpath);
+            }
+            item->lpVtbl->Release(item);
+        }
+        dlg->lpVtbl->Release(dlg);
+    }
+    if (SUCCEEDED(hr)) CoUninitialize();
+    return ok;
+#else
+    (void)out; (void)outsz;
+    return 0;
+#endif
+}
 
 /* dsu_list 的回调。名字由 dsu_list 转成 **UTF-8** 再交过来 —— 用
  * FindFirstFileA 的话这里是 GBK 字节,进了 JSON 前端就是乱码。 */
@@ -185,6 +239,11 @@ static Dsj *cmd_res_import(DsModel *m, Dsj *args)
     }
     ds_mkdir(dir);
     if (name && *name) {
+        if (!name_is_safe(name)) {          /* 与 delete/rename 同一条规则 */
+            seterr(m, "资源名不合法:'%s'(只能是文件名,不能带路径)", name);
+            free(dir);
+            return NULL;
+        }
         base = name;
     } else {
         const char *slash = strrchr(src, '\\');
@@ -231,6 +290,7 @@ static Dsj *cmd_res_pick(DsModel *m, Dsj *args)
     wchar_t wfilter[512];
     OPENFILENAMEW ofn;
     const char *filter = dsj_get_str(args, "filter", "");
+    int multi = dsj_get_bool(args, "multi", 0);
     const char *use = (filter && *filter) ? filter
         : "所有支持的资源\0*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.wav;*.mp3;*.ogg\0"
           "图片\0*.png;*.jpg;*.jpeg;*.bmp;*.gif\0"
@@ -240,15 +300,47 @@ static Dsj *cmd_res_pick(DsModel *m, Dsj *args)
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = wbuf;
     ofn.nMaxFile = (DWORD)(sizeof wbuf / sizeof wbuf[0]);
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR
+              | (multi ? (OFN_ALLOWMULTISELECT | OFN_EXPLORER) : 0);
     /* 过滤器是 UTF-8,内嵌 '\0' 分段、最后双 '\0' 结尾 —— 手工转宽字符 */
     utf8_multisz_to_wide(use, wfilter, sizeof wfilter / sizeof wfilter[0]);
     ofn.lpstrFilter = wfilter;
     if (GetOpenFileNameW(&ofn)) {
-        char *u = dsu_u(wbuf);
-        dsj_set_bool(r, "picked", 1);
-        dsj_set_str(r, "path", u ? u : "");
-        free(u);
+        /* 多选时缓冲区是 "目录\0文件1\0文件2\0\0";单选时是完整路径 */
+        wchar_t *p = wbuf;
+        if (multi && p[wcslen(p) + 1] != 0) {
+            wchar_t dir[MAX_PATH * 4];
+            Dsj *arr = dsj_arr();
+            int n = 0;
+            wcscpy(dir, p);
+            p += wcslen(p) + 1;
+            while (*p) {
+                wchar_t full[MAX_PATH * 4];
+                char *u;
+                _snwprintf(full, MAX_PATH * 4, L"%ls\\%ls", dir, p);
+                u = dsu_u(full);
+                if (u) {
+                    if (n == 0) dsj_set_str(r, "path", u);
+                    dsj_push(arr, dsj_str(u));
+                    free(u);
+                    n++;
+                }
+                p += wcslen(p) + 1;
+            }
+            dsj_set(r, "paths", arr);
+            dsj_set_bool(r, "picked", n > 0);
+            dsj_set_int(r, "count", n);
+        } else {
+            char *u = dsu_u(wbuf);
+            dsj_set_bool(r, "picked", 1);
+            dsj_set_str(r, "path", u ? u : "");
+            {
+                Dsj *arr = dsj_arr();
+                if (u && *u) dsj_push(arr, dsj_str(u));
+                dsj_set(r, "paths", arr);
+            }
+            free(u);
+        }
     } else {
         dsj_set_bool(r, "picked", 0);
         dsj_set_str(r, "path", "");
@@ -276,6 +368,7 @@ static Dsj *cmd_res_delete(DsModel *m, Dsj *args)
     const char *name = dsj_get_str(args, "name", "");
     char *dir, *path;
     Dsj *r;
+    int refs = 0;
     if (!name_is_safe(name)) {
         seterr(m, "资源名不合法:'%s'", name ? name : "");
         return NULL;
@@ -292,6 +385,15 @@ static Dsj *cmd_res_delete(DsModel *m, Dsj *args)
         free(path);
         return NULL;
     }
+    /* 还被场景/逻辑图引用着就先别删(除非调用方明确 force:1)—— 用户视角
+     * "删了个文件,游戏里贴图全裂" 是没法自己查出来的。 */
+    refs = ds_model_asset_refs(m, name, NULL, 0);
+    if (refs > 0 && !dsj_get_bool(args, "force", 0)) {
+        seterr(m, "'%s' 还被 %d 处引用(贴图/声音/瓦片)。要删的话再确认一次,"
+                  "或者先把引用改到别的资源上", name, refs);
+        free(path);
+        return NULL;
+    }
     if (!dsu_remove(path)) {
         seterr(m, "删除失败(%lu):%s", (unsigned long)GetLastError(), path);
         free(path);
@@ -299,6 +401,7 @@ static Dsj *cmd_res_delete(DsModel *m, Dsj *args)
     }
     r = dsj_obj();
     dsj_set_str(r, "deleted", name);
+    dsj_set_int(r, "refs", refs);
     free(path);
     return r;
 }
@@ -309,6 +412,7 @@ static Dsj *cmd_res_rename(DsModel *m, Dsj *args)
     const char *to = dsj_get_str(args, "to", "");
     char *dir, *a, *b;
     Dsj *r;
+    int refs = 0, updated = 0;
     if (!name_is_safe(name) || !name_is_safe(to)) {
         seterr(m, "资源名不合法");
         return NULL;
@@ -331,14 +435,38 @@ static Dsj *cmd_res_rename(DsModel *m, Dsj *args)
         free(a); free(b);
         return NULL;
     }
+    /* 先把引用改掉再改名(改引用失败就不改文件,免得留下"改完名字引用还是旧的") */
+    if (dsj_get_bool(args, "update_refs", 1)) {
+        refs = ds_model_asset_refs(m, name, to, 1);
+        updated = refs;
+    } else {
+        refs = ds_model_asset_refs(m, name, NULL, 0);
+    }
     if (!dsu_move_file(a, b)) {
         seterr(m, "改名失败(%lu)", (unsigned long)GetLastError());
         free(a); free(b);
         return NULL;
     }
+    /* 只有**真的改了引用**才算场景脏(否则光改个文件名不该触发"未保存"提示与自动保存) */
+    if (updated > 0) ds_model_mark_dirty(m);
     r = dsj_obj();
     dsj_set_str(r, "name", to);
+    dsj_set_int(r, "refs", refs);
+    dsj_set_int(r, "updated", updated);
     free(a); free(b);
+    return r;
+}
+
+/* 某个资源被多少处引用(前端可以在改名前提示"有 N 处引用,是否一并更新") */
+static Dsj *cmd_res_refs(DsModel *m, Dsj *args)
+{
+    const char *name = dsj_get_str(args, "name", "");
+    Dsj *r = dsj_obj();
+    if (!name_is_safe(name)) {
+        seterr(m, "资源名不合法");
+        return NULL;
+    }
+    dsj_set_int(r, "refs", ds_model_asset_refs(m, name, NULL, 0));
     return r;
 }
 
@@ -596,6 +724,7 @@ Dsj *ds_res_command(DsModel *m, const char *cmd, Dsj *args)
     if (!strcmp(cmd, "res.pick")) return cmd_res_pick(m, args);
     if (!strcmp(cmd, "res.delete")) return cmd_res_delete(m, args);
     if (!strcmp(cmd, "res.rename")) return cmd_res_rename(m, args);
+    if (!strcmp(cmd, "res.refs")) return cmd_res_refs(m, args);
     if (!strcmp(cmd, "autosave.tick")) return cmd_autosave_tick(m);
     if (!strcmp(cmd, "autosave.clear")) return cmd_autosave_clear(m);
     if (!strcmp(cmd, "recover.status")) return cmd_recover_status(m);
