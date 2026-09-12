@@ -100,6 +100,7 @@ const DS = {
   seq: 0,
   names: {},           // id → 名字(撤销后重新选中用)
   pendingPaint: [],    // 拖动刷子时攒下的格子(松手时一条命令提交)
+  mode: 'scene',       // scene | graph(两个编辑器共用同一个窗口)
   quietLog: false,
   busy: false,         // 正在跑一批命令(拖拽中),抑制重复刷新
 };
@@ -278,6 +279,31 @@ async function nudge(dx, dy) {
   } catch (e) { /* 已提示 */ }
 }
 
+/* ------------------------------------------------------------ 模式切换 */
+
+/* 两个编辑器(场景 / 逻辑图)共用同一个窗口与同一个命令通道,只是换一栏视图。
+ * CSS 靠 body 上的 mode-* 类决定显示哪一半(见 style.css 的 .scene-only/.graph-only)。
+ * 注意:**切过去之后要 resize**,否则画布是在 display:none 状态下建出来的(B 系列陷阱)。 */
+async function setMode(mode) {
+  DS.mode = mode === 'graph' ? 'graph' : 'scene';
+  document.body.classList.toggle('mode-graph', DS.mode === 'graph');
+  $('mode-scene').classList.toggle('on', DS.mode === 'scene');
+  $('mode-graph').classList.toggle('on', DS.mode === 'graph');
+  if (DS.mode === 'graph') {
+    showTab('log');
+    if (typeof Graph !== 'undefined') {
+      Graph.resize();
+      await Graph.refresh();
+      Graph.renderPalette();
+      Graph.renderInspector();
+      Graph.draw();
+    }
+  } else if (typeof Viewport !== 'undefined') {
+    Viewport.resize();
+    Viewport.drawOverlay();
+  }
+}
+
 /* ------------------------------------------------------------ 输出面板页签 */
 
 function showTab(which) {
@@ -305,6 +331,37 @@ function renderSelInfo() {
 
 const fmt = (v) => (v === undefined || v === null) ? '-' :
   (Math.abs(v - Math.round(v)) < 1e-6 ? String(Math.round(v)) : v.toFixed(3));
+
+/* 画布像素统计(自检用):"画布上到底有没有东西"只有实测像素才知道。 */
+function canvasStats(el) {
+  if (!el || !el.width) return { colors: 0, nonBg: 0, sampled: 0 };
+  const ctx = el.getContext('2d');
+  const d = ctx.getImageData(0, 0, el.width, el.height).data;
+  const seen = new Set();
+  let nonBg = 0, sampled = 0;
+  const stride = Math.max(1, Math.floor(d.length / 4 / 20000)) * 4;
+  for (let i = 0; i < d.length; i += stride) {
+    sampled++;
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    if (!(r === 22 && g === 22 && b === 34)) nonBg++;   /* #161622 = 图布背景 */
+    seen.add((r << 16) | (g << 8) | b);
+  }
+  return { colors: seen.size, nonBg, sampled };
+}
+
+function canvasHasColor(el, hex) {
+  if (!el || !el.width) return false;
+  const ctx = el.getContext('2d');
+  const d = ctx.getImageData(0, 0, el.width, el.height).data;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  for (let i = 0; i < d.length; i += 4) {
+    if (Math.abs(d[i] - r) <= 6 && Math.abs(d[i + 1] - g) <= 6 &&
+        Math.abs(d[i + 2] - b) <= 6) return true;
+  }
+  return false;
+}
 
 /* ------------------------------------------------------------ 自检 */
 
@@ -407,6 +464,13 @@ function wireKeys() {
       return;
     }
     if (typing) return;
+    if (ev.key === 'F1') { ev.preventDefault(); setMode('scene'); return; }
+    if (ev.key === 'F2') { ev.preventDefault(); setMode('graph'); return; }
+    if (DS.mode === 'graph' && (ev.key === 'Delete' || ev.key === 'Backspace')) {
+      ev.preventDefault();
+      Graph.removeSelected();
+      return;
+    }
     if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); doDelete(); return; }
     if (ev.key === 'Escape') { select([]); return; }
     if (ev.key === '1') { setTool('select'); return; }
@@ -544,6 +608,20 @@ function wire() {
     Viewport.drawOverlay();
   };
   $('btn-selfcheck').onclick = selfcheck;
+  $('mode-scene').onclick = () => setMode('scene');
+  $('mode-graph').onclick = () => setMode('graph');
+  $('btn-graph-save').onclick = () => Graph.save();
+  $('btn-graph-gen').onclick = () => Graph.generate();
+  $('btn-graph-del').onclick = () => Graph.removeSelected();
+  $('btn-graph-new').onclick = async () => {
+    if (!confirm('清空整张逻辑图?(可以撤销)')) return;
+    try {
+      await call('graph.new', {}, '清空逻辑图');
+      await Graph.refresh();
+      Graph.renderInspector();
+    } catch (e) { /* 已提示 */ }
+  };
+  $('btn-graph-fit').onclick = () => { Graph.center(); };
   $('btn-clear-log').onclick = () => { $('log').innerHTML = ''; logLines = 0; };
   document.querySelectorAll('.tabs .tab').forEach((b) => {
     b.onclick = () => showTab(b.dataset.tab);
@@ -595,7 +673,7 @@ function pickTile(t) {
  * 生成字段、瓦片刷子能不能落到 CSV 上。宿主 `--wv-selftest` 会调它并断言结果。
  * (这正是 AGENTS.md 里"自动化离屏证明代替肉眼看屏幕"的做法。) */
 window.__ds_selftest = async function () {
-  const out = { pass: [], fail: [] };
+  const out = { pass: [], fail: [], skip: [] };
   const t = (name, ok, extra) => {
     (ok ? out.pass : out.fail).push(name + (extra ? '  ' + extra : ''));
   };
@@ -703,6 +781,57 @@ window.__ds_selftest = async function () {
     await refresh();
     t('清理后无残留测试实体',
       !DS.entities.some((e) => /__uitest__|__tiletest__/.test(e.name || '')));
+
+    /* --- 逻辑图模式:节点面板 / 加节点 / 属性 / 连线 / 生成 ---
+     * 自检**不能破坏**用户已有的图:只动自己加的三个节点,结尾删掉。 */
+    await setMode('graph');
+    t('切到逻辑图模式', document.body.classList.contains('mode-graph'));
+    const gcanvas = $('graph');
+    t('逻辑图画布有尺寸', !!gcanvas && gcanvas.clientWidth > 0 && gcanvas.clientHeight > 0,
+      gcanvas ? gcanvas.clientWidth + '×' + gcanvas.clientHeight : 'no canvas');
+    const btns = document.querySelectorAll('#graph-palette .nodebtn').length;
+    t('节点面板列出全部节点类型', btns === Graph.stats().types && btns > 15,
+      btns + ' vs ' + Graph.stats().types);
+    const n0 = Graph.stats().nodes;
+    const l0 = Graph.stats().links;
+
+    const evId = await Graph.addNode('on_update', 60, 60);
+    const sfId = await Graph.addNode('set_field', 320, 60);
+    const nmId = await Graph.addNode('num', 60, 260);
+    t('加节点进了图', Graph.stats().nodes === n0 + 3, Graph.stats().nodes);
+    const gpx = canvasStats(gcanvas);
+    t('画布上画出了节点', gpx.nonBg > 500, JSON.stringify(gpx));
+    /* 选中"写字段"那个节点:属性多,检查面板字段数。
+     * 注意用**刚加的三个 id**,不要 find(type) —— 用户图里可能已有同类型节点。 */
+    Graph.select(sfId);
+    t('正在编辑的节点有选中框', canvasHasColor(gcanvas, '#f9e2af'));
+    const grows = document.querySelectorAll('#graph-inspector .field').length;
+    t('节点属性面板生成字段', grows >= 4, grows + ' 个');
+    /* 把数字节点接到 set_field 的 value 引脚(数据线) */
+    await ds('graph.node.set', { id: sfId, props: {
+      obj: 'player', comp: 'transform', field: 'x', value: 3, as: 'f' } });
+    await ds('graph.link', { from: evId, from_pin: 'out', to: sfId, to_pin: 'exec' });
+    await ds('graph.link', { from: nmId, from_pin: 'v', to: sfId, to_pin: 'value' });
+    await Graph.refresh();
+    Graph.select(sfId);
+    t('连线进了图(执行流 + 数据线)', Graph.stats().links === l0 + 2,
+      Graph.stats().links);
+    t('画布上画出了连线', canvasHasColor(gcanvas, '#89b4fa'));
+    if (DS.info && DS.info.root) {
+      const gen = await ds('graph.generate');
+      t('生成代码落盘', !!gen.path && gen.source.indexOf('func logic_update') >= 0,
+        gen.path);
+      t('生成的代码含刚连的字段写入',
+        gen.source.indexOf('"transform", "x"') >= 0, gen.source);
+    } else {
+      out.skip.push('没有打开项目:跳过 graph.generate 落盘检查');
+    }
+    for (const id of [evId, sfId, nmId]) await ds('graph.node.remove', { id });
+    await Graph.refresh();
+    t('自检收尾:图回到原样',
+      Graph.stats().nodes === n0 && Graph.stats().links === l0, Graph.stats().nodes);
+    await setMode('scene');
+    t('切回场景模式', !document.body.classList.contains('mode-graph'));
   } catch (e) {
     out.fail.push('自检中断:' + (e && e.message));
   }
@@ -730,6 +859,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   wire();
   wireKeys();
   setTool('select');
+  setMode('scene');
   try {
     await refresh();
     log('dim', '就绪。快捷键:1/2 切换工具 · F 适应 · Ctrl+Z/Y 撤销重做 · Ctrl+D 复制 · Delete 删除');

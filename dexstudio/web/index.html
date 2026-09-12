@@ -45,6 +45,10 @@
 <body>
   <header class="topbar">
     <div class="brand">DexStudio <span class="ver" id="version">…</span></div>
+    <div class="modes">
+      <button id="mode-scene" class="tab on" title="场景编辑器 (F1)">场景</button>
+      <button id="mode-graph" class="tab" title="逻辑图编辑器 (F2)">逻辑</button>
+    </div>
     <div class="top-actions">
       <button id="btn-new" title="新建项目">新建项目</button>
       <button id="btn-open" title="打开已有项目">打开项目</button>
@@ -63,7 +67,7 @@
 
   <main>
     <aside class="left">
-      <section>
+      <section class="scene-only">
         <h2>项目 / 场景</h2>
         <p class="hint" id="scene-path">未打开项目</p>
         <div class="row">
@@ -75,7 +79,7 @@
           <button id="btn-scene-json">看场景 JSON</button>
         </div>
       </section>
-      <section class="grow">
+      <section class="grow scene-only">
         <h2>层级 <span class="count" id="obj-count">0</span>
           <span class="mini"><button id="btn-sel-all" class="link">全选</button>
           <button id="btn-sel-none" class="link">清空</button></span>
@@ -83,14 +87,19 @@
         <input id="tree-filter" placeholder="过滤名字…" class="wide">
         <ul class="tree" id="tree"></ul>
       </section>
-      <section>
+      <section class="scene-only">
         <h2>图层</h2>
         <ul class="tree layers" id="layers"></ul>
+      </section>
+      <section class="grow graph-only">
+        <h2>节点面板</h2>
+        <p class="hint">点一下加到画布:右键删节点 / 拖引脚连线 / Alt 或中键平移</p>
+        <div class="palette" id="graph-palette"></div>
       </section>
     </aside>
 
     <section class="center">
-      <div class="viewport-bar">
+      <div class="viewport-bar scene-only">
         <span class="group">
           <button id="tool-select" class="tab on" title="选择 / 框选 / 拖动移动 (1)">选择</button>
           <button id="tool-brush" class="tab" title="瓦片刷子 (2,需选中带 tilemap 的实体)">瓦片刷</button>
@@ -115,9 +124,25 @@
         </span>
         <span class="viewinfo" id="viewinfo"></span>
       </div>
-      <div class="viewport" id="viewport">
+      <div class="viewport scene-only" id="viewport">
         <canvas id="view"></canvas>
         <div class="vp-hint" id="vp-hint">没有打开项目 —— 先「新建项目」</div>
+      </div>
+      <div class="graph-bar graph-only">
+        <span class="group">
+          <button id="btn-graph-save" title="把图存到 scripts/logic.json">保存图</button>
+          <button id="btn-graph-gen" title="生成 scripts/logic.dex(编译交给 B5)">生成代码</button>
+          <button id="btn-graph-del" title="删除选中节点 (Delete)">删除节点</button>
+        </span>
+        <span class="sep"></span>
+        <span class="group">
+          <button id="btn-graph-new" title="清空整张图">清空</button>
+          <button id="btn-graph-fit" title="回到原点 1:1">适应</button>
+        </span>
+        <span class="viewinfo" id="graph-info"></span>
+      </div>
+      <div class="graph-wrap graph-only">
+        <canvas id="graph"></canvas>
       </div>
       <div class="panel out">
         <div class="tabs">
@@ -134,7 +159,7 @@
     </section>
 
     <aside class="right">
-      <section class="grow">
+      <section class="grow scene-only">
         <h2>属性 <span class="count" id="sel-name">未选中</span></h2>
         <div class="row" id="ent-ops" hidden>
           <input id="ent-name" size="10" title="实体名">
@@ -148,7 +173,7 @@
           <p class="hint">在层级树或视口里点一个实体。</p>
         </div>
       </section>
-      <section id="palette-sec" hidden>
+      <section id="palette-sec" class="scene-only" hidden>
         <h2>瓦片调色板 <span class="count" id="palette-info"></span></h2>
         <div class="palette-wrap"><img id="palette" alt="图集"></div>
         <div class="row">
@@ -164,11 +189,16 @@
           <button id="btn-tile-clear">整图清空</button>
         </div>
       </section>
+      <section class="grow graph-only">
+        <h2>节点属性 <span class="count" id="graph-sel">未选中</span></h2>
+        <div id="graph-inspector" class="inspector"></div>
+      </section>
     </aside>
   </main>
 
   <script src="app.js"></script>
   <script src="scene.js"></script>
   <script src="viewport.js"></script>
+  <script src="graph.js"></script>
 </body>
 </html>

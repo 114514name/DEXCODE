@@ -563,6 +563,272 @@ def test_clipboard(dll):
             m.close()
 
 
+def test_graph_model(dll):
+    """B4 的逻辑图模型:节点目录、增删改、连线校验、撤销、存盘往返。"""
+    print("[逻辑图模型(节点/连线/校验/存盘)]")
+    with tempdir("ds_graph_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "g"})
+            types = m.ok("graph.types")
+            check("节点目录非空", len(types) >= 20, len(types))
+            names = [t["type"] for t in types]
+            check("目录含事件/动作/条件三类节点",
+                  "on_start" in names and "set_field" in names and "compare" in names,
+                  names)
+            by = {t["type"]: t for t in types}
+            check("事件节点只有执行输出", by["on_start"]["out"][0]["type"] == "exec"
+                  and by["on_start"]["in"] == [], by["on_start"])
+            check("分支有 exec 输入与条件输入",
+                  [p["name"] for p in by["branch"]["in"]] == ["exec", "cond"],
+                  by["branch"]["in"])
+            check("分支有两个执行输出",
+                  [p["name"] for p in by["branch"]["out"]] == ["true", "false"],
+                  by["branch"]["out"])
+            check("写字段的属性带类型",
+                  [(p["name"], p["type"]) for p in by["set_field"]["props"]]
+                  == [("obj", "string"), ("comp", "string"), ("field", "string"),
+                      ("value", "float"), ("as", "string")],
+                  by["set_field"]["props"])
+            check("比较节点有 a/b 两个数值输入",
+                  [p["name"] for p in by["compare"]["in"]] == ["a", "b"],
+                  by["compare"]["in"])
+
+            n1 = m.ok("graph.node.add", {"type": "on_update", "x": 10, "y": 20})["id"]
+            n2 = m.ok("graph.node.add", {"type": "set_field"})["id"]
+            check("节点 id 递增且不同", n1 != n2 and n2 > n1, (n1, n2))
+            check("新节点在 info 里", m.ok("graph.info")["nodes"] == 2)
+            r = m.ok("graph.node.move", {"id": n2, "x": 300, "y": 40})
+            check("移动生效", r["x"] == 300 and r["y"] == 40, r)
+            r = m.ok("graph.node.set", {"id": n2, "props": {"obj": "player"}})
+            check("改属性生效", r["props"]["obj"] == "player", r)
+            check("节点默认属性已填(不用前端兜底)",
+                  m.ok("graph.node.set", {"id": n2, "props": {"comp": "transform"}})
+                  ["props"].get("as") == "f")
+
+            m.ok("graph.link", {"from": n1, "from_pin": "out", "to": n2, "to_pin": "exec"})
+            check("连线数 = 1", m.ok("graph.info")["links"] == 1)
+            e = m.err("graph.link", {"from": n1, "from_pin": "out", "to": n2,
+                                     "to_pin": "exec"})
+            check("同一个输入口不能接两条", "已经有连线" in e, e)
+            e = m.err("graph.link", {"from": n1, "from_pin": "out", "to": n1,
+                                     "to_pin": "exec"})
+            check("不能连自己", "自己" in e, e)
+            e = m.err("graph.link", {"from": n1, "from_pin": "nope", "to": n2,
+                                     "to_pin": "exec"})
+            check("输出引脚不存在给出原因", "输出引脚" in e, e)
+            e = m.err("graph.link", {"from": n1, "from_pin": "out", "to": n2,
+                                     "to_pin": "value"})
+            check("执行流不能连数据口", "执行流只能连执行流" in e, e)
+            e = m.err("graph.node.add", {"type": "nope"})
+            check("未知节点类型给出原因", "没有这种节点类型" in e, e)
+            e = m.err("graph.node.set", {"id": n2, "props": {"nope": 1}})
+            check("未知属性给出原因", "没有属性" in e, e)
+            e = m.err("graph.node.remove", {"id": 9999})
+            check("删不存在的节点给出原因", "没有节点" in e, e)
+
+            # 数据线成环
+            a = m.ok("graph.node.add", {"type": "math"})["id"]
+            b = m.ok("graph.node.add", {"type": "math"})["id"]
+            m.ok("graph.link", {"from": a, "from_pin": "v", "to": b, "to_pin": "a"})
+            e = m.err("graph.link", {"from": b, "from_pin": "v", "to": a, "to_pin": "a"})
+            check("数据线成环被拒", "成环" in e, e)
+
+            # 删节点会带走它的连线
+            m.ok("graph.link", {"from": b, "from_pin": "v", "to": n2, "to_pin": "value"})
+            before = m.ok("graph.info")["links"]
+            m.ok("graph.node.remove", {"id": n2})
+            check("删节点同时清掉相关连线",
+                  m.ok("graph.info")["links"] < before, before)
+            check("断开指定输入口",
+                  m.ok("graph.unlink", {"to": b, "to_pin": "a"})["removed"] == 1)
+
+            # 撤销:逻辑图的编辑也要能撤
+            n = m.ok("graph.info")["nodes"]
+            m.ok("graph.node.add", {"type": "destroy"})
+            check("加节点", m.ok("graph.info")["nodes"] == n + 1)
+            m.ok("undo")
+            check("撤销后节点数回落", m.ok("graph.info")["nodes"] == n,
+                  m.ok("graph.info")["nodes"])
+            m.ok("redo")
+            check("重做后节点回来", m.ok("graph.info")["nodes"] == n + 1)
+
+            # 存盘 + 重开
+            ids = [nd["id"] for nd in m.ok("graph.info")["graph"]["nodes"]]
+            m.ok("graph.link", {"from": ids[0], "from_pin": "out",
+                                "to": ids[-1], "to_pin": "exec"})
+            n_before = m.ok("graph.info")["nodes"]
+            l_before = m.ok("graph.info")["links"]
+            gpath = m.ok("graph.info")["path"]
+            m.ok("graph.save")
+            check("逻辑图落盘", os.path.exists(gpath), gpath)
+            with open(gpath, encoding="utf-8") as f:
+                dom = json.load(f)
+            check("落盘 JSON 有 format/nodes/links",
+                  dom.get("format") == 1 and "nodes" in dom and "links" in dom, dom)
+            m.ok("project.open", {"dir": tmp})
+            check("重开后节点还在", m.ok("graph.info")["nodes"] == n_before,
+                  m.ok("graph.info")["nodes"])
+            check("重开后连线还在", m.ok("graph.info")["links"] == l_before,
+                  m.ok("graph.info")["links"])
+        finally:
+            m.close()
+
+
+def build_demo_graph(m):
+    """造一张能跑出可观测行为的图:每帧 x += 5,按下 jump 时 vy -= 400。"""
+    ev = m.ok("graph.node.add", {"type": "on_update", "x": 40, "y": 40})["id"]
+    add = m.ok("graph.node.add", {"type": "add_field", "x": 300, "y": 40})["id"]
+    m.ok("graph.node.set", {"id": add, "props": {
+        "obj": "player", "comp": "transform", "field": "x", "delta": 5, "as": "f"}})
+    m.ok("graph.link", {"from": ev, "from_pin": "out", "to": add, "to_pin": "exec"})
+    br = m.ok("graph.node.add", {"type": "branch", "x": 40, "y": 180})["id"]
+    m.ok("graph.link", {"from": add, "from_pin": "out", "to": br, "to_pin": "exec"})
+    press = m.ok("graph.node.add", {"type": "action_pressed", "x": 40, "y": 320})["id"]
+    m.ok("graph.node.set", {"id": press, "props": {"action": "jump"}})
+    m.ok("graph.link", {"from": press, "from_pin": "v", "to": br, "to_pin": "cond"})
+    jump = m.ok("graph.node.add", {"type": "add_field", "x": 320, "y": 180})["id"]
+    m.ok("graph.node.set", {"id": jump, "props": {
+        "obj": "player", "comp": "body", "field": "vy", "delta": -400, "as": "f"}})
+    m.ok("graph.link", {"from": br, "from_pin": "true", "to": jump, "to_pin": "exec"})
+    st = m.ok("graph.node.add", {"type": "on_start", "x": 40, "y": 480})["id"]
+    sf = m.ok("graph.node.add", {"type": "set_field", "x": 300, "y": 480})["id"]
+    m.ok("graph.node.set", {"id": sf, "props": {
+        "obj": "player", "comp": "transform", "field": "y", "value": 7, "as": "f"}})
+    m.ok("graph.link", {"from": st, "from_pin": "out", "to": sf, "to_pin": "exec"})
+    return {"ev": ev, "add": add, "br": br, "press": press, "jump": jump,
+            "st": st, "sf": sf}
+
+
+def test_graph_codegen(dll):
+    """B4 的代码生成:生成的 DexLang 必须能过 dexc.exe,而且**确定性**。"""
+    print("[逻辑图 → DexLang 代码生成]")
+    with tempdir("ds_gen_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "gen"})
+            build_demo_graph(m)
+            r = m.ok("graph.generate")
+            src = r["source"]
+            check("生成文件落在 scripts/ 下",
+                  r["path"].replace("/", "\\").endswith("scripts\\logic.dex"), r["path"])
+            check("生成的代码有 include", 'include "dexgame";' in src, src[:200])
+            check("生成三个回调(都收 dt 秒)", all(f"func {f}(dt: float)" in src
+                                                 for f in ("logic_start", "logic_update",
+                                                           "logic_draw")), src)
+            check("每帧的 add_field 生成了读-改-写",
+                  'eng_set_f(eng_find("player"), "transform", "x", '
+                  'eng_get_f(eng_find("player"), "transform", "x") + 5.0);' in src, src)
+            check("on_start 写了 y=7", '"transform", "y", 7.0);' in src, src)
+            check("分支生成成 if + 轮询动作",
+                  'if (eng_action_pressed("jump")) != 0 {' in src, src)
+            check("语句都以分号结束",
+                  all((not l.strip())
+                      or l.strip().endswith((";", "{", "}"))
+                      or l.strip().startswith("#")
+                      for l in src.splitlines()), src)
+            check("属性值优先于空引脚(没有未接线的报错)",
+                  "没有接东西" not in src, src)
+
+            src2 = m.ok("graph.generate")["source"]
+            check("两次生成逐字节一致(确定性)", src == src2)
+
+            if not os.path.exists(DEXC):
+                skip("生成的代码能编译", "dexc.exe 未构建")
+            else:
+                r2 = subprocess.run([DEXC, "compile", r["path"]],
+                                    capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace")
+                check("生成的代码能被 dexc 编译", r2.returncode == 0,
+                      (r2.stdout or "") + (r2.stderr or ""))
+                check("生成了字节码",
+                      os.path.exists(r["path"].replace(".dex", ".dexbc")), r["path"])
+
+            # 空图也要能生成并编译(新项目刚建出来就是这个状态)
+            m.ok("graph.new")
+            r3 = m.ok("graph.generate")
+            check("空图生成三个空函数",
+                  r3["source"].count("func logic_") == 3, r3["source"])
+            if os.path.exists(DEXC):
+                r4 = subprocess.run([DEXC, "compile", r3["path"]],
+                                    capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace")
+                check("空图生成的代码也能编译", r4.returncode == 0,
+                      (r4.stdout or "") + (r4.stderr or ""))
+        finally:
+            m.close()
+
+
+MAIN_DEX_GRAPH = """include "dexgame";
+include "dexgame_fast";
+include "logic";
+
+func on_start() {
+    eng_init_offscreen(320, 180);
+    eng_scene_load("scenes/main.json");
+    logic_start(0.0);
+}
+
+func on_update(dt: float) {
+    logic_update(dt);
+}
+
+func on_draw() {
+    logic_draw(0.0);
+}
+
+eng_run_frames("on_start", "on_update", "on_draw", 4);
+print eng_get_f(eng_find("player"), "transform", "x");
+print eng_get_f(eng_find("player"), "transform", "y");
+print eng_get_f(eng_find("player"), "body", "vy");
+"""
+
+
+def test_graph_behavior(dll):
+    """B4 的验收线:图 → 代码 → 编译 → 真的跑出预期行为(不是只看能不能编译)。"""
+    print("[逻辑图跑出预期行为(图→代码→dexc→vm)]")
+    vm = os.path.join(ROOT, "vm", "vm.exe" if os.name == "nt" else "vm")
+    if not (os.path.exists(DEXC) and os.path.exists(vm)):
+        skip("图驱动运行", "dexc.exe / vm.exe 未构建")
+        return
+    with tempdir("ds_run_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "run"})
+            pid = m.ok("entity.add", {"name": "player"})["id"]
+            m.ok("comp.add", {"id": pid, "comp": "body"})
+            build_demo_graph(m)
+            m.ok("scene.save")
+            r = m.ok("graph.generate")
+            main_dex = os.path.join(tmp, "scripts", "main.dex")
+            with open(main_dex, "w", encoding="utf-8", newline="\n") as f:
+                f.write(MAIN_DEX_GRAPH)
+            bc = os.path.join(tmp, "scripts", "main.dexbc")
+            c = subprocess.run([DEXC, "compile", main_dex, "-o", bc],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", cwd=tmp)
+            check("图驱动的 main.dex 能编译", c.returncode == 0,
+                  (c.stdout or "") + (c.stderr or ""))
+            if c.returncode != 0:
+                return
+            run = subprocess.run([vm, "scripts/main.dexbc", "-L",
+                                  os.path.join(LIBS, "dexgame")],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", cwd=tmp)
+            out = (run.stdout or "").strip().splitlines()
+            check("图驱动的程序能跑起来", run.returncode == 0,
+                  (run.stdout or "") + (run.stderr or ""))
+            check("on_start 的写字段生效(y=7)",
+                  len(out) >= 2 and out[1].strip() == "7", out)
+            check("每帧累加生效(4 帧 × +5 = x=20)",
+                  len(out) >= 1 and out[0].strip() == "20", out)
+            check("分支没被触发时不动 vy(没有按下动作)",
+                  len(out) >= 3 and out[2].strip() == "0", out)
+            check("生成的 logic.dex 在项目里", os.path.exists(r["path"]), r["path"])
+        finally:
+            m.close()
+
+
 def test_cli():
     print("[宿主 CLI(不开窗口)]")
     if not os.path.exists(EXE):
@@ -626,6 +892,9 @@ def main():
     test_viewport(dll)
     test_tile_brush(dll)
     test_clipboard(dll)
+    test_graph_model(dll)
+    test_graph_codegen(dll)
+    test_graph_behavior(dll)
     test_cli()
     test_webview_chain()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败" + (f", {SKIP} 跳过" if SKIP else ""))

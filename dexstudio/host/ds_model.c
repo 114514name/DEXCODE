@@ -14,6 +14,7 @@
 #include "ds_model.h"
 #include "ds_engine.h"
 #include "ds_json.h"
+#include "ds_graph.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -39,14 +40,13 @@ const char *ds_version(void) { return DS_VERSION; }
 
 /* ------------------------------------------------------------ 撤销条目 */
 
-/* 一条撤销记录 = 场景 JSON + 各瓦片地图的 CSV 文本。
- * 为什么要把 CSV 算进来:瓦片数据**不在场景 JSON 里**(tilemap 组件的 cols/rows/
- * texture 都是 persist=0,格子存在外部 CSV 文件),只快照场景 JSON 的话,
- * 刷完瓦片再撤销会"看着撤销了、瓦片还在"。CSV 按**路径**记,恢复时重写文件
- * 再让引擎重新加载。 */
+/* 一条撤销记录 = 场景 JSON + 若干**不在场景里的文本文件**(路径 → 内容)。
+ * 为什么要带文件:瓦片数据在外部 CSV(tilemap 的 cols/rows/texture 都是 persist=0),
+ * 逻辑图在 scripts/logic.json —— 只快照场景 JSON 的话,刷完瓦片/改完节点图再撤销会
+ * "看着撤销了、东西还在"。文件按**路径**记,恢复时重写文件再让引擎重新加载。 */
 typedef struct {
     char *scene;     /* scene JSON 文本 */
-    Dsj *csv;        /* {"<绝对路径>": "<csv 文本>", …} */
+    Dsj *files;      /* {"<绝对路径>": "<文本>", …} */
 } UndoEntry;
 
 struct DsModel {
@@ -64,6 +64,7 @@ struct DsModel {
     double view_x, view_y, view_zoom;
     int render_seq;        /* 每次渲染 +1,前端用它做 ?t= 破缓存 */
     Dsj *clipboard;        /* 实体剪贴板(entity.copy/paste),数组 */
+    Dsj *graph;            /* 逻辑图的 DOM(scripts/logic.json,B4) */
     char *resp;
     size_t resp_cap;
     int has_id;            /* 请求里带了 id → 响应原样带回(前端靠它配对 Promise) */
@@ -181,6 +182,11 @@ static int write_text(const char *path, const char *text)
     return 1;
 }
 
+/* 文件小工具的实现(ds_graph.c 也用同一份,避免两份行为不一致) */
+int ds_mkdir(const char *path) { return ensure_dir(path); }
+int ds_write_text(const char *path, const char *text) { return write_text(path, text); }
+char *ds_read_text(const char *path, size_t *out_len) { return read_text(path, out_len); }
+
 /* 文件存在(不是目录)*/
 static int file_exists(const char *path) { return path_exists(path); }
 
@@ -287,11 +293,34 @@ static Dsj *tilemap_snapshot(DsModel *m)
     return o;
 }
 
+/* 逻辑图(节点图)文件也是"不在场景 JSON 里的编辑状态",同样要进撤销快照。
+ * 它只有一个固定路径,所以直接按约定拼出来(没有项目时为空)。 */
+char *ds_graph_path(DsModel *m)
+{
+    if (!m->root[0]) return NULL;
+    return pjoin(m->root, DS_GRAPH_REL);
+}
+
+/* 快照里要额外记的**文本文件**(路径 → 内容):瓦片 CSV + 逻辑图 JSON。
+ * 逻辑图取**内存里的那一份**而不是读文件:编辑器改图之后可能还没存盘,
+ * 从磁盘读会把"上一次存盘"当快照,撤销就退过头了。 */
+static Dsj *files_snapshot(DsModel *m)
+{
+    Dsj *o = tilemap_snapshot(m);
+    char *g = ds_graph_path(m);
+    if (g) {
+        const char *txt = ds_graph_json(m);
+        if (txt) dsj_set_str(o, g, txt);
+        free(g);
+    }
+    return o;
+}
+
 static UndoEntry *undo_new_entry(DsModel *m)
 {
     UndoEntry *e = xm(sizeof *e);
     e->scene = scene_snapshot(m);
-    e->csv = tilemap_snapshot(m);
+    e->files = files_snapshot(m);
     return e;
 }
 
@@ -302,8 +331,8 @@ static void undo_free_contents(UndoEntry *e)
     if (!e) return;
     free(e->scene);
     e->scene = NULL;
-    if (e->csv) dsj_free(e->csv);
-    e->csv = NULL;
+    if (e->files) dsj_free(e->files);
+    e->files = NULL;
 }
 
 /* 释放一条**堆上单独分配**的条目(undo_new_entry 的返回值/临时快照) */
@@ -368,7 +397,7 @@ static void undo_push(DsModel *m, UndoEntry *e)
     redo_clear(m);
 }
 
-/* 把一份快照写回:场景 JSON + 各瓦片 CSV(写完让引擎重新加载) */
+/* 把一份快照写回:场景 JSON + 各外部文本文件(瓦片 CSV 写完让引擎重新加载) */
 static int restore_entry(DsModel *m, UndoEntry *e)
 {
     DexValue a[1];
@@ -378,9 +407,9 @@ static int restore_entry(DsModel *m, UndoEntry *e)
         seterr(m, "恢复场景失败:%s", ds_engine_last_error(&m->eng));
         return 0;
     }
-    for (i = 0; i < dsj_len(e->csv); i++) {
-        const char *path = e->csv->keys[i];
-        const char *text = dsj_at(e->csv, i)->str;
+    for (i = 0; i < dsj_len(e->files); i++) {
+        const char *path = e->files->keys[i];
+        const char *text = dsj_at(e->files, i)->str;
         int64_t id;
         DexValue b[2];
         write_text(path, text);
@@ -407,6 +436,8 @@ static int restore_entry(DsModel *m, UndoEntry *e)
             }
         }
     }
+    /* 逻辑图文件写回之后,内存里的图也要跟着回到那一版 */
+    ds_graph_reload(m);
     m->dirty = 1;
     return 1;
 }
@@ -539,21 +570,26 @@ static Dsj *entity_comps(DsModel *m, int64_t id)
 /* ------------------------------------------------------------ 项目 */
 
 static const char *MAIN_DEX_TEMPLATE =
-    "# DexStudio 生成的入口脚本\n"
-    "# 编译:tools/dexc/dexc.exe compile scripts/main.dex\n"
+    "# DexStudio 生成的入口脚本 —— 这个文件归你,可以随便改\n"
+    "#   · 逻辑图生成的代码在 scripts/logic.dex(别手改那个,改图)\n"
+    "#   · 编译:tools/dexc/dexc.exe compile scripts/main.dex\n"
     "include \"dexgame\";\n"
     "include \"dexgame_fast\";\n"
+    "include \"logic\";\n"
     "\n"
     "func on_start() {\n"
     "    eng_set_clear_color(eng_rgba(30, 30, 46, 255));\n"
     "    eng_scene_load(\"scenes/main.json\");\n"
+    "    logic_start(0.0);\n"
     "}\n"
     "\n"
-    "func on_update() {\n"
+    "func on_update(dt: float) {\n"
+    "    logic_update(dt);\n"
     "}\n"
     "\n"
     "func on_draw() {\n"
     "    eng_draw_scene();\n"
+    "    logic_draw(0.0);\n"
     "}\n"
     "\n"
     "eng_run(\"on_start\", \"on_update\", \"on_draw\");\n";
@@ -712,6 +748,17 @@ static Dsj *cmd_project_new(DsModel *m, Dsj *args)
         m->eng.scene_clear(none, 0);
     }
     stacks_clear(m);
+    ds_graph_reload(m);
+    /* 空逻辑图立刻落盘,并把对应的 scripts/logic.dex 也生成出来 ——
+     * 模板 main.dex 里 include "logic",少了它新建的项目直接编译不过。
+     * 顺带:逻辑图文件从第一天就存在(撤销快照按路径记它)。 */
+    {
+        char gerr[256];
+        if (!ds_graph_generate_to_file(m, NULL, 0, gerr, sizeof gerr)) {
+            seterr(m, "初始化逻辑图失败:%s", gerr);
+            return NULL;
+        }
+    }
     if (!scene_switch(m, NULL, 0)) return NULL;
     /* 立刻落盘:新建完的项目必须**马上就能重新打开**(否则"新建"只是个半成品)。
      * 顺带写出空的起始场景。 */
@@ -754,6 +801,7 @@ static Dsj *cmd_project_open(DsModel *m, Dsj *args)
     if (m->project) dsj_free(m->project);
     m->project = dom;
     m->scene[0] = 0;
+    ds_graph_reload(m);
     if (!scene_switch(m, NULL, 1)) return NULL;
     r = dsj_obj();
     dsj_set_str(r, "root", m->root);
@@ -1449,6 +1497,44 @@ const char *ds_preview_dir(DsModel *m)
 }
 
 const char *ds_project_dir(DsModel *m) { return m->root; }
+
+/* ------------------------------------------------ 给 ds_graph.c 的最小访问面 */
+
+Dsj *ds_model_graph(DsModel *m)
+{
+    if (!m->graph) m->graph = dsj_obj();
+    return m->graph;
+}
+
+void ds_model_set_graph(DsModel *m, Dsj *g)
+{
+    if (m->graph) dsj_free(m->graph);
+    m->graph = g ? g : dsj_obj();
+}
+
+void ds_model_error(DsModel *m, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(m->err, sizeof m->err, fmt, ap);
+    va_end(ap);
+}
+
+void *ds_model_edit_open(DsModel *m)
+{
+    Edit *e = xm(sizeof *e);
+    *e = edit_begin(m);
+    return e;
+}
+
+void ds_model_edit_close(DsModel *m, void *tok, int changed)
+{
+    Edit *e = (Edit *)tok;
+    if (!e) return;
+    edit_end(e, changed);
+    free(e);
+    if (changed) m->dirty = 1;
+}
 
 /* 每个实体的**世界包围盒** + 图层信息,一次调用给全。
  * 视口要画选中框、图层面板要按 layer 分组,都需要它;若让前端逐个 entity.get,
@@ -2176,6 +2262,7 @@ const char *ds_command(DsModel *m, const char *request)
     else if (!strcmp(cmd, "tilemap.csv")) ret = cmd_tilemap_csv(m, args);
     else if (!strcmp(cmd, "undo")) ret = c_undo(m, args);
     else if (!strcmp(cmd, "redo")) ret = c_redo(m, args);
+    else if (!strncmp(cmd, "graph.", 6)) ret = ds_graph_command(m, cmd, args);
     else {
         char msg[256];
         snprintf(msg, sizeof msg, "未知命令 '%s'", cmd);
@@ -2229,6 +2316,7 @@ void ds_model_destroy(DsModel *m)
     free(m->redo);
     if (m->project) dsj_free(m->project);
     if (m->clipboard) dsj_free(m->clipboard);
+    if (m->graph) dsj_free(m->graph);
     if (m->eng.ok) ds_engine_unload(&m->eng);
     free(m->resp);
     free(m);

@@ -43,6 +43,35 @@ input, select {
 input.wide { width: 100%; margin-bottom: 6px; }
 input.tiny, select.tiny { width: 54px; }
 
+/* ---------- 模式切换(场景 / 逻辑图) ---------- */
+.modes { display: flex; gap: 4px; margin-left: 8px; }
+.modes .tab { padding: 3px 12px; }
+.graph-only { display: none; }
+body.mode-graph .scene-only { display: none; }
+body.mode-graph .graph-only { display: flex; }
+body.mode-graph section.graph-only { display: block; }
+body.mode-graph section.grow.graph-only { display: flex; }
+
+.graph-bar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  flex: none; flex-wrap: wrap;
+}
+.graph-bar .sep { width: 1px; height: 18px; background: var(--border); }
+.graph-bar .group { display: flex; align-items: center; gap: 4px; }
+.graph-bar .viewinfo { margin-left: auto; color: var(--fg-dim); font-size: 11px; }
+.graph-wrap { flex: 1; min-height: 0; position: relative; background: #161622; overflow: hidden; }
+#graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: default; }
+.palette { overflow-y: auto; flex: 1; min-height: 60px; }
+.palette .cat {
+  color: var(--fg-dim); font-size: 11px; margin: 6px 0 3px;
+  border-bottom: 1px solid var(--border); padding-bottom: 2px;
+}
+.palette .nodebtn {
+  display: block; width: 100%; text-align: left; margin-bottom: 3px;
+  padding: 3px 8px; font-size: 12px;
+}
+
 /* ---------- 顶栏 ---------- */
 .topbar {
   display: flex; align-items: center; gap: 12px;

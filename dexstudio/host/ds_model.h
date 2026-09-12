@@ -19,6 +19,8 @@
 #ifndef DS_MODEL_H
 #define DS_MODEL_H
 
+#include "ds_json.h"   /* 模型对外的少量命令返回/接收 JSON DOM(B4 的逻辑图要用) */
+
 typedef struct DsModel DsModel;
 
 /* exe_dir:宿主 exe 所在目录(用来找 libdexgame.dll);可为空。 */
@@ -42,6 +44,20 @@ const char *ds_preview_dir(DsModel *m);
 
 /* 当前项目的根目录(没有项目时为空串) */
 const char *ds_project_dir(DsModel *m);
+
+/* ---------------------------------------------------------------- 供 ds_graph.c 用
+ * 逻辑图放在单独一个编译单元(ds_graph.c)里,所以这里给它最小的访问面:
+ * 图的 DOM、项目根目录、带原因的失败、以及"一次编辑"的撤销包装。 */
+Dsj *ds_model_graph(DsModel *m);              /* 内存里的图(可改;没有时为空图) */
+void ds_model_set_graph(DsModel *m, Dsj *g);  /* 接管 g 的所有权 */
+void ds_model_error(DsModel *m, const char *fmt, ...);
+/* 一次编辑:open 拍快照,close 时 changed=1 才压撤销栈(逻辑图的改动也要能撤销)。 */
+void *ds_model_edit_open(DsModel *m);
+void ds_model_edit_close(DsModel *m, void *tok, int changed);
+/* 文件小工具(逻辑图要用;与模型内部同一套实现,避免两份行为不一致) */
+int ds_mkdir(const char *path);
+int ds_write_text(const char *path, const char *text);
+char *ds_read_text(const char *path, size_t *out_len);
 
 const char *ds_version(void);
 
