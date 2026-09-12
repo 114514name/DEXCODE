@@ -192,6 +192,33 @@ def _find_zig():
         return None
 
 
+def _compiler_env():
+    """把 C 编译器的缓存与临时目录收进工作区内。
+
+    为什么需要:zig 默认用 %LOCALAPPDATA%\\zig\\tmp 与 %TEMP%。在受限/沙箱环境里
+    这些位置在工作区之外、写不进去,构建会以
+
+        error: failed to create output directory '...': AccessDenied
+
+    失败 —— 报错看起来像编译器坏了,其实只是缓存目录不可写。
+    `build_libs.bat` 一直在做这件事,但 `main.py build-vm` 之前没做,
+    于是同一个环境下「库能构建、VM 不能构建」。
+    """
+    env = dict(os.environ)
+    cache = os.path.join(ROOT, "_zigcache")
+    tmp = os.path.join(ROOT, "_zigtmp")
+    for d in (cache, tmp):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+    env["ZIG_GLOBAL_CACHE_DIR"] = cache
+    env["ZIG_LOCAL_CACHE_DIR"] = cache
+    env["TMP"] = tmp
+    env["TEMP"] = tmp
+    return env
+
+
 def cmd_build(args):
     src = os.path.join(ROOT, "vm", "vm.c")
     compiler = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
@@ -216,14 +243,29 @@ def cmd_build(args):
                 cmd += extra
             cmd += ["-o", out, src]
         print(" ".join(cmd))
-        subprocess.run(cmd, check=True)
+        try:
+            subprocess.run(cmd, check=True, env=_compiler_env())
+        except subprocess.CalledProcessError as e:
+            print(f"构建 {out_name} 失败(编译器退出码 {e.returncode})。", file=sys.stderr)
+            print("若报 'failed to create output directory ... AccessDenied',"
+                  "说明编译器的缓存/临时目录不可写:", file=sys.stderr)
+            print("  本命令已把 ZIG_GLOBAL_CACHE_DIR/TMP 指向工作区内的 "
+                  "_zigcache/ 与 _zigtmp/,仍在报错请检查这两个目录的权限。",
+                  file=sys.stderr)
+            print("  另一个已知原因:改过编译参数后 zig 复用了旧的失败缓存 —— "
+                  "删掉 _zigcache/ 再试。", file=sys.stderr)
+            return False
         print(f"已构建: {out}")
+        return True
 
     # 三个版本:普通 / 无控制台 / 发布版(读 core.do)
-    build_one(vm_exe_name())            # vm.exe
+    if not build_one(vm_exe_name()):            # vm.exe
+        return 1
     if zig:
-        build_one("vmnc.exe", ["-DPUBLISH_BUILD"])
-        build_one("galrun.exe", ["-DPUBLISH_BUILD"])
+        if not build_one("vmnc.exe", ["-DPUBLISH_BUILD"]):
+            return 1
+        if not build_one("galrun.exe", ["-DPUBLISH_BUILD"]):
+            return 1
     else:
         print("提示: 使用非 zig 编译器,仅构建普通 vm.exe(无控制台/发布版请用 zig)")
     return 0
