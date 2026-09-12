@@ -33,6 +33,7 @@
 typedef struct {
     uint32_t gen;      /* 世代号:每次创建 +1,永不为 0 */
     int32_t  live;
+    char     name[DG_NAME_MAX];   /* 空串 = 未命名 */
 } DgEntSlot;
 
 static DgEntSlot g_ents[DG_MAX_OBJECTS + 1];   /* 1 基索引,0 号不用 */
@@ -63,6 +64,29 @@ uint32_t dg_object_new(void) {
 }
 
 int32_t dg_object_count(void) { return g_live_count; }
+
+int32_t dg_object_set_name(uint32_t id, const char *name) {
+    if (!dg_object_alive(id)) { dg_error("object %u is not alive", id); return -1; }
+    if (name && strlen(name) >= DG_NAME_MAX) {
+        dg_error("name too long (max %d chars)", DG_NAME_MAX - 1);
+        return -1;
+    }
+    snprintf(g_ents[dg_ent_idx(id)].name, DG_NAME_MAX, "%s", name ? name : "");
+    return 0;
+}
+
+const char *dg_object_name(uint32_t id) {
+    if (!dg_object_alive(id)) return "";
+    return g_ents[dg_ent_idx(id)].name;
+}
+
+uint32_t dg_object_find(const char *name) {
+    if (!name || !name[0]) return 0;
+    for (int32_t i = 1; i <= DG_MAX_OBJECTS; i++)
+        if (g_ents[i].live && strcmp(g_ents[i].name, name) == 0)
+            return (g_ents[i].gen << 16) | (uint32_t)i;
+    return 0;
+}
 
 int dg_scene_collect_objects(uint32_t *out, int cap) {
     int n = 0;
@@ -621,6 +645,8 @@ static int32_t dg_scene_write_json(DgJsonW *w) {
         const int32_t ei = dg_ent_idx(obj);
         djw_obj_begin(w, NULL);
         djw_int(w, "index", k);
+        const char *nm = dg_object_name(obj);
+        if (nm && nm[0]) djw_str(w, "name", nm);
         for (int kind = 1; kind < DG_C_COUNT; kind++) {
             DgPool *p = &g_pools[kind];
             if (!p->used[ei]) continue;
@@ -746,6 +772,7 @@ static int32_t dg_scene_parse(const char *text) {
     while ((more = djr_arr_more(&p1)) == 1) {
         if (djr_obj_begin(&p1)) { dg_error("scene JSON: %s", djr_error(&p1)); return -1; }
         char k2[64]; k2[0] = '\0';
+        char pending_name[DG_NAME_MAX]; pending_name[0] = '\0';
         int rc2;
         int32_t idx = -1;
         while ((rc2 = djr_key(&p1, k2, sizeof k2)) == 0) {
@@ -753,6 +780,10 @@ static int32_t dg_scene_parse(const char *text) {
                 long long v;
                 if (djr_int(&p1, &v)) { dg_error("scene JSON: %s", djr_error(&p1)); return -1; }
                 idx = (int32_t)v;
+            } else if (strcmp(k2, "name") == 0) {
+                char nm[DG_NAME_MAX];
+                if (djr_str(&p1, nm, sizeof nm)) { dg_error("scene JSON: %s", djr_error(&p1)); return -1; }
+                snprintf(pending_name, sizeof pending_name, "%s", nm);   /* 实体还没建,先记下 */
             } else if (djr_skip_value(&p1)) {
                 dg_error("scene JSON: %s", djr_error(&p1)); return -1;
             }
@@ -762,6 +793,7 @@ static int32_t dg_scene_parse(const char *text) {
         if (n_objs >= DG_MAX_OBJECTS) { dg_error("scene has too many objects"); return -1; }
         const uint32_t id = dg_object_new();
         if (!id) return -1;
+        if (pending_name[0]) dg_object_set_name(id, pending_name);
         objs[n_objs] = (int32_t)id;
         /* index 可能乱序/缺省:按出现顺序兜底 */
         const int32_t slot = (idx >= 0 && idx < DG_MAX_OBJECTS) ? idx : n_objs;
@@ -1171,28 +1203,48 @@ int32_t dg_tilemap_draw(uint32_t obj, const float *view) {
     return dg_tilemap_each_in(obj, view[0], view[1], view[2], view[3], 0, &ctx, dg_tile_emit);
 }
 
-int32_t dg_draw_scene(void) {
-    if (!g_pools_ready) { dg_error("scene not initialized"); return -1; }
-    /* 找活动相机(第一个 active 的 camera 组件) */
-    const DgCamera *cam = NULL;
-    for (int32_t i = 1; i <= DG_MAX_OBJECTS && !cam; i++) {
+/* 活动相机(第一个 active 的 camera 组件)。返回 0 = 没有相机(即 世界 == 屏幕)。*/
+int32_t dg_scene_active_camera(float *x, float *y, float *zoom) {
+    if (x) *x = 0.0f;
+    if (y) *y = 0.0f;
+    if (zoom) *zoom = 1.0f;
+    for (int32_t i = 1; i <= DG_MAX_OBJECTS; i++) {
         if (!g_ents[i].live) continue;
         const uint32_t id = (g_ents[i].gen << 16) | (uint32_t)i;
         const DgCamera *c = (const DgCamera *)dg_comp_get(id, DG_C_CAMERA);
         if (c && c->active) {
-            static DgCamera cc;                 /* 复制一份,免得后面又被改 */
-            cc = *c;
-            cam = &cc;
+            if (x) *x = c->x;
+            if (y) *y = c->y;
+            if (zoom) *zoom = c->zoom;
+            return 1;
         }
     }
+    return 0;
+}
 
-    const float zx = cam ? cam->zoom : 1.0f;
-    const float cx = cam ? cam->x : 0.0f;
-    const float cy = cam ? cam->y : 0.0f;
+/* 屏幕 → 世界(相机约定的逆运算,见 dg_draw_scene 的说明)*/
+void dg_scene_screen_to_world(float sx, float sy, float *wx, float *wy) {
+    float cx = 0.0f, cy = 0.0f, zoom = 1.0f;
+    dg_scene_active_camera(&cx, &cy, &zoom);
+    if (zoom == 0.0f) zoom = 1.0f;
+    if (wx) *wx = sx / zoom + cx;
+    if (wy) *wy = sy / zoom + cy;
+}
+
+int32_t dg_draw_scene(void) {
+    if (!g_pools_ready) { dg_error("scene not initialized"); return -1; }
+    /* 找活动相机(第一个 active 的 camera 组件) */
+    float cam_x = 0.0f, cam_y = 0.0f, cam_zoom = 1.0f;
+    const int has_cam = dg_scene_active_camera(&cam_x, &cam_y, &cam_zoom);
+
+    const float zx = cam_zoom;
+    const float cx = cam_x;
+    const float cy = cam_y;
     if (zx == 0.0f) {
         dg_error("camera zoom is 0");
         return -1;
     }
+    (void)has_cam;
     /* 可见的世界矩形 —— 瓦片层用它裁剪(大地图只画看得见的部分)。
        view = {x, y, w, h, zoom} */
     const float view[5] = {

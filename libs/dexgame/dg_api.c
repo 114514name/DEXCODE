@@ -23,6 +23,7 @@
 static uint32_t g_clear_color = DG_RGB(20, 20, 28);
 static int64_t  g_frame_index = 0;
 static int      g_target_fps = 0;      /* 0 = 不限速(靠 VSync) */
+static double   g_frame_dt = 0.0;      /* 本帧墙钟间隔(秒);eng_dt() 读它 */
 static int64_t  g_last_frame_ms = 0;   /* 上一帧的时间戳(算 dt 给物理用)*/
 
 /* ---------- 生命周期 ---------- */
@@ -36,6 +37,7 @@ int64_t eng_init(const DexValue *a, int n) {
     if (dg_draw_init()) { dg_gfx_shutdown(); return -1; }
     dg_scene_init();
     dg_phys_init();
+    dg_input_init();
     g_frame_index = 0;
     return 0;
 }
@@ -48,6 +50,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
     if (dg_draw_init()) { dg_gfx_shutdown(); return -1; }
     dg_scene_init();
     dg_phys_init();
+    dg_input_init();
     g_frame_index = 0;
     return 0;
 }
@@ -55,6 +58,7 @@ int64_t eng_init_offscreen(const DexValue *a, int n) {
 int64_t eng_shutdown(const DexValue *a, int n) {
     (void)a; (void)n;
     dg_clear_error();
+    dg_input_shutdown();
     dg_phys_shutdown();
     dg_scene_shutdown();
     dg_draw_shutdown();
@@ -79,14 +83,15 @@ int64_t eng_frame_begin(const DexValue *a, int n) {
     dg_clear_error();
     dg_gfx_pump();
     if (!dg_gfx_running()) return 0;
+    /* 输入必须在物理/用户逻辑之前采样:边沿检测与 dt 都依赖它 */
+    dg_input_begin_frame();
+    /* 帧 dt:与物理模式无关都要算(eng_dt() 给用户看的就是它)*/
+    const int64_t now = dg_gfx_now_ms();
+    g_frame_dt = g_last_frame_ms ? (double)(now - g_last_frame_ms) / 1000.0 : 0.0;
+    g_last_frame_ms = now;
     /* 物理默认**自动**推进:用墙钟 dt 喂固定步长累加器。手动模式
        (eng_physics_set_auto(0))下由用户自己调 eng_physics_step()。 */
-    if (dg_phys_get_auto()) {
-        const int64_t now = dg_gfx_now_ms();
-        const double dt = g_last_frame_ms ? (double)(now - g_last_frame_ms) / 1000.0 : 0.0;
-        g_last_frame_ms = now;
-        dg_phys_advance(dt);
-    }
+    if (dg_phys_get_auto()) dg_phys_advance(g_frame_dt);
     dg_gfx_bind_target();
     dg_gfx_clear(g_clear_color);
     dg_draw_frame_begin();
@@ -95,6 +100,7 @@ int64_t eng_frame_begin(const DexValue *a, int n) {
 
 int64_t eng_frame_end(const DexValue *a, int n) {
     (void)a; (void)n;
+    dg_input_end_frame();         /* 边沿检测:把本帧状态记为"上一帧" */
     dg_draw_frame_end();          /* 必须先提交批次再 Present */
     dg_gfx_frame_pace(g_target_fps);
     dg_gfx_present();
@@ -264,6 +270,21 @@ int64_t eng_object_alive(const DexValue *a, int n) {
 int64_t eng_object_count(const DexValue *a, int n) {
     (void)a; (void)n;
     return dg_object_count();
+}
+
+/* 实体名:语言没有全局变量,回调函数只能靠名字找实体。也是 IDE 场景树要的东西。 */
+int64_t eng_set_name(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_set_name needs (object, name)"); return -1; }
+    return dg_object_set_name((uint32_t)dv_int(&a[0]), dv_str(&a[1]));
+}
+const char *eng_name(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_object_name((uint32_t)dv_int_or(a, n, 0, 0));
+}
+int64_t eng_find(const DexValue *a, int n) {
+    dg_clear_error();
+    return (int64_t)dg_object_find(dv_str_or(a, n, 0, ""));
 }
 
 int64_t eng_scene_clear(const DexValue *a, int n) {
@@ -479,9 +500,10 @@ int64_t eng_physics_substeps(const DexValue *a, int n) {
     return dg_phys_last_substeps();
 }
 
+/* 帧间隔(秒)。**不是**物理步长:物理是固定 120Hz,它是渲染帧的墙钟间隔。 */
 double eng_dt(const DexValue *a, int n) {
     (void)a; (void)n;
-    return (double)dg_phys_frame_dt();
+    return g_frame_dt;
 }
 
 double eng_time(const DexValue *a, int n) {
@@ -706,6 +728,129 @@ int64_t eng_tilemap_solid_at(const DexValue *a, int n) {
     if (n < 3) { dg_error("eng_tilemap_solid_at needs (object, worldX, worldY)"); return 0; }
     return dg_tilemap_solid_at((uint32_t)dv_int(&a[0]), (float)dv_float(&a[1]),
                                (float)dv_float(&a[2])) ? 1 : 0;
+}
+
+/* ============================================================
+   输入(M4):轮询 + 动作映射
+   ============================================================ */
+int64_t eng_key_down(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_down((int)dv_int_or(a, n, 0, -1)) ? 1 : 0;
+}
+int64_t eng_key_pressed(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_pressed((int)dv_int_or(a, n, 0, -1)) ? 1 : 0;
+}
+int64_t eng_key_released(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_released((int)dv_int_or(a, n, 0, -1)) ? 1 : 0;
+}
+double eng_mouse_x(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_input_mouse_x(); }
+double eng_mouse_y(const DexValue *a, int n) { (void)a; (void)n; return (double)dg_input_mouse_y(); }
+double eng_mouse_world_x(const DexValue *a, int n) {
+    (void)a; (void)n;
+    float wx = 0.0f, wy = 0.0f;
+    dg_scene_screen_to_world(dg_input_mouse_x(), dg_input_mouse_y(), &wx, &wy);
+    return (double)wx;
+}
+double eng_mouse_world_y(const DexValue *a, int n) {
+    (void)a; (void)n;
+    float wx = 0.0f, wy = 0.0f;
+    dg_scene_screen_to_world(dg_input_mouse_x(), dg_input_mouse_y(), &wx, &wy);
+    return (double)wy;
+}
+int64_t eng_mouse_down(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_mouse_down((int)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+int64_t eng_mouse_pressed(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_mouse_pressed((int)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+int64_t eng_mouse_released(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_mouse_released((int)dv_int_or(a, n, 0, 0)) ? 1 : 0;
+}
+int64_t eng_mouse_wheel(const DexValue *a, int n) { (void)a; (void)n; return dg_input_wheel(); }
+int64_t eng_pad_connected(const DexValue *a, int n) { (void)a; (void)n; return dg_input_pad_connected() ? 1 : 0; }
+double eng_pad_axis(const DexValue *a, int n) {
+    dg_clear_error();
+    return (double)dg_input_code_axis((int)dv_int_or(a, n, 0, 0));
+}
+
+int64_t eng_action_bind(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_action_bind needs (action, keycode)"); return -1; }
+    return dg_input_action_bind(dv_str(&a[0]), (int)dv_int(&a[1]));
+}
+int64_t eng_action_unbind(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_action_unbind needs an action name"); return -1; }
+    return dg_input_action_unbind(dv_str(&a[0]));
+}
+int64_t eng_action_down(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_action_down(dv_str_or(a, n, 0, "")) ? 1 : 0;
+}
+int64_t eng_action_pressed(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_action_pressed(dv_str_or(a, n, 0, "")) ? 1 : 0;
+}
+int64_t eng_action_released(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_action_released(dv_str_or(a, n, 0, "")) ? 1 : 0;
+}
+double eng_action_value(const DexValue *a, int n) {
+    dg_clear_error();
+    return (double)dg_input_action_value(dv_str_or(a, n, 0, ""));
+}
+int64_t eng_action_bound(const DexValue *a, int n) {
+    dg_clear_error();
+    return dg_input_action_bound(dv_str_or(a, n, 0, "")) ? 1 : 0;
+}
+int64_t eng_action_count(const DexValue *a, int n) { (void)a; (void)n; return dg_input_action_count(); }
+const char *eng_action_name_at(const DexValue *a, int n) {
+    dg_clear_error();
+    const int i = (int)dv_int_or(a, n, 0, -1);
+    if (i < 0 || i >= dg_input_action_count()) {
+        dg_error("action index %d out of range 0..%d", i, dg_input_action_count() - 1);
+        return "";
+    }
+    return dg_input_action_name(i);
+}
+int64_t eng_action_code(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_action_code needs (action, slot)"); return -1; }
+    return dg_input_action_code(dv_str(&a[0]), (int)dv_int(&a[1]));
+}
+
+/* 合成输入(测试 / IDE 脚本化试玩)*/
+int64_t eng_input_feed(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_input_feed needs (keycode, down)"); return -1; }
+    return dg_input_feed((int)dv_int(&a[0]), (int)dv_int(&a[1]));
+}
+int64_t eng_input_feed_axis(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_input_feed_axis needs (axis, value)"); return -1; }
+    return dg_input_feed_axis((int)dv_int(&a[0]), (float)dv_float(&a[1]));
+}
+int64_t eng_input_feed_mouse(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 2) { dg_error("eng_input_feed_mouse needs (x, y)"); return -1; }
+    return dg_input_feed_mouse((float)dv_float(&a[0]), (float)dv_float(&a[1]));
+}
+int64_t eng_input_feed_wheel(const DexValue *a, int n) {
+    dg_clear_error();
+    if (n < 1) { dg_error("eng_input_feed_wheel needs a delta"); return -1; }
+    dg_input_feed_wheel((int)dv_int(&a[0]));
+    return 0;
+}
+int64_t eng_input_clear(const DexValue *a, int n) {
+    (void)a; (void)n;
+    dg_clear_error();
+    dg_input_clear();
+    return 0;
 }
 
 /* ---------- 颜色辅助 ----------

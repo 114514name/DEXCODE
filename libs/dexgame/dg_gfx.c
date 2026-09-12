@@ -84,6 +84,8 @@ void dg_gfx_frame_pace(int target_fps) {
 
 /* ---------- 窗口过程 ---------- */
 static LRESULT CALLBACK dg_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    /* 输入消息先交给 dg_input.c(它自己判断是否消费) */
+    if (dg_input_on_message((unsigned int)msg, (uint64_t)wp, (int64_t)lp)) return 0;
     switch (msg) {
     case WM_CLOSE:
         g_running = 0;

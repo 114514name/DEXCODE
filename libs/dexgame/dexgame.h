@@ -201,6 +201,15 @@ uint32_t dg_object_new(void);
 int32_t  dg_object_free(uint32_t id);
 int32_t  dg_object_alive(uint32_t id);
 int32_t  dg_object_count(void);
+/* 实体名(最多 31 字符)。为什么需要它:
+   1) 语言**没有全局变量**,所以回调函数(如 on_update)看不到主程序的 let 变量 ——
+      只能靠"名字找实体"(状态本来就该放在实体/组件里);
+   2) IDE 的场景树要显示名字。
+   名字不是组件,属于实体本身,会跟场景 JSON 一起存。*/
+#define DG_NAME_MAX 32
+int32_t  dg_object_set_name(uint32_t id, const char *name);
+const char *dg_object_name(uint32_t id);
+uint32_t dg_object_find(const char *name);
 int32_t  dg_object_clear(void);
 /* 把所有活实体的 id 收进 out(给物理/渲染的批处理用);返回个数 */
 int      dg_scene_collect_objects(uint32_t *out, int cap);
@@ -325,5 +334,50 @@ int32_t dg_tilemap_each_solid_in(uint32_t obj, float x, float y, float w, float 
                                  void *user, DgTileFn fn);
 /* 绘制瓦片层(供 dg_draw_scene 调用);返回绘制的瓦片数。 */
 int32_t dg_tilemap_draw(uint32_t obj, const float *view);   /* view = {x,y,w,h} 世界可见矩形 */
+
+/* ---------- dg_input.c(M4:键盘 / 鼠标 / 手柄 / 动作映射) ---------- */
+void  dg_input_init(void);
+void  dg_input_shutdown(void);
+/* 帧边界:采样手柄 + 把"当前"变"上一帧"(边沿检测靠它)。eng_frame_begin 会调。 */
+void  dg_input_begin_frame(void);   /* 帧开始:采样手柄 + 清滚轮 */
+void  dg_input_end_frame(void);     /* 帧结束:当前 → 上一帧(边沿检测靠它)*/
+/* Win32 消息入口(由 dg_gfx.c 的窗口过程转发)。返回 1 = 已消费。 */
+int   dg_input_on_message(unsigned int msg, uint64_t wp, int64_t lp);
+
+/* 按键码见 dg_input.c 顶部注释(0..255 = VK,256..258 = 鼠标,300.. = 手柄,400+/500+ = 轴) */
+int   dg_input_down(int code);
+int   dg_input_pressed(int code);
+int   dg_input_released(int code);
+float dg_input_mouse_x(void);
+float dg_input_mouse_y(void);
+int   dg_input_mouse_down(int btn);
+int   dg_input_mouse_pressed(int btn);
+int   dg_input_mouse_released(int btn);
+int   dg_input_wheel(void);
+float dg_input_code_axis(int axis);          /* 0=LX 1=LY 2=RX 3=RY 4=LT 5=RT */
+int   dg_input_pad_connected(void);
+
+/* 合成输入:测试与 IDE 的脚本化试玩用(不碰真实设备) */
+int   dg_input_feed(int code, int down);
+int   dg_input_feed_axis(int axis, float value);
+int   dg_input_feed_mouse(float x, float y);
+void  dg_input_feed_wheel(int delta);
+void  dg_input_clear(void);
+
+/* 动作映射:一个动作最多绑 4 个来源(键盘/鼠标/手柄可以混)*/
+int   dg_input_action_bind(const char *name, int code);
+int   dg_input_action_unbind(const char *name);
+int   dg_input_action_down(const char *name);
+int   dg_input_action_pressed(const char *name);
+int   dg_input_action_released(const char *name);
+float dg_input_action_value(const char *name);   /* 模拟量(摇杆);数字键给 0/1 */
+int   dg_input_action_bound(const char *name);
+int   dg_input_action_count(void);
+const char *dg_input_action_name(int i);
+int   dg_input_action_code(const char *name, int slot);
+
+/* ---------- 屏幕 ↔ 世界(dg_scene.c;鼠标坐标换算要用) ---------- */
+int32_t dg_scene_active_camera(float *x, float *y, float *zoom);
+void    dg_scene_screen_to_world(float sx, float sy, float *wx, float *wy);
 
 #endif /* DEXGAME_H */

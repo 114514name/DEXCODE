@@ -768,7 +768,10 @@ eng_shutdown();
     check("位置再 +1 = 2(剩下的进累加器)", get(L, "x_15") == "2", get(L, "x_15"))
     check("**alpha ≈ 0.5**", abs(float(get(L, "alpha_15", "0")) - 0.5) < 0.01,
           get(L, "alpha_15"))
-    check("dt 记录本帧时间", abs(float(get(L, "dt_15", "0")) - 0.0125) < 1e-6, get(L, "dt_15"))
+    # eng_dt() 是**帧**的墙钟间隔(不是物理步长):这里没有调 eng_frame_begin,
+    # 所以它应该是 0;eng_physics_step 只负责物理。
+    check("**eng_dt 是帧 dt 而不是物理步长**(没开帧就是 0)", get(L, "dt_15") == "0",
+          get(L, "dt_15"))
     check("dt=0 不跑子步", get(L, "sub_0") == "0", get(L, "sub_0"))
     check("步长改 240Hz 后跑 3 个子步(含上次剩的半个)", get(L, "sub_240") == "3",
           get(L, "sub_240"))

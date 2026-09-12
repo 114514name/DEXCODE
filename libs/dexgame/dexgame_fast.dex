@@ -1,0 +1,101 @@
+# dexgame_fast.dex — dexgame 的"一键主循环"语言模块
+#
+# 为什么是**语言模块**而不是 C 导出函数:
+#   引擎的帧生命周期(抽消息/绑目标/清屏/批次/Present/帧节奏)一直在 C 侧
+#   (eng_frame_begin/eng_frame_end);"每帧调度哪个语言函数"这件事用 DexLang 自己
+#   写最省事 —— 不需要 VM 提供"反向调用语言函数"的机制(现在没有),
+#   而且 call("名字") 的动态分发本来就是语言能力(与 egui_fast 的 eg_app_run 同一套路)。
+#
+# 用法:
+#   include "dexgame_fast";
+#   func on_start() { ... }                 # 可选
+#   func on_update(dt: float) { ... }       # 每帧逻辑(dt = 秒)
+#   func on_draw() { ... }                  # 每帧绘制
+#   eng_run("on_start", "on_update", "on_draw");
+#
+#   不需要的回调传 "" 即可,例如 eng_run("", "on_update", "").
+#
+# 帧内的顺序(想自己写循环时照抄这个顺序):
+#   eng_frame_begin()  →  抽消息 + 采样输入 + 绑定目标 + 清屏 + 重置批次 + **自动步进物理**
+#   on_update(dt)      →  读输入、改速度/位置
+#   on_draw()          →  发绘制命令
+#   eng_frame_end()    →  提交批次 + 帧节奏 + Present
+#
+# 注意:自动物理是在 on_update **之前**跑完的(默认模式),所以这一帧设置的
+# 速度会体现在下一步 —— 平台游戏里就是 1 帧输入延迟(165Hz 下约 6ms)。
+# 想完全掌控就用 eng_physics_set_auto(0),在 on_update 里自己调 eng_physics_step()。
+
+include "dexgame";
+
+# 引擎主循环:三个回调都是函数名(空串 = 不需要)
+func eng_run(on_start: string, on_update: string, on_draw: string) {
+    if on_start != "" {
+        call(on_start);
+    }
+    while eng_running() {
+        if eng_frame_begin() == 0 {
+            return;                       // 窗口被关掉
+        }
+        if on_update != "" {
+            call(on_update, eng_dt());
+        }
+        if on_draw != "" {
+            call(on_draw);
+        }
+        eng_frame_end();
+    }
+}
+
+# 便捷:不需要 on_start 时
+func eng_run2(on_update: string, on_draw: string) {
+    eng_run("", on_update, on_draw);
+}
+
+# 便捷:固定帧数版本(无人值守跑测试/截图用)
+func eng_run_frames(on_start: string, on_update: string, on_draw: string, frames: int) {
+    if on_start != "" {
+        call(on_start);
+    }
+    let i = 0;
+    while eng_running() && i < frames {
+        if eng_frame_begin() == 0 {
+            return;
+        }
+        if on_update != "" {
+            call(on_update, eng_dt());
+        }
+        if on_draw != "" {
+            call(on_draw);
+        }
+        eng_frame_end();
+        i = i + 1;
+    }
+}
+
+# 便捷:绑定一组默认键位(WASD/方向键 + 空格跳 + 鼠标左右键 + 手柄)
+#   之后逻辑里只写 eng_action_down("left") 这种,改键位改这一处即可。
+func eng_bind_default_actions() {
+    eng_action_bind("left", 37);          // ←
+    eng_action_bind("left", 65);          // A
+    eng_action_bind("left", 302);         // 手柄十字左
+    eng_action_bind("left", 500);         // 左摇杆向左(500+i = 轴 i 的负向)
+    eng_action_bind("right", 39);         // →
+    eng_action_bind("right", 68);         // D
+    eng_action_bind("right", 303);
+    eng_action_bind("right", 400);        // 左摇杆向右(400+i = 轴 i 的正向)
+    eng_action_bind("up", 38);
+    eng_action_bind("up", 87);            // W
+    eng_action_bind("up", 300);
+    eng_action_bind("up", 501);           // 左摇杆向上(LY 向上为负)
+    eng_action_bind("down", 40);
+    eng_action_bind("down", 83);          // S
+    eng_action_bind("down", 301);
+    eng_action_bind("down", 401);         // 左摇杆向下
+    eng_action_bind("jump", 32);          // 空格
+    eng_action_bind("jump", 87);          // W
+    eng_action_bind("jump", 310);         // 手柄 A
+    eng_action_bind("action", 256);       // 鼠标左键
+    eng_action_bind("action", 311);       // 手柄 B
+    eng_action_bind("back", 27);          // Esc
+    eng_action_bind("back", 305);         // 手柄 Back
+}

@@ -69,6 +69,12 @@ extern func eng_object_alive(obj: int) -> int;
 extern func eng_object_count() -> int;
 extern func eng_scene_clear() -> int;
 
+# 实体名(最多 31 字符)。语言**没有全局变量**:回调函数(on_update 等)
+# 看不到主程序的 let,所以跨帧状态要么放组件里、要么用名字找实体。
+extern func eng_set_name(obj: int, name: string) -> int;
+extern func eng_name(obj: int) -> string;
+extern func eng_find(name: string) -> int;
+
 # 组件名用字符串(如 "sprite"),便于生成的代码与 IDE 可读。
 extern func eng_attach(obj: int, comp: string) -> int;
 extern func eng_detach(obj: int, comp: string) -> int;
@@ -164,6 +170,47 @@ extern func eng_tilemap_rows(obj: int) -> int;
 extern func eng_tilemap_set_solid(obj: int, tile: int, solid: int) -> int;
 extern func eng_tilemap_is_solid(obj: int, tile: int) -> int;
 extern func eng_tilemap_solid_at(obj: int, wx: float, wy: float) -> int;
+
+# ---- 输入(M4)----
+# 两层:底层轮询(eng_key_*/eng_mouse_*/eng_pad_*)与动作映射(eng_action_*)。
+# **按键码是统一编号**,动作可以混绑键盘/鼠标/手柄而逻辑不变:
+#   0..255   Win32 虚拟键(65='A'、32=空格、37/38/39/40=方向键、13=回车、27=Esc)
+#   256..258 鼠标左/右/中键
+#   300..313 手柄:300=上 301=下 302=左 303=右 304=Start 305=Back 306=LS 307=RS
+#                    308=LB 309=RB 310=A 311=B 312=X 313=Y
+#   400+i    手柄轴 i 正向;500+i 轴 i 负向(i:0=LX 1=LY 2=RX 3=RY 4=LT 5=RT)
+extern func eng_key_down(code: int) -> int;
+extern func eng_key_pressed(code: int) -> int;
+extern func eng_key_released(code: int) -> int;
+extern func eng_mouse_x() -> float;
+extern func eng_mouse_y() -> float;
+extern func eng_mouse_world_x() -> float;
+extern func eng_mouse_world_y() -> float;
+extern func eng_mouse_down(btn: int) -> int;
+extern func eng_mouse_pressed(btn: int) -> int;
+extern func eng_mouse_released(btn: int) -> int;
+extern func eng_mouse_wheel() -> int;
+extern func eng_pad_connected() -> int;
+extern func eng_pad_axis(axis: int) -> float;
+
+# 动作:一个动作最多绑 4 个来源;eng_action_value 取绑定的模拟量(摇杆)
+extern func eng_action_bind(action: string, code: int) -> int;
+extern func eng_action_unbind(action: string) -> int;
+extern func eng_action_down(action: string) -> int;
+extern func eng_action_pressed(action: string) -> int;
+extern func eng_action_released(action: string) -> int;
+extern func eng_action_value(action: string) -> float;
+extern func eng_action_bound(action: string) -> int;
+extern func eng_action_count() -> int;
+extern func eng_action_name_at(index: int) -> string;
+extern func eng_action_code(action: string, slot: int) -> int;
+
+# 合成输入:无人值守测试与 IDE 的"脚本化试玩"要用它(不碰真实设备)
+extern func eng_input_feed(code: int, down: int) -> int;
+extern func eng_input_feed_axis(axis: int, value: float) -> int;
+extern func eng_input_feed_mouse(x: float, y: float) -> int;
+extern func eng_input_feed_wheel(delta: int) -> int;
+extern func eng_input_clear() -> int;
 
 # ---- 颜色辅助 ----
 # DexLang 没有位移运算,无法自行从 r/g/b/a 拼出 0xAARRGGBB,故提供此函数。

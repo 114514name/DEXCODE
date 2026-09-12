@@ -56,6 +56,15 @@ def check(name, cond, detail=""):
         print(f"  FAIL  {name}  {detail}")
 
 
+def get(lines, key, default=None):
+    """按 `key=value` 取值 —— 比数行号稳,增删一行不会让整段错位。"""
+    pre = key + "="
+    for l in lines:
+        if l.startswith(pre):
+            return l[len(pre):]
+    return default
+
+
 def skip(name, why):
     global SKIP
     SKIP += 1
@@ -484,6 +493,7 @@ eng_init_offscreen(32, 32);
 let a = eng_object_new();
 eng_attach(a, "transform");
 eng_attach(a, "sprite");
+eng_set_name(a, "player");            // 名字也要跟场景一起存
 eng_set_f(a, "transform", "x", 4.0);
 eng_set_f(a, "transform", "y", 4.0);
 eng_set_s(a, "sprite", "tex_path", "%s");
@@ -530,6 +540,8 @@ print n != 0;
 print eng_object_alive(n);
 eng_object_free(n);
 print eng_object_count();
+print "found=" + eng_find("player");       // 加载后名字应该还在
+print "found_name=" + eng_name(eng_find("player"));
 eng_shutdown();
 '''
 
@@ -562,6 +574,10 @@ def test_roundtrip():
     check("往返后 (14,16) 仍是绿 —— 层级与纹理都保住了",
           L[10] == str(GREEN), L[10:11])
     check("**加载后旧 id 立即失效(代际句柄)**", L[11] == "0", L[11:12])
+    check("**名字随场景存下来了(eng_find)**", get(L, "found") not in (None, "0"),
+          get(L, "found"))
+    check("找到的名字就是 player", get(L, "found_name") == "player",
+          get(L, "found_name"))
     check("加载后新建实体拿到非 0 句柄", L[12] == "1", L[12:13])
     check("加载后新建实体存活", L[13] == "1", L[13:14])
     check("释放后计数回到 2", L[14] == "2", L[14:15])
