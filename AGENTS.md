@@ -30,9 +30,10 @@
 | C 字节码解释器 | `vm/vm.c`(单文件 ~1650 行) | 含原生 FFI(P0–P3 的内存模型改动与值数组 ABI 都在这里) |
 | 原生库(7 个) | `libs/*/` | 纯 C 实现:`std` `math` `img` `ui` `egui` `gal` `dexgame` |
 | **游戏引擎** | `libs/dexgame/`(~6800 行,9 个 .c + 4 个 .h + 1 个语言模块) | 模块化 2D 引擎,**M0.5–M4 全部完成**:D3D11 批渲染 + 实体/组件/场景(JSON)+ 物理/瓦片地图 + 输入/主循环 + 音频(XAudio2)+ 文字(DirectWrite)+ 静态内嵌变体;`eng_*` 共 **166** 个函数。见 `docs/DEXGAME_DESIGN.md` |
+| **纯 C 工具链(产品 B 地基)** | `tools/dexc/`(7 个 .c + 1 个 .h,~3700 行) | **dexc.exe**:lexer/parser/compiler/assembler/disassembler/asmtext/.dexdef 全部从 Python 移植到 C,与 Python 前端**逐字节一致**(`tests/test_dexc.py` 478 项,拿全仓库 34 个 .dex + 一批故意写错的源码对照字节码/汇编文本/错误/警告)。编译这一步从此不需要 Python —— `dexc.exe` + `vm.exe` 即可完成"源码 → 可运行游戏" |
 | 集成开发环境 | `dexide/`(8 文件 ~4120 行) | tkinter,零第三方依赖 |
 | GAL 蓝图编辑器 | `bluedit/`(15 文件 ~7180 行) | UE 风格节点连线 → 生成 DexLang 代码 |
-| 测试 | `tests/`(28 个测试文件 + `_tmpdir.py`,~10300 行) | 全部是**手写 check() 脚本**,不用 pytest |
+| 测试 | `tests/`(29 个测试文件 + `_tmpdir.py`,~11900 行) | 全部是**手写 check() 脚本**,不用 pytest |
 
 **零第三方 Python 依赖**是刻意设计(只用标准库)。唯一可选外部依赖是
 `ziglang`(pip 包,提供 C 编译器)。
@@ -47,11 +48,11 @@
 ## 2. 当前状态(请以本节为权威)
 
 - 分支 `main`,工作树干净。
-- **测试:1353 项通过 / 0 失败** —— 28 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
-- 跟踪 196 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
+- **测试:1831 项通过 / 0 失败** —— 29 个测试脚本**全部退出码 0**,无 skip(见下方基线)。
+- 跟踪 197 个文件、约 34 MB。**体积构成容易被误判**:`examples/**/res/` 的示例媒体
   占 **28 MB**(单张 jpg 2–3 MB,单个 mp3 3–4.5 MB),而「刻意入库以便 clone 即用」的
-  二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe`)只有
-  **2.4 MB**。要让仓库瘦身,该动的是示例媒体,不是二进制。
+  二进制(`vm/*.exe` + `libs/*/lib*.dll` + `tools/legacy_galedit_c/galedit.exe` +
+  `tools/dexc/dexc.exe`)只有 **2.7 MB**。要让仓库瘦身,该动的是示例媒体,不是二进制。
 - 版本控制**刚建立**(2026-09),此前项目无 git;历史提交从「初始导入」开始。
 - 远端 `origin` = `git@github.com:114514name/DEXCODE.git`。**本机到 `github.com:22`
   的连接会被对端直接关闭**(TCP 其实通,但握手被切断),必须走 GitHub 官方备用通道
@@ -89,11 +90,12 @@ python tests/test_input.py       # 78  dexgame 输入/动作映射/主循环(M4-
 python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解析,M4-b)
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
+python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
 ```
 
-合计 **28 个脚本 / 199 个 `def test_*` 函数 / 1319 处 `check()` 调用**(`check()` 常在
+合计 **29 个脚本 / 209 个 `def test_*` 函数 / 1350 处 `check()` 调用**(`check()` 常在
 循环里被多次调用,所以**实测执行数 > 静态调用数**);实际执行数随平台与是否构建
-`vm.exe` 而变,本机实测 **1353 项通过**。本文件不逐条维护各项数字,以实际运行为准。
+`vm.exe` 而变,本机实测 **1831 项通过**。本文件不逐条维护各项数字,以实际运行为准。
 
 > `tests/_tmpdir.py` 不是测试文件,是测试共用的「可写临时目录」工具。**新增需要临时
 > 目录的测试请用它,不要用 `tempfile.mkdtemp`** —— 原因见 §4「mkdtemp 的 0o700 ACL」。
@@ -103,6 +105,7 @@ python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防�
 ```bash
 python main.py build-vm     # 构建 vm.exe / vmnc.exe / galrun.exe
 build_libs.bat              # 构建 7 个原生库 DLL(需要 ziglang)
+python main.py build-dexc   # 构建纯 C 工具链 tools/dexc/dexc.exe
 ```
 
 **可复现性:VM 的二进制度可复现,库的 DLL 不可复现。** 实测:
@@ -172,8 +175,9 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 - **提交前**:工作树干净 + 全量测试通过。
 - **生成产物不入库**:`*.dxasm`、`*.dexbc`、`*.do`、`scene_out.dex` 等
   (可由 `.dex` 重建),见 `.gitignore` 注释。
-- 二进制(`vm/*.exe`、`libs/*/lib*.dll`、`tools/legacy_galedit_c/galedit.exe`)
-  刻意入库:仓库缺少部分构建脚本时,不入库会导致 clone 后无法运行示例与测试。
+- 二进制(`vm/*.exe`、`libs/*/lib*.dll`、`tools/legacy_galedit_c/galedit.exe`、
+  `tools/dexc/dexc.exe`)刻意入库:仓库缺少部分构建脚本时,不入库会导致 clone 后
+  无法运行示例与测试。
 - **原生 arity 上限有两个来源,别搞混**(见 SPEC 4.5):`dexlang/opcodes.py` 的
   `MAX_NATIVE_ARITY = 3`(直接 ABI)与 `MAX_NATIVE_ARGS = 16`(值数组 ABI)。
   要功能上放宽到 3 参以上,得让 `.dexdef` 声明 `abi value_array;`,不是改常量。
@@ -236,6 +240,12 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **DirectWrite 的 IID 也要自己写,而且要 `-ldwrite`**(M4) | `DWriteCreateFactory(..., &IID_IDWriteFactory, ...)` 链接期报 `undefined symbol: IID_IDWriteFactory`(zig 不提供 dwrite 的 GUID 符号);另外构建 dexgame 必须显式加 `-ldwrite`(之前一直没加) | 用 `dg_guids.h` 里的 `DG_IID_IDWriteFactory`(M1 就写好了);构建脚本补 `-ldwrite`。**先写独立探针验证整条 API 链再集成** —— 探针几十行就能把"工厂/字体面/字形度量/alpha 位图"四步全验一遍,比在引擎里边调边猜快得多 |
 | **文字光栅化必须整数像素定位**(M4) | 字形位图按整数像素光栅化,quad 落在半像素上会被线性过滤糊掉 | 画字时把(笔位+墨水偏移)与(基线+墨水偏移)四舍五入到整数;配合 §4.3 的 uv 规则(区域用边界)1:1 映射才清晰。**推论:一期文字不支持子像素定位** |
 | **DexLang 没有位运算 → 测试不能拆像素通道**(M4) | 想验证"红字"写了 `(p>>16)&0xFF`,词法器直接报 `unexpected character '&'`(**也没有 `>>`**) | 用**算术恒等式**:白字 = base+cov·0x10101、红字 = base+cov·0x10000 → 两帧像素和之差必是 `cov总和×257` 的倍数(实测 3497770 = 257×13610)。写测试时最容易忘这条(库侧有 `eng_rgba` 兜底,测试里没有) |
+| **`open(f,'w').write(open(f).read())` 会把文件清空**(最惨的一次自伤,B1) | 想一行式批量替换 `canatives`→`capnatives`,写成 `open(f,'w',…).write(open(f,…).read().replace(…))`。Python **先求值 `open(f,'w')`(立刻截断)**,再求值 `open(f).read()`(读到空串)→ `tools/dexc/` 的 **7 个 .c 文件全变成 0 字节**。当时还没提交,只能凭上下文把 ~3700 行重写一遍 | 批量改写一律 **read → 改 → write** 三步(或 `p = Path(f); p.write_text(p.read_text(...).replace(...))`)。**新写的代码要尽早 `git add`** —— 这次能恢复只是因为内容还在上下文里 |
+| **按行切分写成 `while (p <= n)` = 死循环**(B1) | `dexc asm` 报 `out of memory (18446744056529682432 bytes)`(2^64−2^34,一看就是尺寸算崩)。真正病因却是切行循环:最后一轮 `p == n` 时会再切出一个空行、而 `p` 不再前进 → 无限 push 空行直到爆内存。**报错信息完全指不到病因** | 写成 `for (;;) { …; if (p >= n) break; p++; }`;缓冲区增长也要防溢出(`if (nc > SIZE_MAX/2)`)。“尺寸离谱的 OOM”先查**循环边界**,不要追分配器 |
+| **空源文件会"编译成功"**(B1) | 源文件被上一条清空后 zig 不报错(空文件是合法 C),但产物**没有任何函数符号** → 链接期报 `lld-link: error: undefined symbol: WinMain`。这个报错看着像"子系统/启动对象选错了",于是白试了 `-mconsole`、`-Wl,--subsystem=console` 等一整天(zig 还回 `unsupported linker arg`) | 链接期缺 `main`/启动符号时,**先确认目标文件里有没有 `main`**(直接读 COFF 符号表:空文件的对象只有节符号与 `.file`),再怀疑链接参数。**别在链接参数上打转** |
+| **签名类型码与 `.dexdef` 类型名是两套映射**(B1) | 把 `.dexdef` 的 `type_code("int"/"float"/"string"/"void")` 复用到签名串 `'ii:i'` 上,于是 **dexc 自己 disasm 出来的 `.native … siii:i` 自己 asm 不认** —— 往返只在"含 string 参数或 arity ≥ 3"的库上断裂 | `parse_sig` 用单字母映射(`v/i/f/s`)、`parse_type` 用全名映射,各自一个函数。**往返测试要覆盖真实库(166 个原生函数),玩具例子测不出来** |
+| **PowerShell 没有 heredoc,还会吃掉 `-Wl,` 的逗号**(B1) | `python - <<'PY'` 在 PowerShell 里报"缺少文件规范"(不是 heredoc);`-Wl,-subsystem:console` 被当成 PowerShell 自己的参数(报"参数列表中缺少参量") | 要改文本就**写一个脚本文件**(write 工具)再 `python 脚本.py`;命令行里的 `-Wl,…` 必须整体加引号,或直接写进 Python 的 subprocess 参数列表 |
+| **Python 的 `repr` 得自己实现**(B1) | dexc 的错误信息(`{x!r}`)与 `.dxasm` 里的浮点文本都要求与 Python 逐字节一致:引号选择、控制字符转 `\xNN`/`\uNNNN`、浮点用**最短往返**十进制且仅当指数 < −4 或 ≥ 16 才用科学计数法 | `tools/dexc/dexc_util.c` 里写 `dx_py_repr_str`/`dx_py_repr_float`,并由 `test_dexc.py` 用 16 个边界浮点(0.0/-0.0/1e15/1e16/1e-4/1e-5/5e-324/1.797…e308…)锁住 |
 
 ---
 
@@ -261,6 +271,12 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 - **推论:M1 把 `MAX_NATIVE_ARGS` 从 8 提到 16 也没动格式**。它只是 `param_types`
   数组的容量。这条可作为以后判断"某个改动要不要动格式"的判据:**看字节码里有没有
   承载它的字段**(arity 是 u8、表条目本就是变长的 `6+arity`),有就不用动。
+- **C 工具链(dexc)必须与 Python 前端逐字节一致**:`tools/dexc/` 是 `dexlang/` 的
+  **移植**,不是"第二个实现"—— 两边对同一份源码必须给出相同的字节码、汇编文本、
+  警告与错误信息。改任何一侧都要跑 `python tests/test_dexc.py`(478 项:全仓库
+  34 个 .dex 四项对照 + ~90 个语言特性用例 + ~35 个错误路径 + .dexdef + 反汇编往返)。
+  这与 §5.2「两个 VM 必须语义一致」是同一条规律:**双实现的一致性靠测试锁住,
+  不靠"我记得两边都改了"**。
 
 ### 5.2 两个 VM 必须语义一致
 
@@ -294,6 +310,8 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 
 | 提交 | 内容 |
 |------|------|
+| (本次 docs) | **产品 B 开工**:`docs/DEXGAME_DESIGN.md` §9 从占位改成**已锁定决策 + B1–B7 里程碑**(14 项决策逐条来自用户确认),§10 里程碑表补产品 B 行;本文件 §1/§2 接入 dexc、§4 新增 **6 条 B1 陷阱**(含"一行式改写清空 7 个源文件")、§5.1 补"双实现一致性"、§7 更新为产品 B 进行中;README 补 `build-dexc` |
+| (本次 B1) | **纯 C 工具链 `dexc.exe`(产品 B 的地基)**。`tools/dexc/`(7 个 .c + 1 个 .h,~3700 行):词法/语法/编译/汇编/反汇编/汇编文本/.dexdef 解析全部从 `dexlang/` 移植到 C,`python main.py build-dexc` 构建(285 KB exe 入库)。**与 Python 前端逐字节一致**:新增 `tests/test_dexc.py` **478 项** —— 全仓库 34 个 .dex 的「字节码/汇编文本/警告/错误」四项对照、约 90 个语言特性用例、约 35 个错误路径、13 个 .dexdef 用例、反汇编↔汇编往返、16 个浮点边界。子命令:`compile` / `asm` / `disasm` / `run`(编译后交给 vm.exe)/ `dump-tokens` / `version`。**编译这一步从此不需要 Python** —— `dexc.exe` + `vm.exe` 就能完成"源码 → 可运行游戏" |
 | (本次 docs) | **M4-e 完成 = 产品 A(M0.5–M4)收官**:设计文档里程碑表把 M4 标为完成并列证据、验收表 M4 行打勾;本文件 §1/§2/§7 更新为"引擎完成"、测试基线加示例编译守卫;顺带校正测试基线口径(`test_scene.py` 133→**135**、测试函数数按 `^def test_` 实测为 **199**、并说明「实测执行数 1353 > 静态 `check()` 调用数 1319」的原因) |
 | (本次 M4-e) | **dexgame 完整可玩示例(平台跳跃)**。新增 `examples/dexgame/platformer.dex`(~380 行)与 `tests/fixtures/make_tiles.py`(+`tiles.png` 7 格图集)、`make_wav.py` 补 jump/coin 音效。示例用 `eng_run_frames` 的 **on_start/on_update/on_draw 回调**组织,把引擎各层串起来:D3D11 批渲染 + 相机跟随、动态玩家(重力/跳跃/土狼时间/松手跳得矮)、move-and-slide 与瓦片碰撞、**射线探坑**、**矩形查询**找金币/敌人、动作映射、**合成输入的自动演示**(不碰键鼠时自己玩,遇墙/坑/敌人/金币就跳)、文字 HUD、XAudio2 音效、`eng_find` + 组件字段当跨帧状态(语言没有全局变量)。实测:自动演示 **1050 帧 / 6.4 秒通关**(金币 1/3、0 死亡),`python main.py run examples/dexgame/platformer.dex` 可复现。新增 `tests/test_examples.py`(30 项)编译守卫 —— 钉住示例引用的接口没被改名 |
 | (本次 docs) | M4-c/M4-d 完成:设计文档 §8 补上文字实现(DirectWrite 字形 → 覆盖率位图 → 图集 → 四边形;整数像素定位;两层缓存;一期不支持换行/对齐/子像素)与静态内嵌变体,里程碑表勾掉两项;本文件同步测试基线、新增 3 条 M4 陷阱、§1/§2/§7 更新 |
@@ -403,10 +421,23 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
   M4 接口层全部落地,`eng_*` 166 个函数,28 个测试脚本 1353 项通过。
   引擎可只靠 `libdexgame.dll` + `vm.exe` 独立发布(或用 `dexgame_static` 把 DLL
   内嵌进字节码,发布产物不需要单独的 DLL 文件)。
-- **下一步是产品 B(可视化 IDE)**,在引擎之上另行推进:WebView2 单窗口宿主、
-  节点/积木式编辑、场景与实例编辑(靠 `eng_comp_*`/`eng_field_*` 自省生成属性面板)、
-  逻辑生成 `.dex` 源码、场景生成 JSON、最后打包成类原生 Windows 应用。
-  设计要点见 `docs/DEXGAME_DESIGN.md` §9。
+- 🟢 **产品 B(DexStudio 可视化 IDE)进行中** —— 设计见 `docs/DEXGAME_DESIGN.md` §9。
+  - ✅ **B1 已完成(纯 C 工具链 dexc.exe)**:见上方「纯 C 工具链」一行与变更记录。
+    验收证据:478 项双实现对照全过;`dexc run examples/fib.dex` 直接出结果。
+  - 已锁定决策(14 项,用户逐条确认):① 编译链移植成 C 的 `dexc.exe`;② C 宿主 +
+    **内嵌 WebView2**;③ WebView2 SDK 下载并 vendor 入库;④ 逻辑编辑用 **UE 蓝图式节点图**
+    (复用 `bluedit/` 模型);⑤ **完整可视化场景编辑器**(视口/层级树/属性面板/图层);
+    ⑥ 要**瓦片地图刷子**;⑦ 一键编译 + 独立窗口运行 + 输出面板 + 错误定位
+    (**不做** PIE 与断点);⑧ 编辑器基础功能全要(撤销重做/复制粘贴/框选多选/网格吸附/
+    中文界面/自动保存);⑨ 自写轻量代码高亮页签(**不引第三方 JS**);⑩ 模型层在 **C 宿主**
+    并导出可测接口(顺带得到无界面命令行构建);⑪ 固定项目结构
+    (`project.json` + `scenes/` + `scripts/` + `res/`)且支持新建/打开项目;
+    ⑫ 目录 **`dexstudio/`**;⑬ **地基先行**(先 dexc,再宿主,再场景,再逻辑);
+    ⑭ 全权自主:自动提交 + 推送 origin,细节按"最简可行 + 与现有风格一致"自行决定并记入文档。
+  - 里程碑:B1 工具链 ✅ → **B2 WebView2 宿主骨架**(开窗 / 加载 HTML / postMessage 双向 /
+    可测的模型层)→ B3 场景编辑器 → B4 逻辑编辑器 → B5 生成 + 运行 + 输出面板 + 代码页签
+    → B6 项目与资源管理 → B7 打包单 exe。
+  - 下一步就是 **B2**。
 - 开工前已验证的前提:① `zig cc` 能编译并链接 D3D11(本机硬件设备 S_OK、特性级别 11_1、
   RTX 4060;WARP 兜底也可用);② `python main.py build-vm` 可重编且产物与已提交二进制
   **逐字节一致**(所以改 vm.c 的二进制 diff 只在真改动时出现)。

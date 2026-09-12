@@ -18,6 +18,8 @@ flowchart LR
 ```
 
 - **Python 降级**:`源码 → AST → 汇编(IR)→ 字节码`
+- **纯 C 降级(可选)**:同样的管线由 `tools/dexc/dexc.exe` 完成,产物与 Python 版**逐字节一致**
+  → 编译与运行都不需要 Python
 - **C 解释**:直接执行字节码;`NCALL` 指令通过 LoadLibrary 调用 DLL 导出函数
 - **反汇编**:字节码 → 汇编(可再次汇编,往返一致)
 
@@ -66,7 +68,11 @@ DEXCODE/
                            #    变量由引擎存储(跨镜头);ctypes 复用 libdexxgal.dll 实时预览/运行)
   tools/legacy_galedit_c/  # 🎮 旧版 GAL 编辑器(C 纯 GDI 自绘,已封存备用;
                            #    galedit.exe 入库,由 tests/test_editor.py 驱动)
-  tests/                   # 端到端测试(20 个文件 / 138 个测试函数 / 647 处断言)
+  tools/dexc/              # 🧰 纯 C 工具链 dexc.exe(lexer/parser/compiler/assembler/
+                           #    disassembler/asmtext/.dexdef 全移植;与 Python 前端逐字节一致)
+  libs/dexgame/            # 🎮 模块化 2D 游戏引擎(D3D11 批渲染 + 实体/组件/场景 JSON +
+                           #    物理/瓦片地图 + 输入/主循环 + 音频 + 文字;166 个 eng_* 函数)
+  tests/                   # 端到端测试(29 个文件 / 209 个测试函数 / 1831 项断言)
   docs/quickstart.html     # 🚀 快速入门指南(新手首选,浏览器打开)
   docs/stdlib_guide.html   # 📚 标准库详解(33 个函数逐个讲解,含可运行示例)
   docs/ui_guide.html       # 🖥 WinAPI 与 UI 库教学(窗口/消息循环/事件)
@@ -106,6 +112,23 @@ python main.py roundtrip examples/fib.dexbc
 # 7. 运行测试套件
 python tests/test_toolchain.py && python tests/test_native.py \
   && python tests/test_pyvm.py && python tests/test_ide.py
+
+# 8. (可选)纯 C 工具链:编译这一步也可以完全不依赖 Python
+python main.py build-dexc                        # 构建 tools/dexc/dexc.exe
+tools/dexc/dexc.exe compile examples/fib.dex     # 与 main.py compile 产物逐字节一致
+tools/dexc/dexc.exe run examples/fib.dex         # 编译并交给 vm.exe 运行
+tools/dexc/dexc.exe disasm fib.dexbc -o fib.dxasm
+```
+```
+
+**`tools/dexc/` 是什么**:把 `dexlang/`(词法/语法/编译/汇编/反汇编/汇编文本/.dexdef)
+整套移植成 C 的 **dexc.exe**。它和 Python 前端**逐字节一致**(字节码、汇编文本、警告、
+错误信息四项都对照),由 `tests/test_dexc.py`(478 项)用全仓库 34 个 `.dex` 语料锁住。
+于是**发布/开发都可以只用 `dexc.exe` + `vm.exe`**,不需要 Python:
+
+```bash
+tools/dexc/dexc.exe compile game.dex      # → game.dexbc
+vm/vm.exe game.dexbc                      # 直接运行
 ```
 
 ### 🎮 GAL 视觉小说(蓝图编辑器)
@@ -341,8 +364,8 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 
 ## 测试
 
-共 **20 个测试文件 / 138 个测试函数 / 647 处断言**（`check(...)` 调用点；实际执行数
-随平台与是否构建 `vm.exe` 而变，本机实测 **686 项通过、0 失败**）。
+共 **29 个测试文件 / 209 个测试函数 / 1350 处断言**（`check(...)` 调用点；实际执行数
+随平台与是否构建 `vm.exe` 而变，本机实测 **1831 项通过、0 失败**）。
 
 测试用的临时目录由 `tests/_tmpdir.py` 创建，不用 `tempfile` 的目录 API —— 原因见该
 文件头部注释（`mkdtemp` 以 `0o700` 建目录，在受限沙箱里会落成「仅属主」ACL，导致该
@@ -351,7 +374,7 @@ build_libs.bat          # 需要 ziglang(pip install ziglang)
 ```bash
 python tests/test_toolchain.py   # 29 项:核心工具链 + C VM 执行 + 往返
 python tests/test_native.py      # 41 项:include/refer + 定义文件 + arity 上限 + 错误检查 + DLL 调用 + 中文
-python tests/test_static.py      # 16 项:静态链接(字节内嵌、v3 往返、无外部 DLL 运行)
+python tests/test_static.py      # 24 项:静态链接(字节内嵌、v3 往返、无外部 DLL 运行、dexgame 静态变体)
 python tests/test_stdlib.py      # 36 项:标准库(纯 C 实现 + 脱离 Python 运行)
 python tests/test_struct.py      # 18 项:type/结构体 + 双 VM 一致性
 python tests/test_pyvm.py        # 14 项:Python 调试 VM(断点/单步/调用栈/原生/中文)
@@ -359,6 +382,14 @@ python tests/test_ide.py         # 123 项:DEXIDE 分析器 + GUI + IME 安全 +
 python tests/test_bluedit.py     # 180 项:GAL 蓝图模型/序列化/导出可编译
 python tests/test_robust.py      # 24 项:健壮性回归(畸形字节码/循环对象/类型校验/整型边界)
 python tests/test_memmodel.py    # 44 项:内存模型(P0 统一堆入口/P1 预算/P2 FFI 所有权)
+python tests/test_dexgame.py     # 59 项:dexgame 引擎渲染核心(离屏像素断言)
+python tests/test_scene.py       # 135 项:dexgame 实体/组件/场景 JSON
+python tests/test_phys.py        # 193 项:dexgame 碰撞/查询/运动学/瓦片地图
+python tests/test_input.py       # 78 项:dexgame 输入/动作映射/主循环
+python tests/test_audio.py       # 81 项:dexgame 音频(XAudio2 + 手写 WAV 解析)
+python tests/test_text.py        # 46 项:dexgame 文字(DirectWrite + 字形图集)
+python tests/test_examples.py    # 30 项:examples/dexgame/*.dex 编译守卫
+python tests/test_dexc.py        # 478 项:纯 C 工具链 dexc 与 Python 前端逐字节一致
 # 其余:test_call / test_module / test_img / test_ui / test_egui / test_gal /
 #       test_designer / test_editor / test_nopydep / test_vm_versions
 ```
