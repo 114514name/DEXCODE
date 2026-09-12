@@ -25,12 +25,36 @@ LIB_ENTRY_SIZE = 7   # path_idx(2) + flags(1) + data_len(4);内嵌数据另加 d
 LIB_STATIC = 0x01    # 库字节内嵌在字节码中(静态链接)
 NATIVE_FIXED_SIZE = 6
 
-# 原生函数「参数个数」的编译期上限。
-# 注意与 vm/vm.c 的 MAX_NATIVE_ARGS(=8)区分:后者只是 param_types 数组的存储上限,
-# 由 VM 在**加载期**校验;而 NCALL 的实际参数编组只覆盖 arity 0..3
-# (见 vm.c 末尾的 `unsupported native arity %u (max 3)`),即 4..8 能加载却永远调不通。
-# 因此超过本上限的签名必须在编译期就拒绝,而不是拖到第一次 NCALL。
-MAX_NATIVE_ARITY = 3
+# 原生函数「参数个数」的编译期上限。有两套调用约定(见 docs/SPEC.md 4.5):
+#
+#   直接 ABI(老库,默认):实参逐个展开成 C 参数。VM 的分发是按「arity × 类型组合」
+#     手写的分支表,组合数按 3^N 增长,所以只覆盖 arity 0..3。
+#   值数组 ABI(新库,`.dexdef` 里写 `abi value_array;`):原生函数收
+#     (const DexValue *args, int argc),与类型组合无关,故上限只受 param_types
+#     的存储限制约束。
+#
+# 两个上限分开命名,避免把「老 ABI 的 3」和「数组 ABI 的 8」搞混。
+MAX_NATIVE_ARITY = 3          # 直接 ABI 的上限
+MAX_NATIVE_ARGS = 8           # 值数组 ABI 的上限(必须与 vm.c 的 MAX_NATIVE_ARGS 一致)
+
+# 原生函数表里 ret_type 字节的高位用来标记调用约定。
+# 之所以能这么用:ret_type 的有效值只有 0..3(NAT_VOID/INT/FLOAT/STR),高位是空的。
+# 这样旧字节码该位恒为 0 → 新旧 VM 解析结果一致;**不需要改格式、不需要升版号**
+# (vm.c 的版本检查是严格相等,升版号会让所有现存 .dexbc 立刻失效)。
+NATIVE_ABI_MASK = 0x80
+NATIVE_ABI_DIRECT = 0x00      # 0 = 直接 ABI(现有 6 个库)
+NATIVE_ABI_ARRAY = 0x80       # 1 = 值数组 ABI(abstraction: DexValue[])
+
+# 值数组 ABI 里每个元素的标签。**必须与 vm.c 的 VType 枚举顺序一致**
+# (V_INT, V_FLOAT, V_STR, V_OBJ)。前三个已实现;DEXV_OBJ 是给未来「结构体/数组
+# 引用」预留的占位,tag 值域 4..255 同样保留。
+DEXV_INT = 0
+DEXV_FLOAT = 1
+DEXV_STR = 2
+DEXV_OBJ = 3
+
+ABI_NAMES = {"direct": NATIVE_ABI_DIRECT, "value_array": NATIVE_ABI_ARRAY}
+ABI_FROM_FLAG = {NATIVE_ABI_DIRECT: "direct", NATIVE_ABI_ARRAY: "value_array"}
 
 # 常量池标签
 TAG_INT = 0

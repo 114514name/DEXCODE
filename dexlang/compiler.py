@@ -151,7 +151,7 @@ class CompileUnit:
     def warn(self, msg):
         self.warnings.append(msg)
 
-    def add_native(self, name, lib: LibInfo, param_types, ret_type, node):
+    def add_native(self, name, lib: LibInfo, param_types, ret_type, node, abi="direct"):
         if name in self.func_index or name in self.native_index:
             raise DexError(f"duplicate or conflicting function '{name}'",
                            node.line, node.col, "compiler")
@@ -159,7 +159,8 @@ class CompileUnit:
             self.lib_index[lib.path] = len(self.libs)
             self.libs.append(lib)
         self.natives.append(NativeFunc(
-            name=name, lib=lib.path, param_types=list(param_types), ret_type=ret_type))
+            name=name, lib=lib.path, param_types=list(param_types),
+            ret_type=ret_type, abi=abi))
         self.native_index[name] = len(self.natives) - 1
 
     def load_definition(self, def_path, node, rel_lib=False):
@@ -194,7 +195,8 @@ class CompileUnit:
                     f"cannot read library '{os.path.abspath(abs_lib)}' for static linking: {e}",
                     node.line, node.col, "compiler")
         for nd in def_file.natives:
-            self.add_native(nd.name, lib, nd.param_types, nd.ret_type, node)
+            self.add_native(nd.name, lib, nd.param_types, nd.ret_type, node,
+                            abi=def_file.abi)
 
         # 约定式释放函数:定义文件里形如 `extern func f(s: string) -> void;` 的函数
         # 视为该库的字符串释放器。编译器会在调用本库「返回 string」的原生函数后

@@ -84,8 +84,20 @@ def decode(data) -> AssemblyProgram:
     for i in range(n_natives):
         if off + O.NATIVE_FIXED_SIZE > len(data):
             raise DexError("truncated native function table", phase="disassembler")
-        name_idx, lib_idx, arity, ret_type = struct.unpack_from("<HHBB", data, off)
+        name_idx, lib_idx, arity, ret_raw = struct.unpack_from("<HHBB", data, off)
         off += O.NATIVE_FIXED_SIZE
+        # ret_type 的高位是调用约定标记,低 7 位才是返回类型
+        abi_flag = ret_raw & O.NATIVE_ABI_MASK
+        ret_type = ret_raw & ~O.NATIVE_ABI_MASK
+        if abi_flag not in O.ABI_FROM_FLAG:
+            raise DexError(f"native {i} has unknown abi flag 0x{abi_flag:02x}",
+                           phase="disassembler")
+        abi = O.ABI_FROM_FLAG[abi_flag]
+        abi_limit = O.MAX_NATIVE_ARGS if abi == "value_array" else O.MAX_NATIVE_ARITY
+        if arity > abi_limit:
+            raise DexError(
+                f"native {i} has arity {arity} > {abi_limit} for abi '{abi}'",
+                phase="disassembler")
         if off + arity > len(data):
             raise DexError("truncated native parameter types", phase="disassembler")
         param_types = list(data[off:off + arity])
@@ -99,7 +111,8 @@ def decode(data) -> AssemblyProgram:
             if c not in O.CODE_TO_TYPE or c == O.NAT_VOID:
                 raise DexError(f"native '{name}' has bad parameter type {c}", phase="disassembler")
         natives.append(NativeFunc(name=name, lib=libs[lib_idx].path,
-                                  param_types=param_types, ret_type=ret_type))
+                                  param_types=param_types, ret_type=ret_type,
+                                  abi=abi))
 
     # ---------- 函数表 ----------
     funcs = []

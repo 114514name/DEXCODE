@@ -93,10 +93,17 @@ def render(prog):
             line += f" static {b64}"
         lines.append(line)
     lib_index = {lib.path: i for i, lib in enumerate(prog.libs)}
+    cur_abi = "direct"
     for nf in prog.natives:
         li = lib_index.get(nf.lib)
         if li is None:
             raise DexError(f"native '{nf.name}' references unknown library '{nf.lib}'", phase="asm-text")
+        # 调用约定变化时才输出一行 .abi(现有全 direct 的库因此不产生任何额外输出,
+        # 汇编文本保持原样,往返仍逐字节一致)
+        abi = getattr(nf, "abi", "direct")
+        if abi != cur_abi:
+            lines.append(f".abi {abi}")
+            cur_abi = abi
         lines.append(f".native {nf.name} {li} {nf.sig}")
     nat_index = {nf.name: i for i, nf in enumerate(prog.natives)}
     for lib in prog.libs:
@@ -198,6 +205,7 @@ def parse(text):
     """解析汇编文本 → AssemblyProgram。"""
     prog = AssemblyProgram()
     current = None
+    cur_abi = "direct"      # 被 .abi 指令修改,影响其后所有 .native 行
     labels = set()
 
     for lineno, raw in enumerate(text.splitlines(), 1):
@@ -250,9 +258,20 @@ def parse(text):
             if any(n.name == name for n in prog.natives):
                 raise DexError(f"duplicate native '{name}'", lineno, 1, "asm-text")
             from .defparser import parse_sig
-            param_types, ret_type = parse_sig(parts[3])
+            limit = (O.MAX_NATIVE_ARGS if cur_abi == "value_array"
+                     else O.MAX_NATIVE_ARITY)
+            param_types, ret_type = parse_sig(parts[3], max_arity=limit)
             prog.natives.append(NativeFunc(
-                name=name, lib=prog.libs[li].path, param_types=param_types, ret_type=ret_type))
+                name=name, lib=prog.libs[li].path, param_types=param_types,
+                ret_type=ret_type, abi=cur_abi))
+            continue
+
+        if head == ".abi":
+            # .abi direct | value_array —— 影响其后所有 .native 行的调用约定
+            if len(parts) != 2 or parts[1] not in O.ABI_NAMES:
+                raise DexError("expected '.abi direct' or '.abi value_array'",
+                               lineno, 1, "asm-text")
+            cur_abi = parts[1]
             continue
 
         if head == ".release":

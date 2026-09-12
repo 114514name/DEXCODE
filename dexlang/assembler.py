@@ -87,12 +87,25 @@ def assemble(prog) -> bytes:
     const_index = {}
 
     def cidx(value):
-        idx = const_index.get(value)
+        # 常量池的键**必须带上类型**:在 DexLang 里 int 0 与 float 0.0 是不同的常量。
+        # 只按值做键会踩 Python 的 `0 == 0.0` 且 `hash(0) == hash(0.0)`,把两者
+        # 合并成同一条目 —— 后出现的那一个会拿到错误的类型标签。
+        # 这个 bug 一直潜伏,因为直接 ABI 会按声明的参数类型做 int/float 互转,
+        # 且 VM 的算术对 int/float 很宽容;值数组 ABI 让类型标签变得可观测,才暴露。
+        if isinstance(value, bool):
+            key = ("int", int(value))
+        elif isinstance(value, int):
+            key = ("int", value)
+        elif isinstance(value, float):
+            key = ("float", value)
+        else:
+            key = ("str", value)
+        idx = const_index.get(key)
         if idx is None:
             idx = len(consts)
             if idx >= 0x10000:
                 raise DexError("too many constants (>65535)", phase="assembler")
-            const_index[value] = idx
+            const_index[key] = idx
             consts.append(value)
         return idx
 
@@ -165,10 +178,22 @@ def assemble(prog) -> bytes:
     native_table = []
     for nf in natives:
         lib_idx = next(i for i, l in enumerate(libs) if l.path == nf.lib)
+        abi_name = getattr(nf, "abi", "direct")
+        abi_flag = O.ABI_NAMES.get(abi_name)
+        if abi_flag is None:
+            raise DexError(f"native '{nf.name}' has unknown abi {abi_name!r}",
+                           phase="assembler")
+        limit = (O.MAX_NATIVE_ARGS if abi_flag == O.NATIVE_ABI_ARRAY
+                 else O.MAX_NATIVE_ARITY)
+        if nf.arity > limit:
+            raise DexError(
+                f"native '{nf.name}' has {nf.arity} parameter(s); at most {limit} "
+                f"are supported with the '{abi_name}' ABI", phase="assembler")
         native_table.append(
             struct.pack("<H", cidx(nf.name))
             + struct.pack("<H", lib_idx)
-            + bytes([nf.arity, nf.ret_type])
+            # ret_type 的高位标记调用约定(旧字节码该位恒为 0,故完全兼容)
+            + bytes([nf.arity, nf.ret_type | abi_flag])
             + bytes(nf.param_types)
         )
 

@@ -48,6 +48,44 @@ class VMRuntimeError(Exception):
     pass
 
 
+# ---------- 值数组 ABI 的元素(见 docs/SPEC.md 4.5)----------
+# 布局必须与 vm/vm.c 的 DexValue 一致:4 字节 tag + 4 字节填充 + 8 字节联合 = 16 字节。
+# ctypes 按自然对齐排布,故与 C 侧一致;两边一旦漂移,双 VM 一致性测试会抓到。
+# 注:C 侧字段名是 as,但 `as` 是 Python 关键字、不能做属性名,故这里叫 u
+# (字段名不影响内存布局)。
+class _DexValueUnion(ctypes.Union):
+    _fields_ = [("i", ctypes.c_int64),
+                ("f", ctypes.c_double),
+                ("s", ctypes.c_char_p)]
+
+
+class DexValue(ctypes.Structure):
+    _fields_ = [("tag", ctypes.c_uint32),
+                ("u", _DexValueUnion)]
+
+
+def _make_dexvalue(v, name, idx):
+    """把 pyvm 栈上的 Python 值打包成 DexValue 元素。"""
+    dv = DexValue()
+    if isinstance(v, bool):
+        dv.tag = O.DEXV_INT
+        dv.u.i = int(v)
+    elif isinstance(v, int):
+        dv.tag = O.DEXV_INT
+        dv.u.i = v
+    elif isinstance(v, float):
+        dv.tag = O.DEXV_FLOAT
+        dv.u.f = v
+    elif isinstance(v, str):
+        dv.tag = O.DEXV_STR
+        dv.u.s = v.encode("utf-8")
+    else:
+        raise VMRuntimeError(
+            f"native '{name}' arg {idx + 1} has unsupported type {type(v).__name__} "
+            f"for the value_array ABI")
+    return dv
+
+
 class Frame:
     __slots__ = ("func", "func_idx", "locals", "base", "ret_pc")
 
@@ -310,7 +348,11 @@ class PyVM:
             self._libs[native.lib] = h
         fn = getattr(h, native.name)
         tmap = {O.NAT_INT: ctypes.c_int64, O.NAT_FLOAT: ctypes.c_double, O.NAT_STR: ctypes.c_char_p}
-        fn.argtypes = [tmap[c] for c in native.param_types]
+        if getattr(native, "abi", "direct") == "value_array":
+            # 值数组 ABI:固定收 (const DexValue*, int),与参数类型组合无关
+            fn.argtypes = [ctypes.POINTER(DexValue), ctypes.c_int]
+        else:
+            fn.argtypes = [tmap[c] for c in native.param_types]
         fn.restype = {
             O.NAT_VOID: None, O.NAT_INT: ctypes.c_int64,
             O.NAT_FLOAT: ctypes.c_double, O.NAT_STR: ctypes.c_char_p,
@@ -325,31 +367,41 @@ class PyVM:
         base = len(self.stack) - arity
         args = self.stack[base:]
         del self.stack[base:]
-        cargs = []
-        for k in range(arity):
-            v = args[k]
-            t = native.param_types[k]
-            if t == O.NAT_INT:
-                if isinstance(v, bool):
-                    v = int(v)
-                if isinstance(v, int):
-                    cargs.append(v)
-                elif isinstance(v, float):
-                    cargs.append(int(v))
-                else:
-                    raise VMRuntimeError(f"native '{native.name}' arg {k + 1} expects int")
-            elif t == O.NAT_FLOAT:
-                if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    cargs.append(float(v))
-                else:
-                    raise VMRuntimeError(f"native '{native.name}' arg {k + 1} expects float")
-            elif t == O.NAT_STR:
-                if isinstance(v, str):
-                    cargs.append(v.encode("utf-8"))
-                else:
-                    raise VMRuntimeError(f"native '{native.name}' arg {k + 1} expects string")
-        fn = self._resolve_native(native)
-        res = fn(*cargs)
+        if getattr(native, "abi", "direct") == "value_array":
+            # 值数组 ABI:把栈上的实参原样打包成 DexValue 数组传过去。
+            # 注意「原样」—— 不做 int/float 互转,类型信息由 tag 承载,
+            # 这与 C VM 直接传栈上 Value 的语义一致(双 VM 必须一致)。
+            fn = self._resolve_native(native)
+            arr = (DexValue * max(arity, 1))()
+            for k in range(arity):
+                arr[k] = _make_dexvalue(args[k], native.name, k)
+            res = fn(arr, arity)
+        else:
+            cargs = []
+            for k in range(arity):
+                v = args[k]
+                t = native.param_types[k]
+                if t == O.NAT_INT:
+                    if isinstance(v, bool):
+                        v = int(v)
+                    if isinstance(v, int):
+                        cargs.append(v)
+                    elif isinstance(v, float):
+                        cargs.append(int(v))
+                    else:
+                        raise VMRuntimeError(f"native '{native.name}' arg {k + 1} expects int")
+                elif t == O.NAT_FLOAT:
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        cargs.append(float(v))
+                    else:
+                        raise VMRuntimeError(f"native '{native.name}' arg {k + 1} expects float")
+                elif t == O.NAT_STR:
+                    if isinstance(v, str):
+                        cargs.append(v.encode("utf-8"))
+                    else:
+                        raise VMRuntimeError(f"native '{native.name}' arg {k + 1} expects string")
+            fn = self._resolve_native(native)
+            res = fn(*cargs)
         if native.ret_type == O.NAT_VOID:
             return 0
         if native.ret_type == O.NAT_INT:

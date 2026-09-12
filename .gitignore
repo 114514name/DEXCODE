@@ -82,5 +82,6 @@ _native_test*
 
 # 测试用 fixture 库(由 tests/fixtures/libleaky.c 构建,提交以便直接跑测试)
 !tests/fixtures/libleaky.dll
+!tests/fixtures/libabiarr.dll
 /tests/fixtures/*.pdb
 /tests/fixtures/*.lib

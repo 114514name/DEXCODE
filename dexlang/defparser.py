@@ -54,10 +54,14 @@ class DefFile:
     is_static: bool = False           # refer static:库字节将内嵌进字节码(静态链接)
     natives: List[NativeDecl] = field(default_factory=list)
     release: Optional[str] = None     # release <名>;原生返回字符串的释放函数(可选)
+    abi: str = "direct"               # 调用约定:direct(默认) 或 value_array(见 SPEC 4.5)
 
 
-def parse_sig(sig):
-    """'ii:i' → (param_types, ret_type)。"""
+def parse_sig(sig, max_arity=None):
+    """'ii:i' → (param_types, ret_type)。
+
+    max_arity 默认取直接 ABI 的上限;值数组 ABI 的调用方应传 opcodes.MAX_NATIVE_ARGS。
+    """
     if ":" not in sig:
         raise DexError(f"invalid signature {sig!r} (expected e.g. 'ii:i')", phase="def")
     params, ret = sig.split(":", 1)
@@ -70,10 +74,11 @@ def parse_sig(sig):
     rc = O.TYPE_TO_CODE.get(ret)
     if rc is None:
         raise DexError(f"invalid return type {ret!r} in signature {sig!r}", phase="def")
-    if len(pt) > O.MAX_NATIVE_ARITY:
+    limit = O.MAX_NATIVE_ARITY if max_arity is None else max_arity
+    if len(pt) > limit:
         raise DexError(
             f"native signature {sig!r} has {len(pt)} parameter(s); "
-            f"at most {O.MAX_NATIVE_ARITY} are supported",
+            f"at most {limit} are supported",
             phase="def")
     return pt, rc
 
@@ -134,16 +139,17 @@ def parse_def(text, filename="<def>"):
         expect(TokKind.ARROW, "'->'")
         ret_type = parse_type()
         expect(TokKind.SEMI, "';'")
-        # arity 上限:编译期拦截,否则要拖到运行时第一次 NCALL 才报错
-        # (见 opcodes.MAX_NATIVE_ARITY 与 docs/SPEC.md 4.5)
-        if len(param_types) > O.MAX_NATIVE_ARITY:
+        # 这里只做「绝对上限」的粗筛(不区分调用约定);ABI 相关上限在 parse_def
+        # 末尾统一校验 —— 因为 `abi` 是文件级指令,可以出现在 extern 之后。
+        if len(param_types) > O.MAX_NATIVE_ARGS:
             raise DexError(
                 f"native function '{name}' has {len(param_types)} parameter(s); "
-                f"at most {O.MAX_NATIVE_ARITY} are supported",
+                f"at most {O.MAX_NATIVE_ARGS} are supported",
                 name_tok.line, name_tok.col, "def")
         return NativeDecl(name=name, param_types=param_types, ret_type=ret_type)
 
     def_file = DefFile()
+    abi_seen = False
     while peek().kind != TokKind.EOF:
         t = peek()
         if t.kind == TokKind.REFER:
@@ -159,6 +165,22 @@ def parse_def(text, filename="<def>"):
             def_file.lib_path = lib
         elif t.kind == TokKind.EXTERN:
             def_file.natives.append(parse_native())
+        elif t.kind == TokKind.IDENT and t.lexeme == "abi":
+            # 可选:`abi value_array;` —— 文件级调用约定声明(默认 direct)。
+            # 见 opcodes.NATIVE_ABI_* 与 docs/SPEC.md 4.5。
+            advance()
+            name_tok = expect(TokKind.IDENT, "abi name (direct / value_array)")
+            if name_tok.lexeme not in O.ABI_NAMES:
+                raise DexError(
+                    f"unknown abi {name_tok.lexeme!r} (expected "
+                    f"{' or '.join(sorted(O.ABI_NAMES))})",
+                    name_tok.line, name_tok.col, "def")
+            if abi_seen:
+                raise DexError("duplicate 'abi' in definition file",
+                               name_tok.line, name_tok.col, "def")
+            abi_seen = True
+            def_file.abi = name_tok.lexeme
+            expect(TokKind.SEMI, "';'")
         elif t.kind == TokKind.RELEASE:
             # 可选:release <函数名>; —— 声明释放「原生返回的字符串缓冲区」的函数。
             # 见本文件头部「字符串所有权」说明与 README「引入 DLL 原生库」。
@@ -172,4 +194,18 @@ def parse_def(text, filename="<def>"):
         else:
             raise DexError(f"unexpected token {t.lexeme!r} in definition file",
                            t.line, t.col, "def")
+
+    # ABI 相关的 arity 上限:等整个文件读完再校验,这样与 `abi` 声明的位置无关
+    # (它可以出现在 extern 之后)。直接 ABI 上限 3;值数组 ABI 上限 8。
+    limit = (O.MAX_NATIVE_ARGS if def_file.abi == "value_array"
+             else O.MAX_NATIVE_ARITY)
+    for nd in def_file.natives:
+        if nd.arity > limit:
+            hint = ("" if def_file.abi == "value_array" else
+                    f" (declare `abi value_array;` to allow up to "
+                    f"{O.MAX_NATIVE_ARGS})")
+            raise DexError(
+                f"native function '{nd.name}' has {nd.arity} parameter(s); "
+                f"at most {limit} are supported with the '{def_file.abi}' ABI{hint}",
+                phase="def")
     return def_file

@@ -69,11 +69,12 @@ class AsmFunc:
 
 @dataclass
 class NativeFunc:
-    """原生函数(来自定义文件):名字 + 所属库 + 签名。"""
+    """原生函数(来自定义文件):名字 + 所属库 + 签名 + 调用约定。"""
     name: str
     lib: str                      # 库路径(与 AssemblyProgram.libs 中的元素一致)
     param_types: List[int]        # NAT_INT/NAT_FLOAT/NAT_STR
     ret_type: int = 1             # NAT_VOID/NAT_INT/NAT_FLOAT/NAT_STR
+    abi: str = "direct"           # "direct"(实参逐个展开)或 "value_array"(收 DexValue[])
 
     @property
     def arity(self):

@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stddef.h>   /* offsetof:值数组 ABI 的 DexValue 布局静态断言用 */
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h>
@@ -156,6 +157,19 @@ enum {
 #define MAX_FRAMES (1u << 16)
 #define MAX_NATIVE_ARGS 8
 
+/* 原生函数表里 ret_type 字节的高位标记调用约定(见 docs/SPEC.md 4.5)。
+   ret_type 的有效值只有 0..3,高位是空的;旧字节码该位恒为 0,故新旧 VM 对
+   老字节码的解析结果一致 —— 不需要改格式、不需要升版号(本文件的版本检查是
+   严格相等,升版号会让所有现存 .dexbc 立刻失效)。 */
+#define NATIVE_ABI_MASK  0x80
+#define NATIVE_ABI_ARRAY 0x80
+
+/* 值数组 ABI 里每个元素的标签。**必须与下面的 VType 枚举同值**。 */
+#define DEXV_INT   0
+#define DEXV_FLOAT 1
+#define DEXV_STR   2
+#define DEXV_OBJ   3   /* 预留:结构体/引用(尚未实现) */
+
 /* ---------- 运行时值 ---------- */
 typedef enum { V_INT, V_FLOAT, V_STR, V_OBJ } VType;
 
@@ -175,6 +189,36 @@ typedef struct {
     uint32_t nfields;
     Value *fields;
 } Obj;
+
+/* ---------- 值数组 ABI 的公开元素类型(见 docs/SPEC.md 4.5) ----------
+   声明了 `abi value_array;` 的原生库,其导出函数签名为:
+
+       <ret> name(const DexValue *args, int argc);
+
+   VM 把操作数栈上的实参原样传过去,不做任何编组(栈上的 Value 与 DexValue
+   布局相同)。原生侧只应依赖本类型,不应依赖 VM 内部的 Value。
+   返回字符串仍按既有契约:视为**借用**,VM 立即复制一份自己的副本。 */
+typedef struct {
+    uint32_t tag;                /* DEXV_INT / DEXV_FLOAT / DEXV_STR */
+    union {
+        int64_t i;
+        double f;
+        const char *s;
+    } as;
+} DexValue;
+
+typedef int64_t (*DexNativeArrayI)(const DexValue *args, int argc);
+typedef double (*DexNativeArrayF)(const DexValue *args, int argc);
+typedef const char *(*DexNativeArrayS)(const DexValue *args, int argc);
+typedef void (*DexNativeArrayV)(const DexValue *args, int argc);
+
+/* 守住宿主:标签顺序与结构布局一旦漂移,这里立刻编译失败。 */
+_Static_assert(V_INT == DEXV_INT && V_FLOAT == DEXV_FLOAT && V_STR == DEXV_STR,
+               "DexValue tags must match the VM VType enum order");
+_Static_assert(sizeof(DexValue) == sizeof(Value),
+               "DexValue must have the same size as the VM Value");
+_Static_assert(offsetof(DexValue, as) == offsetof(Value, as),
+               "DexValue.as must be at the same offset as Value.as");
 
 /* ---------- 程序结构 ---------- */
 typedef struct {
@@ -199,6 +243,7 @@ typedef struct {
     uint16_t lib_idx;
     uint8_t  arity;
     uint8_t  ret_type;
+    int      is_array_abi;  /* 1 = 值数组 ABI(收 DexValue[]);0 = 直接 ABI */
     uint8_t  param_types[MAX_NATIVE_ARGS];
     void *fn;              /* 已解析的函数指针,未解析为 NULL */
     const char *name;
@@ -471,7 +516,10 @@ static Program *load_program(const uint8_t *data, size_t n) {
         uint16_t name_idx = (uint16_t)(data[off] | (data[off + 1] << 8));
         uint16_t lib_idx = (uint16_t)(data[off + 2] | (data[off + 3] << 8));
         uint8_t arity = data[off + 4];
-        uint8_t ret_type = data[off + 5];
+        uint8_t ret_raw = data[off + 5];
+        /* ret_type 的高位是调用约定标记,低 7 位才是返回类型 */
+        int is_array_abi = (ret_raw & NATIVE_ABI_MASK) != 0;
+        uint8_t ret_type = (uint8_t)(ret_raw & ~NATIVE_ABI_MASK);
         off += NATIVE_FIXED_SIZE;
         if (off + arity > n) {
             fprintf(stderr, "error: truncated native parameter types\n");
@@ -497,6 +545,7 @@ static Program *load_program(const uint8_t *data, size_t n) {
         prog->natives[i].lib_idx = lib_idx;
         prog->natives[i].arity = arity;
         prog->natives[i].ret_type = ret_type;
+        prog->natives[i].is_array_abi = is_array_abi;
         for (uint8_t k = 0; k < arity; k++) {
             prog->natives[i].param_types[k] = data[off++];
         }
@@ -910,6 +959,13 @@ static int native_resolve(Program *prog, Native *na) {
 
 /* 当前 FFI 支持的签名集合(参数组合 + 返回类型)。 */
 static int native_sig_supported(const Native *na) {
+    /* 值数组 ABI:实参不展开成 C 参数,类型组合在运行时由标签决定,
+       所以只要求 arity 与返回类型合法 —— 与 arity 0..3 的类型组合表无关。 */
+    if (na->is_array_abi) {
+        return na->arity <= MAX_NATIVE_ARGS &&
+               (na->ret_type == NAT_VOID || na->ret_type == NAT_INT ||
+                na->ret_type == NAT_FLOAT || na->ret_type == NAT_STR);
+    }
     switch (na->arity) {
     case 0:
         return na->ret_type == NAT_VOID || na->ret_type == NAT_INT ||
@@ -1213,6 +1269,30 @@ static int run(Program *prog) {
                     na->name, na->arity);
 
             size_t base = sp - na->arity;
+
+            int64_t ri = 0;
+            double rf = 0;
+            const char *rs = NULL;
+
+            if (na->is_array_abi) {
+                /* 值数组 ABI(见 docs/SPEC.md 4.5):操作数栈上的 Value 与
+                   DexValue 布局一致,所以零编组直接把这段栈原样传过去。
+                   调用期间不改 sp,返回后由下面的公共尾部统一消耗实参。
+                   走 goto 而不是把直接 ABI 那一大段包进 else,是为了让现有
+                   6 个库的代码路径保持一字不动(只加分支,不改老代码)。 */
+                const DexValue *argv = (const DexValue *)(const void *)&stack[base];
+                int argc = (int)na->arity;
+                switch (na->ret_type) {
+                case NAT_INT:   ri = ((DexNativeArrayI)na->fn)(argv, argc); break;
+                case NAT_FLOAT: rf = ((DexNativeArrayF)na->fn)(argv, argc); break;
+                case NAT_STR:   rs = ((DexNativeArrayS)na->fn)(argv, argc); break;
+                default:        ((DexNativeArrayV)na->fn)(argv, argc); break;
+                }
+                goto ncall_done;
+            }
+
+            /* ---------- 直接 ABI(现有 6 个库):实参逐个展开成 C 参数 ---------- */
+            {
             int64_t ai[MAX_NATIVE_ARGS];
             double af[MAX_NATIVE_ARGS];
             const char *as[MAX_NATIVE_ARGS];
@@ -1238,11 +1318,6 @@ static int run(Program *prog) {
                     die(prog, fr, pc, "native '%s' has unknown argument type", na->name);
                 }
             }
-            sp = base;  /* 消耗实参 */
-
-            int64_t ri = 0;
-            double rf = 0;
-            const char *rs = NULL;
 
             if (na->arity == 0) {
                 if (na->ret_type == NAT_INT) ri = ((int64_t (*)(void))na->fn)();
@@ -1381,6 +1456,10 @@ static int run(Program *prog) {
             } else {
                 die(prog, fr, pc, "unsupported native arity %u (max 3)", na->arity);
             }
+            }  /* 直接 ABI 作用域结束 */
+
+        ncall_done:
+            sp = base;  /* 消耗实参 */
 
             Value r = { V_INT, {0} };
             if (na->ret_type == NAT_FLOAT) { r.type = V_FLOAT; r.as.f = rf; }

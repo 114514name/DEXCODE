@@ -84,16 +84,69 @@ extern func dex_hello() -> string;
   提取 DLL 到临时文件再加载,程序自带库,无需外部 DLL 文件(见第 5 节库表)
 - 编译器据此注册原生函数(名字、arity、参数/返回类型)并可做静态检查
 - 签名串约定:`ii:i` = 参数类型串 + `:` + 返回类型(`i`=int `f`=float `s`=string `v`=void)
-- **FFI 限制**:参数类型 `int/float/string`,参数个数 ≤ 3(**编译期强制**,见下);返回
-  `int/float/string/void`;支持的签名组合见 `vm/vm.c` 的 `native_sig_supported`
-  (不支持的组合在运行时明确报错)。除常见组合外,还支持 `(string,string)`、
-  `(string,int)`、`(string,int,int)` 与 `(int/float→string)`(标准库所需)。
-- **arity 上限的强制点**:`dexlang/opcodes.py` 的 `MAX_NATIVE_ARITY = 3` 是唯一上限来源。
-  `defparser.parse_def()`(`.dexdef`)与 `parse_sig()`(汇编文本的 `.native` 行)都在解析期
-  拒绝超过 3 个参数的签名,报 `at most 3 are supported`。
-  手写或篡改的 `.dexbc` 绕过前端,故 VM 仍保留两道运行期兜底:加载期拒绝
-  `arity > MAX_NATIVE_ARGS`(=8,`param_types` 数组容量),调用期拒绝 arity 4..8,
-  报 `unsupported native arity`。
+- **FFI 限制**:参数类型 `int/float/string`;返回 `int/float/string/void`。参数个数与
+  可用的类型组合**取决于调用约定**(见下)。
+
+#### 4.5.1 两种调用约定
+
+| | 直接 ABI(默认) | 值数组 ABI |
+|---|---|---|
+| 声明 | `extern func ...`(不写 `abi` 即默认) | `.dexdef` 顶部写一行 `abi value_array;` |
+| C 侧签名 | 实参逐个展开:`int f(int a, double b, const char *c)` | `int64_t f(const DexValue *args, int argc)` |
+| 参数个数上限 | **3** | **8** |
+| 类型组合 | 受 VM 手写分发表限制,支持的组合见 `native_sig_supported` | 无限制(类型由每个元素的标签在运行时携带) |
+| 主要使用者 | 现有 6 个库(std/math/img/ui/egui/gal) | 新库(如 dexgame 引擎) |
+| 返回字符串 | 借用 + VM 复制(`xstrdup`) | **同一契约**,不变 |
+
+**为什么直接 ABI 只到 3**:`vm/vm.c` 的 NCALL 分发是按「arity × 参数类型组合」手写的
+分支表,组合数按 3^N 增长(arity 4 就是 81 条),写不下去。值数组 ABI 把实参装进一个
+带标签的数组,分发与类型组合解耦,故可以放心开到 8(`MAX_NATIVE_ARGS`,即 `param_types`
+的存储上限)。
+
+**`DexValue` 定义**(原生库只依赖这个类型,不应依赖 VM 内部结构):
+
+```c
+typedef struct {
+    uint32_t tag;                 /* 0=int 1=float 2=string;3 起为未来预留 */
+    union { int64_t i; double f; const char *s; } as;
+} DexValue;                       /* 4 字节 tag + 4 字节填充 + 8 字节联合 = 16 字节 */
+```
+
+它与 VM 内部 `Value` 布局相同,因此 VM 把操作数栈上的实参**原样**传过去、**零编组**。
+`vm.c` 里有三条 `_Static_assert` 守住标签顺序与布局偏移,漂移会直接编译失败。
+
+**参数类型仍参与编译期检查**:`.dexdef` 里照常写 `(a: int, b: string)`,编译器据此检查
+调用点的实参个数与字面量类型;值数组只是在**调用之后**才把标签交给原生侧。
+
+#### 4.5.2 arity 上限的强制点
+
+上限常量在 `dexlang/opcodes.py`:`MAX_NATIVE_ARITY = 3`(直接 ABI)与
+`MAX_NATIVE_ARGS = 8`(值数组 ABI)。校验分布:
+
+- **解析期**:`defparser.parse_def()`(按文件级 `abi` 选上限,与 `abi` 声明的位置无关)
+  与 `parse_sig()`(汇编文本的 `.native` 行,上限由当前 `.abi` 指令决定)
+- **汇编期**:`assembler.assemble()` 再校验一次
+- **加载期**:`vm.c` 拒绝 `arity > MAX_NATIVE_ARGS`(`param_types` 容量)
+- **调用期**:直接 ABI 的 arity 4..8 报 `unsupported native arity`(只有手写/篡改的
+  `.dexbc` 可能走到这里)
+
+超过直接 ABI 上限的报错会提示改用 `abi value_array;`。
+
+#### 4.5.3 向后兼容性(重要)
+
+值数组 ABI **不修改字节码格式、不升版本号**。实现方式是借用原生函数表里
+`ret_type` 字节的**高位**作调用约定标记(`NATIVE_ABI_ARRAY = 0x80`);该字节的有效值
+只有 0..3,高位本来是空的。由此:
+
+- **旧字节码该位恒为 0** → 新旧 VM 对它的解析结果**逐字节一致**,老 `.dexbc` 照常运行
+- **新字节码被旧 VM 读到** → 加载期能通过(格式没变),到 NCALL 时被
+  `native_sig_supported` 拒绝,报 `unsupported native signature` —— 是**明确报错**,
+  不是错乱解析(已实测)
+- **绝不能靠升 `VERSION` 实现扩展**:`vm.c` 的版本检查是严格相等,升版号会让所有
+  现存 `.dexbc` 立刻失效
+
+汇编文本用同样粒度的 `.abi direct|value_array` 指令承载该标记,由反汇编器按需输出
+(现有全 direct 的库因此**不产生任何 `.abi` 行**,汇编文本保持原样)。
 - **标准库**:`libs/std/` 提供纯 C 实现的 `libdexstd.dll`(math/string/io/time/
   random/system 共 33 个函数,见 `std.dexdef`)。使用 `refer static` 可静态内嵌进
   `.dexbc`,运行时只依赖 C 虚拟机,无需 Python 或外部 DLL
@@ -178,8 +231,9 @@ VM: foo_free(p)          ← 用原生原始指针释放原生缓冲区
 **原生函数表**:每个 = 6 字节固定 + arity 字节参数类型
 - `name_idx` u16(函数名常量)
 - `lib_idx` u16(库表索引)
-- `arity` u8
-- `ret_type` u8(`0`void `1`int `2`float `3`string)
+- `arity` u8(0..8;上限取决于调用约定,见 4.5)
+- `ret_type` u8(低 7 位 = 返回类型:`0`void `1`int `2`float `3`string;
+  **位 7** = 调用约定:`0` 直接 ABI,`1` 值数组 ABI —— 见 4.5.3。该位在旧字节码里恒为 0)
 - `param_types` arity 字节(同上类型码)
 
 **函数表**:每函数 13 字节

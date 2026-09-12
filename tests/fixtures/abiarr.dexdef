@@ -1,0 +1,15 @@
+# abiarr.dexdef — 值数组 ABI 测试库(tests/fixtures/libabiarr.dll)
+#
+# 顶部一行 `abi value_array;` 是本文件所有 extern 函数的调用约定:
+# 原生侧签名为 <ret> name(const DexValue *args, int argc)。
+# 详见 docs/SPEC.md 4.5。
+
+abi value_array;
+refer "libabiarr.dll";
+
+# arity = 8:直接 ABI 的编译期上限是 3,这一条只有值数组 ABI 能声明
+extern func abi_sum8(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int) -> int;
+extern func abi_greet(who: string, times: int, scale: float) -> string;
+extern func abi_avg(a: int, b: int, c: int) -> float;
+extern func abi_noop(x: int) -> void;
+extern func abi_tags(a: int, b: float, c: string) -> string;
