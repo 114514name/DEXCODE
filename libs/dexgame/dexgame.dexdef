@@ -63,6 +63,7 @@ extern func eng_object_new() -> int;
 extern func eng_object_free(obj: int) -> int;
 extern func eng_object_alive(obj: int) -> int;
 extern func eng_object_count() -> int;
+extern func eng_object_id_at(index: int) -> int;
 extern func eng_scene_clear() -> int;
 
 # 实体名(最多 31 字符)。语言**没有全局变量**:回调函数(on_update 等)

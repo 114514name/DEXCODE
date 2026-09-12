@@ -278,6 +278,12 @@ int64_t eng_object_count(const DexValue *a, int n) {
     return dg_object_count();
 }
 
+/* 按序号枚举实体 id。语言侧没有数组,IDE 的场景树/属性面板需要它。
+ * 越界返回 0(0 不是合法实体 id)。 */
+int64_t eng_object_id_at(const DexValue *a, int n) {
+    return (int64_t)dg_object_id_at((int32_t)dv_int_or(a, n, 0, 0));
+}
+
 /* 实体名:语言没有全局变量,回调函数只能靠名字找实体。也是 IDE 场景树要的东西。 */
 int64_t eng_set_name(const DexValue *a, int n) {
     dg_clear_error();

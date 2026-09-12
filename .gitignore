@@ -85,6 +85,15 @@ _native_test*
 # 纯 C 工具链 dexc(产品 B 的地基:tests/test_dexc.py 用它对照 Python 前端,
 # IDE 也直接调它)。源码可构建:python main.py build-dexc。
 !tools/dexc/dexc.exe
+# DexStudio(可视化 IDE):模型 DLL + 两个宿主 + WebView2 运行时加载器。
+# 都可由 python main.py build-dexstudio 重建;入库是为了 clone 后直接能开 IDE
+# (WebView2 SDK 头文件与 x64 加载器也入库,见 dexstudio/host/third_party/,
+#  它是构建依赖,且运行时需要 WebView2Loader.dll 在 exe 同目录)。
+!dexstudio/host/libdexstudio.dll
+!dexstudio/host/dexstudio.exe
+!dexstudio/host/dexstudionc.exe
+!dexstudio/host/WebView2Loader.dll
+!dexstudio/host/third_party/webview2/x64/WebView2Loader.dll
 
 # 测试用 fixture 库(由 tests/fixtures/libleaky.c 构建,提交以便直接跑测试)
 !tests/fixtures/libleaky.dll

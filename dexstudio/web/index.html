@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<!-- DexStudio 前端外壳(B2:宿主骨架 + 消息通道)。
+     这一版只做"能开、能连、能看到模型状态":项目/场景的少量操作 + 组件清单自省 +
+     消息日志。B3 起在同样的通道上长出场景编辑器(视口/层级树/属性面板/瓦片刷子)。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DexStudio</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- 最早的一段:确认 WebView2 桥在不在,并把 JS 错误送回宿主。
+       "页面白着、宿主也不知道为什么"是最难查的一类故障,所以这里先建立诊断通道。 -->
+  <script>
+    (function () {
+      /* 注意大小写:WebView2 注入的是 **chrome.webview**(全小写),
+         不是文档里常见写法 chrome.webView —— 写错的表现是"页面正常渲染但一条
+         消息都收不到"。这里两个都认,免得换运行时版本时踩。 */
+      var chromeObj = window.chrome || {};
+      var bridge = chromeObj.webview || chromeObj.webView;
+      window.__ds_bridge = bridge || null;
+      if (!bridge) {
+        document.title = 'DexStudio — 缺少 chrome.webview 桥';
+        return;
+      }
+      bridge.postMessage({ cmd: 'ui.boot', args: { href: location.href } });
+      window.onerror = function (msg, src, line, col) {
+        try {
+          bridge.postMessage({ cmd: 'ui.error',
+                               args: { msg: String(msg), src: String(src || ''),
+                                       line: line || 0, col: col || 0 } });
+        } catch (e) { /* 忽略 */ }
+        document.title = 'DexStudio — JS 错误:' + msg;
+      };
+      window.addEventListener('unhandledrejection', function (ev) {
+        try {
+          bridge.postMessage({ cmd: 'ui.error',
+                               args: { msg: 'Promise 未处理:' + (ev.reason && ev.reason.message || ev.reason) } });
+        } catch (e) { /* 忽略 */ }
+      });
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">DexStudio <span class="ver" id="version">…</span></div>
+    <div class="top-actions">
+      <button id="btn-new">新建项目</button>
+      <button id="btn-open">打开项目</button>
+      <button id="btn-save">保存</button>
+      <span class="sep"></span>
+      <button id="btn-add">添加实体</button>
+      <button id="btn-undo">撤销</button>
+      <button id="btn-redo">重做</button>
+    </div>
+    <div class="status" id="status">连接中…</div>
+  </header>
+
+  <main>
+    <aside class="left">
+      <section>
+        <h2>场景</h2>
+        <div class="row">
+          <input id="scene-name" value="main" size="10">
+          <button id="btn-scene-new">新建场景</button>
+        </div>
+        <div class="row">
+          <button id="btn-scene-save">保存场景</button>
+          <button id="btn-scene-json">看 JSON</button>
+        </div>
+        <p class="hint" id="scene-path">未打开项目</p>
+      </section>
+      <section>
+        <h2>实体 <span class="count" id="obj-count">0</span></h2>
+        <ul class="tree" id="entity-list"></ul>
+      </section>
+    </aside>
+
+    <section class="center">
+      <div class="cards" id="cards"></div>
+      <div class="panel">
+        <h2>组件自省(属性面板的数据源)</h2>
+        <div id="schema" class="schema">引擎未连接</div>
+      </div>
+      <div class="panel">
+        <h2>连通性自检</h2>
+        <button id="btn-selfcheck">跑一遍</button>
+        <div id="selfcheck" class="selfcheck"></div>
+      </div>
+    </section>
+
+    <aside class="right">
+      <h2>消息日志</h2>
+      <div class="log" id="log"></div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

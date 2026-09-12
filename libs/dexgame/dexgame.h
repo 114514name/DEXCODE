@@ -216,6 +216,8 @@ uint32_t dg_object_new(void);
 int32_t  dg_object_free(uint32_t id);
 int32_t  dg_object_alive(uint32_t id);
 int32_t  dg_object_count(void);
+/* 第 index 个活实体的 id(按槽位顺序);越界返回 0。IDE 的场景树要按序号枚举。 */
+uint32_t dg_object_id_at(int32_t index);
 /* 实体名(最多 31 字符)。为什么需要它:
    1) 语言**没有全局变量**,所以回调函数(如 on_update)看不到主程序的 let 变量 ——
       只能靠"名字找实体"(状态本来就该放在实体/组件里);

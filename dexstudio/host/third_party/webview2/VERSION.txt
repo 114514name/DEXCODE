@@ -1,0 +1,5 @@
+Microsoft.Web.WebView2 1.0.4191.47
+来源: https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4191.47/microsoft.web.webview2.1.0.4191.47.nupkg
+只保留 build/native/include/WebView2*.h 与 build/native/x64/WebView2Loader.dll。
+注意:我们**不**链接 WebView2Loader.lib —— 运行时 LoadLibrary + GetProcAddress,
+      IID 由 dexstudio/host/ds_webview_iid.h 自己写死(与 dexgame 的 dg_guids.h 同一套路)。

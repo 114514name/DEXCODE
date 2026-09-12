@@ -327,6 +327,79 @@ def cmd_build_dexc(args):
     return 0
 
 
+DEXSTUDIO_MODEL_SOURCES = ["ds_json.c", "ds_engine.c", "ds_model.c"]
+DEXSTUDIO_HOST_SOURCES = DEXSTUDIO_MODEL_SOURCES + ["ds_webview.c", "ds_main.c"]
+
+
+def cmd_build_dexstudio(args):
+    """编译 DexStudio(产品 B 的可视化 IDE)。
+
+    产出(都在 dexstudio/host/):
+      libdexstudio.dll  模型层(项目/场景/撤销 + 命令通道);测试用 ctypes 直接调它
+      dexstudio.exe     控制台宿主(也是无窗口 CLI:--command / --selftest)
+      dexstudionc.exe   GUI 子系统宿主(双击无控制台窗口)
+      WebView2Loader.dll 从 third_party 复制到 exe 同目录(运行期 LoadLibrary)
+    """
+    h = os.path.join(ROOT, "dexstudio", "host")
+    wv = os.path.join(h, "third_party", "webview2")
+    wv_inc = os.path.join(wv, "include")
+    wv_dll = os.path.join(wv, "x64", "WebView2Loader.dll")
+    for p in [os.path.join(h, s) for s in DEXSTUDIO_HOST_SOURCES] + [wv_inc, wv_dll]:
+        if not os.path.exists(p):
+            print(f"缺少文件: {p}", file=sys.stderr)
+            return 1
+
+    compiler = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    zig = None
+    if compiler is None:
+        zig = _find_zig()
+        if zig is None:
+            print("未找到 C 编译器(gcc/clang/zig),可先: pip install ziglang", file=sys.stderr)
+            return 1
+
+    def tool(extra, out, srcs):
+        # -Wno-unknown-pragmas:vendor 的 WebView2.h 是给 MSVC 的(MIDL 生成),
+        # 里面有 `#pragma warning(...)`,对 clang/gcc 只是噪声。
+        common = ["-O2", "-Wall", "-Wextra", "-Wno-unknown-pragmas", "-std=c11",
+                  "-I", h, "-I", os.path.join(ROOT, "libs", "dexgame"),
+                  "-I", wv_inc, "-o", out]
+        if zig:
+            return [zig, "cc", "-target", "x86_64-windows-gnu"] + extra + common + srcs
+        return [compiler] + extra + common + srcs
+
+    dll = os.path.join(h, "libdexstudio.dll")
+    exe = os.path.join(h, "dexstudio.exe")
+    ncexe = os.path.join(h, "dexstudionc.exe")
+    model_srcs = [os.path.join(h, s) for s in DEXSTUDIO_MODEL_SOURCES]
+    host_srcs = [os.path.join(h, s) for s in DEXSTUDIO_HOST_SOURCES]
+    # 只链接系统库:WebView2Loader 的三个导出是**运行时** LoadLibrary 拿的,
+    # 所以不需要它的导入库(与 dexgame 用 d3dcompiler/xaudio2 的做法一致)。
+    sys_libs = ["-luser32", "-lgdi32", "-lole32", "-luuid"]
+    # -Wl,--out-implib:zig cc -shared 会按**第一个输入文件**给导入库命名并扔在
+    #   当前目录(这里会变成 ds_json.lib,污染工作树)。引到 gitignored 目录去。
+    implib = ["-Wl,--out-implib=" + os.path.join(ROOT, "_zigtmp", "dexstudio.lib")]
+    jobs = [
+        (tool(["-shared"] + implib, dll, model_srcs), dll),
+        (tool([], exe, host_srcs) + sys_libs, exe),
+        (tool(["-DDS_NO_CONSOLE", "-Wl,--subsystem,windows"], ncexe, host_srcs) + sys_libs,
+         ncexe),
+    ]
+    env = _compiler_env()
+    for cmd, out in jobs:
+        print(" ".join(cmd))
+        try:
+            subprocess.run(cmd, check=True, env=env)
+        except subprocess.CalledProcessError as e:
+            print(f"构建 {os.path.basename(out)} 失败(编译器退出码 {e.returncode})。",
+                  file=sys.stderr)
+            return 1
+        print(f"已构建: {out}")
+    shutil.copy(wv_dll, os.path.join(h, "WebView2Loader.dll"))
+    print(f"已复制: {os.path.join(h, 'WebView2Loader.dll')}")
+    print("提示:dexstudio.exe --selftest 可在无窗口下自测;--command '<json>' 跑单条命令")
+    return 0
+
+
 def cmd_roundtrip(args):
     """校验:汇编 → 字节码 → 汇编 → 字节码 往返一致。"""
     with open(args.bc, "rb") as f:
@@ -405,6 +478,9 @@ def main(argv=None):
 
     p = sub.add_parser("build-dexc", help="编译纯 C 工具链 tools/dexc/dexc.exe")
     p.set_defaults(func=cmd_build_dexc)
+
+    p = sub.add_parser("build-dexstudio", help="编译 DexStudio(可视化 IDE)")
+    p.set_defaults(func=cmd_build_dexstudio)
 
     p = sub.add_parser("roundtrip", help="字节码 → 汇编 → 字节码 往返校验")
     p.add_argument("bc", help="字节码文件 (.dexbc)")

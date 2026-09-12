@@ -65,6 +65,19 @@ uint32_t dg_object_new(void) {
 
 int32_t dg_object_count(void) { return g_live_count; }
 
+/* 按序号取活实体 id —— 给 IDE 的场景树用(语言没有数组,没法从 DexLang 侧枚举)。
+ * 顺序 = 槽位顺序(创建顺序);越界返回 0(0 不是合法实体 id)。 */
+uint32_t dg_object_id_at(int32_t index) {
+    int32_t i, seen = 0;
+    if (index < 0) return 0;
+    for (i = 1; i <= DG_MAX_OBJECTS; i++) {
+        if (!g_ents[i].live) continue;
+        if (seen == index) return (g_ents[i].gen << 16) | (uint32_t)i;
+        seen++;
+    }
+    return 0;
+}
+
 int32_t dg_object_set_name(uint32_t id, const char *name) {
     if (!dg_object_alive(id)) { dg_error("object %u is not alive", id); return -1; }
     if (name && strlen(name) >= DG_NAME_MAX) {

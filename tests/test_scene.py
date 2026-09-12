@@ -137,6 +137,46 @@ eng_shutdown();
     check("clear 后计数 0", L[11] == "0", L[11:12])
 
 
+# ---------- 1b) 按序号枚举实体(IDE 场景树用) ----------
+def test_object_id_at():
+    print("[按序号枚举实体 eng_object_id_at]")
+    if not need_vm():
+        skip("枚举实体", "需要 DLL 与 vm.exe")
+        return
+    rc, L, err = run_dex('''include "dexgame";
+eng_init_offscreen(32, 32);
+let a = eng_object_new();
+let b = eng_object_new();
+let c = eng_object_new();
+print eng_object_id_at(0) == a;
+print eng_object_id_at(1) == b;
+print eng_object_id_at(2) == c;
+print eng_object_id_at(3);
+print eng_object_id_at(-1);
+print eng_object_free(b);
+let d = eng_object_new();
+print eng_object_id_at(0) == a;
+print eng_object_id_at(1) == c;
+print eng_object_id_at(2) == d;
+print eng_object_id_at(3);
+eng_scene_clear();
+print eng_object_id_at(0);
+eng_shutdown();
+''')
+    check("运行退出码 0", rc == 0, err[:200])
+    if rc != 0:
+        return
+    check("0 号 = 第一个实体", L[0] == "1", L[0:4])
+    check("1 号 = 第二个实体", L[1] == "1", L[1:5])
+    check("2 号 = 第三个实体", L[2] == "1", L[2:6])
+    check("越界返回 0", L[3] == "0", L[3:5])
+    check("负号返回 0", L[4] == "0", L[4:6])
+    check("释放成功", L[5] == "0", L[5:7])
+    check("释放一个后仍然按序", L[6] == "1" and L[7] == "1" and L[8] == "1", L[6:9])
+    check("释放后数量减 1(越界)", L[9] == "0", L[9:11])
+    check("clear 后枚举为空", L[10] == "0", L[10:12])
+
+
 # ---------- 2) 组件挂载 ----------
 def test_components():
     print("[组件挂载/卸载]")
@@ -816,6 +856,7 @@ def test_dual_vm():
 def main():
     print("DEXCODE M2:dexgame 实体 / 组件 / 场景测试")
     test_entities()
+    test_object_id_at()
     test_components()
     test_fields()
     test_introspection()
