@@ -108,6 +108,23 @@ function centerOn(id) {
   });
 }
 
+/* 设了贴图之后"看不见图"的另一个来源:实体的包围盒**不在当前视野里**
+ * (比如刚给 (0,0) 的实体设了图,而轴心 0.5 让它的左上角跑到视口外面;
+ *  再比如实体掉到了 y=3000)。这条只做一件事:不在视野里就把它挪进来。 */
+function ensureVisible(id) {
+  const o = outlineOf(id);
+  if (!o) return false;
+  const v = DS.view;
+  const x0 = v.x, y0 = v.y;
+  const x1 = v.x + DS.vw / v.zoom, y1 = v.y + DS.vh / v.zoom;
+  const pad = 8 / v.zoom;
+  const inside = o.x >= x0 + pad && o.y >= y0 + pad
+    && o.x + o.w <= x1 - pad && o.y + o.h <= y1 - pad;
+  if (inside) return false;
+  centerOn(id);
+  return true;
+}
+
 /* ------------------------------------------------------------ 图层 */
 
 function renderLayers() {
