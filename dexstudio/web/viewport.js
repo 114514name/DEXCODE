@@ -137,13 +137,13 @@ const Viewport = (function () {
     const g = DS.grid;
     if (g <= 0) return;
     const step = g * DS.view.zoom * fit.s;
-    if (step < 4) return;                 /* 太密就不画 */
     /* 世界坐标是 g 的整数倍的那些线 */
     const w0 = toWorld(fit.ox, fit.oy), w1 = toWorld(cw, ch);
     ctx.save();
     ctx.strokeStyle = 'rgba(137,180,250,0.14)';
     ctx.lineWidth = 1;
-    if (step >= 6) {
+    /* 缩得很小时只隐藏密集网格，原点轴仍然保留，避免缩放后失去方向感。 */
+    if (step >= 4) {
       for (let x = Math.ceil(w0.x / g) * g; x <= w1.x; x += g) {
         const p = toCanvas(x, 0).x;
         ctx.beginPath(); ctx.moveTo(p, fit.oy); ctx.lineTo(p, fit.oy + DS.vh * fit.s); ctx.stroke();
@@ -157,8 +157,12 @@ const Viewport = (function () {
     const o = toCanvas(0, 0);
     ctx.strokeStyle = 'rgba(249,226,175,0.5)';
     ctx.beginPath();
-    ctx.moveTo(o.x, fit.oy); ctx.lineTo(o.x, fit.oy + DS.vh * fit.s);
-    ctx.moveTo(fit.ox, o.y); ctx.lineTo(fit.ox + DS.vw * fit.s, o.y);
+    if (o.x >= fit.ox && o.x <= fit.ox + DS.vw * fit.s) {
+      ctx.moveTo(o.x, fit.oy); ctx.lineTo(o.x, fit.oy + DS.vh * fit.s);
+    }
+    if (o.y >= fit.oy && o.y <= fit.oy + DS.vh * fit.s) {
+      ctx.moveTo(fit.ox, o.y); ctx.lineTo(fit.ox + DS.vw * fit.s, o.y);
+    }
     ctx.stroke();
     ctx.restore();
   }
@@ -183,7 +187,8 @@ const Viewport = (function () {
     /* 选中的最后一个再画个角标,配合属性面板"显示最后一个" */
     const last = outlineOf(ids[ids.length - 1]);
     if (last) {
-      const p = toCanvas(last.x, last.y);
+      const lp = localPos && localPos[ids[ids.length - 1]];
+      const p = toCanvas(lp ? lp.x : last.x, lp ? lp.y : last.y);
       ctx.fillStyle = '#f9e2af';
       ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
     }
@@ -329,7 +334,7 @@ const Viewport = (function () {
           const e = byId(id);
           if (e) start[id] = { x: e.x, y: e.y };
         });
-        drag = { mode: 'move', wx: w.x, wy: w.y, start, moved: false };
+        drag = { mode: 'move', wx: w.x, wy: w.y, start, positions: null, moved: false };
         canvas.style.cursor = 'move';
       } else {
         marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, add: ev.shiftKey };
@@ -363,10 +368,15 @@ const Viewport = (function () {
         let dx = (w.x - drag.wx), dy = (w.y - drag.wy);
         drag.moved = drag.moved || Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5;
         localPos = {};
+        drag.positions = {};
         Object.keys(drag.start).forEach((id) => {
           const s = drag.start[id];
           const nx = snap(s.x + dx), ny = snap(s.y + dy);
-          localPos[id] = { x: nx, y: ny };
+          drag.positions[id] = { x: nx, y: ny };
+          const o = outlineOf(parseInt(id, 10));
+          localPos[id] = o
+            ? { x: o.x + (nx - s.x), y: o.y + (ny - s.y) }
+            : { x: nx, y: ny };
         });
         draw();
       } else if (drag.mode === 'marquee') {
@@ -387,7 +397,7 @@ const Viewport = (function () {
       const moved = drag.moved;
       const marqueeRect = marquee;
       const wasMarquee = marquee ? marquee.add : false;
-      const positions = localPos;
+      const positions = drag.positions;
       const dragRef = drag;
       drag = null;
       marquee = null;

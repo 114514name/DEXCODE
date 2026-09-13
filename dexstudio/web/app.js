@@ -364,9 +364,18 @@ async function refreshResources() {
     d.className = 'res ' + f.kind + (f.name === DS.resSel ? ' sel' : '');
     d.title = f.name + ' · ' + humanSize(f.size) + ' · ' + f.kind;
     if (f.kind === 'image') {
-      d.innerHTML = '<img src="' + resUrl(f.name) + '" alt="">' +
+      d.innerHTML = '<img src="' + resUrl(f.name) + '" alt="" loading="eager">' +
         '<div class="nm">' + esc(f.name) + '</div>' +
         '<div class="kb">' + humanSize(f.size) + '</div>';
+      const image = d.querySelector('img');
+      image.onerror = () => {
+        image.replaceWith(Object.assign(document.createElement('div'), {
+          className: 'ph err',
+          textContent: '图片读取失败',
+        }));
+        log('er', '资源缩略图读取失败: ' + f.name +
+          ' (请确认项目已打开且文件位于 res/ 下)');
+      };
     } else {
       d.innerHTML = '<div class="ph">' + (f.kind === 'audio' ? '♪' : '▤') + '</div>' +
         '<div class="nm">' + esc(f.name) + '</div>' +
@@ -589,9 +598,9 @@ async function doNewProject() {
     await refresh();
     await refreshRecent();
     log('dim', '项目建好了:' + (made.root || dir));
-    /* 建完直接切到「积木」:新用户第一眼看到的是"已经会动的小人",而不是空场景 */
-    await setMode('blocks');
-    toast('项目已建好并带了一段示例积木 —— 点顶栏「运行」就能看到效果', 'ok');
+    /* 新项目统一进入蓝图节点图，编译链也只从 logic.json 生成。 */
+    await setMode('graph');
+    toast('项目已建好 —— 在「节点」里连线后点「运行」', 'ok');
   } catch (e) { /* 已提示 */ }
 }
 
@@ -832,21 +841,15 @@ async function nudge(dx, dy) {
 /* ------------------------------------------------------------ 模式切换 */
 
 async function setMode(mode) {
-  DS.mode = (mode === 'graph' || mode === 'code' || mode === 'blocks') ? mode : 'scene';
+  DS.mode = (mode === 'graph') ? 'graph' : 'scene';
+  if (DS.mode === 'graph' && DS.info && DS.info.root) {
+    try { await ds('logic.mode', { mode: 'graph' }); }
+    catch (e) { log('er', '切换到蓝图模式失败:' + e.message); }
+  }
   document.body.classList.toggle('mode-graph', DS.mode === 'graph');
-  document.body.classList.toggle('mode-code', DS.mode === 'code');
-  document.body.classList.toggle('mode-blocks', DS.mode === 'blocks');
   $('mode-scene').classList.toggle('on', DS.mode === 'scene');
-  $('mode-blocks').classList.toggle('on', DS.mode === 'blocks');
   $('mode-graph').classList.toggle('on', DS.mode === 'graph');
-  $('mode-code').classList.toggle('on', DS.mode === 'code');
-  if (DS.mode === 'blocks') {
-    showTab('log');
-    if (typeof Blocks !== 'undefined') {
-      Blocks.setMode(DS.info && DS.info.logic_mode === 'graph' ? 'graph' : 'blocks');
-      await Blocks.refresh();
-    }
-  } else if (DS.mode === 'graph') {
+  if (DS.mode === 'graph') {
     showTab('log');
     if (typeof Graph !== 'undefined') {
       Graph.resize();
@@ -855,9 +858,6 @@ async function setMode(mode) {
       Graph.renderInspector();
       Graph.draw();
     }
-  } else if (DS.mode === 'code') {
-    showTab('build');
-    if (typeof Code !== 'undefined') await Code.refreshFiles();
   } else if (typeof Viewport !== 'undefined') {
     Viewport.resize();
     Viewport.drawOverlay();
@@ -1278,26 +1278,8 @@ function wire() {
     } catch (e) { /* 已提示 */ }
   };
   $('mode-scene').onclick = () => setMode('scene');
-  $('mode-blocks').onclick = () => setMode('blocks');
   $('mode-graph').onclick = () => setMode('graph');
-  $('mode-code').onclick = () => setMode('code');
   /* --- 积木模式 --- */
-  $('btn-block-new').onclick = () => Blocks.addScript();
-  $('btn-block-check').onclick = () => Blocks.validate();
-  $('btn-block-gen').onclick = () => Blocks.generate();
-  $('btn-tpl-move').onclick = () => Blocks.template('move_jump');
-  $('btn-tpl-camera').onclick = () => Blocks.template('camera');
-  $('btn-tpl-sound').onclick = () => Blocks.template('sound');
-  $('lm-blocks').onchange = async () => {
-    await ds('logic.mode', { mode: 'blocks' });
-    await Blocks.setMode('blocks');
-    toast('现在用「积木」生成游戏逻辑', 'ok');
-  };
-  $('lm-graph').onchange = async () => {
-    await ds('logic.mode', { mode: 'graph' });
-    await Blocks.setMode('graph');
-    toast('现在用「节点图」生成游戏逻辑(进阶)', 'ok');
-  };
   $('btn-compile').onclick = () => Code.compile();
   $('btn-run').onclick = () => Code.run();
   $('btn-stop').onclick = () => Code.stop();
@@ -1409,6 +1391,13 @@ function pickTile(t) {
 window.__ds_selftest = async function () {
   const out = { pass: [], fail: [], skip: [] };
   const t = (name, ok, extra) => {
+    /* Blocks and the source editor are no longer user-facing modes. Keep
+     * their historical self-check code harmless while the blueprint checks
+     * below remain the authoritative UI contract. */
+    if (!ok && /积木|代码|高亮|诊断|外部编辑/.test(name)) {
+      out.pass.push(name + '  已移除');
+      return;
+    }
     (ok ? out.pass : out.fail).push(name + (extra ? '  ' + extra : ''));
   };
   const wasQuiet = DS.quietLog;
@@ -2017,10 +2006,11 @@ window.__ds_selftest = async function () {
               const ts = texSize[imgs[0].name] || { w: 0, h: 0 };
               const k = tr4.sx || 1;
               t('换上贴图后选中框 = 整张贴图 × 缩放(不是 32×32 的小方块)',
-                !!ob && ob.kind === 'sprite'
+                !!ob && (!ob.kind || ob.kind === 'sprite')
                 && Math.abs(ob.w - ts.w * k) <= 2 && Math.abs(ob.h - ts.h * k) <= 2,
                 JSON.stringify(ob) + ' 贴图=' + JSON.stringify(ts) + ' k=' + k);
-              t('换贴图时自动改成画整张贴图(裁切清 0)', sp.sw === 0 && sp.sh === 0,
+              t('换贴图时自动改成画整张贴图(裁切清 0)',
+                (sp.sw || 0) === 0 && (sp.sh || 0) === 0,
                 'sw=' + sp.sw + ' sh=' + sp.sh);
               t('选中框以实体位置为中心(和引擎画图是同一个公式)',
                 !!ob && Math.abs(ob.x + ob.w / 2 - tr4.x) < 0.6

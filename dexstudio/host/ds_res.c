@@ -76,13 +76,15 @@ static const char *ext_of(const char *name)
 
 static int is_image(const char *ext)
 {
-    return !strcmp(ext, "png") || !strcmp(ext, "jpg") || !strcmp(ext, "jpeg")
-        || !strcmp(ext, "bmp") || !strcmp(ext, "gif");
+    return !_stricmp(ext, "png") || !_stricmp(ext, "jpg")
+        || !_stricmp(ext, "jpeg") || !_stricmp(ext, "bmp")
+        || !_stricmp(ext, "gif");
 }
 
 static int is_audio(const char *ext)
 {
-    return !strcmp(ext, "wav") || !strcmp(ext, "mp3") || !strcmp(ext, "ogg");
+    return !_stricmp(ext, "wav") || !_stricmp(ext, "mp3")
+        || !_stricmp(ext, "ogg");
 }
 
 static char *res_dir(DsModel *m)

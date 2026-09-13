@@ -32,6 +32,16 @@ const Graph = (function () {
   let errCount = 0;            // 其中必须修的(错误)条数;警告不拦生成
   let mouseGraph = null;       // 鼠标在图坐标里的位置(新节点就加在这儿)
   let filter = '';
+  let drawQueued = false;
+
+  function requestDraw() {
+    if (drawQueued) return;
+    drawQueued = true;
+    requestAnimationFrame(() => {
+      drawQueued = false;
+      draw();
+    });
+  }
 
   /* ---------- 选中(单选 / 多选) ---------- */
 
@@ -581,21 +591,21 @@ const Graph = (function () {
        * 早先这个处理函数开头先判断 drag 是不是空、为空就直接 return,
        * 而拉线时 drag 恰好是 null,于是预览线只在起点画一次、一动不动,
        * 看起来像"连完线才出现一根线"。 */
-      if (pending) { pending.gx = g.x; pending.gy = g.y; draw(); }
+      if (pending) { pending.gx = g.x; pending.gy = g.y; requestDraw(); }
       if (!drag) return;
       if (marquee) {
         marquee.x1 = p.x;
         marquee.y1 = p.y;
         if (Math.abs(marquee.x1 - marquee.x0) > 3
             || Math.abs(marquee.y1 - marquee.y0) > 3) marquee.moved = true;
-        draw();
+        requestDraw();
         return;
       }
       if (drag.mode === 'pan') {
         view.x = drag.vx - (p.x - drag.sx) / view.zoom;
         view.y = drag.vy - (p.y - drag.sy) / view.zoom;
         renderInfo();
-        draw();
+        requestDraw();
       } else if (drag.mode === 'node') {
         const dx = g.x - drag.dx, dy = g.y - drag.dy;
         const first = doc.nodes.find((k) => k.id === sel);
@@ -608,7 +618,7 @@ const Graph = (function () {
             if (k) { k.x = Math.round(s.x + moveX); k.y = Math.round(s.y + moveY); }
           });
         }
-        draw();
+        requestDraw();
       }
     });
 

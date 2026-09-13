@@ -51,6 +51,8 @@ input.tiny, select.tiny { width: 54px; }
 /* ---------- 模式切换(场景 / 逻辑图) ---------- */
 .modes { display: flex; gap: 4px; margin-left: 8px; }
 .modes .tab { padding: 3px 12px; }
+.modes #mode-blocks, .modes #mode-code,
+.blocks-only, .code-only { display: none !important; }
 .graph-only { display: none; }
 body.mode-graph .scene-only { display: none; }
 body.mode-graph .graph-only { display: flex; }

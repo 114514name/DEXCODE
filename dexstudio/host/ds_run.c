@@ -54,8 +54,6 @@ static char *resolve_tool(DsModel *m, const char *rel, const char *fallback)
     if ((use[0] && use[1] == ':') || use[0] == '\\' || use[0] == '/') {
         return file_exists(use) ? ds_strdup(use) : NULL;
     }
-    snprintf(buf, sizeof buf, "%s", use);
-    if (file_exists(buf)) return ds_strdup(buf);
     {
         const char *exe = ds_model_exe_dir(m);
         if (exe && *exe) {
@@ -64,6 +62,16 @@ static char *resolve_tool(DsModel *m, const char *rel, const char *fallback)
             snprintf(buf, sizeof buf, "%s\\..\\..\\%s", exe, use);
             if (file_exists(buf)) return ds_strdup(buf);
         }
+    }
+    /* Do not return a path relative to the IDE's launch directory: child
+     * processes run with the project as cwd, so that path would stop working. */
+    snprintf(buf, sizeof buf, "%s", use);
+    if (file_exists(buf)) {
+#if defined(_WIN32)
+        char full[1400];
+        if (_fullpath(full, buf, sizeof full)) return ds_strdup(full);
+#endif
+        return ds_strdup(buf);
     }
     return NULL;
 }
@@ -435,14 +443,11 @@ static Dsj *cmd_build_compile(DsModel *m, Dsj *args)
             return NULL;
         }
     }
-    /* ② 玩法 → scripts/logic.dex。**用哪一套生成由 project.json 的 logic_mode 决定**
-     *    (新项目默认积木,老项目默认节点图)。失败就整个失败:以前静默跳过,
-     *    于是用户改了玩法点编译、"成功",跑起来还是旧逻辑。 */
+    /* ② 蓝图节点图 → scripts/logic.dex。
+     *    DexStudio 只保留蓝图连线编辑器；不再让旧的 logic_mode/积木文件
+     *    把用户刚改的节点图覆盖掉。 */
     {
-        const char *mode = ds_model_logic_mode(m);
-        int ok = !strcmp(mode, "blocks")
-                 ? ds_blocks_generate_to_file(m, NULL, 0, err, sizeof err)
-                 : ds_graph_generate_to_file(m, NULL, 0, err, sizeof err);
+        int ok = ds_graph_generate_to_file(m, NULL, 0, err, sizeof err);
         if (!ok) {
             seterr(m, "%s", err);
             free(script);
