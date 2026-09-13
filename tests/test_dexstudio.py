@@ -2205,8 +2205,13 @@ def test_page_with_project():
 
     为什么要单独一条:不带项目跑的时候,页面自测里这一整段是 SKIP 的 —— 而用户报的
     恰好就是这一段("导入的图是裂图标""声音试听没反应""改了贴图只有框线在动")。
+
+    这里刻意用**两种**放资源的方式:
+      · `res.import`(IDE 的「导入…」按钮)
+      · **手工复制**进 res/(用户实际干的事 —— 文件名还带空格/中文/`#`/`%`/大写扩展名),
+        因为"复制进 res/ 了但缩略图还是失败"就是这么报上来的。
     """
-    print("[带项目的页面自测(缩略图/试听/换贴图)]")
+    print("[带项目的页面自测(缩略图/试听/换贴图/手工放资源)]")
     png = os.path.join(ROOT, "tests", "fixtures", "tiles.png")
     wav = os.path.join(ROOT, "tests", "fixtures", "beep.wav")
     if not os.path.exists(EXE):
@@ -2226,6 +2231,10 @@ def test_page_with_project():
             m.ok("res.import", {"src": png, "name": "英雄.png"})
             m.ok("res.import", {"src": wav, "name": "音效.wav"})
             m.ok("scene.save")
+            manual = [("手工放的图.png"), ("manual copy.png"), ("UPPER.PNG"),
+                      ("hash#name%.png")]
+            for name in manual:
+                shutil.copyfile(png, os.path.join(tmp, "res", name))
         finally:
             m.close()               # 先放开项目,再让 exe 去开它
         r = subprocess.run([EXE, "--project", tmp, "--wv-selftest"],
@@ -2237,10 +2246,14 @@ def test_page_with_project():
               "没有音频资源" not in out and "没有图片资源" not in out, out[-500:])
         check("缩略图真的解码了(用户报的裂图标)",
               "缩略图真的解码了" in out, out[-500:])
+        check("手工复制进 res/ 的图也有缩略图(空名/大写扩展名/#%/中文)",
+              all(("缩略图真的解码了  " + n) in out for n in manual), out[-600:])
         check("声音真的能解码并播放(用户报的试听没反应)",
               "声音能解码并播放" in out, out[-500:])
         check("换贴图后选中框 = 整张贴图(用户报的框线动了没图)",
               "选中框 = 整张贴图" in out and "裁切清 0" in out, out[-500:])
+        check("页面自测没有失败项(含瓦片/图层/资源/恢复提示)",
+              '"fail":[]' in out.replace(" ", ""), out[-800:])
 
 
 def main():

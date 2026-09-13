@@ -137,28 +137,33 @@ const schemaOf = (comp) => DS.schema.find((c) => c.name === comp) || null;
  * 前端不做增量推断(撤销/重做会让实体 id 全变,增量更新必然出错)。
  *
  * 刷新合并:一批命令(比如批量写字段 + 撤销)会连着触发好几次 refresh,
- * 每次都发 8 条命令 + 离屏渲染一帧太浪费。这里让后到的调用**等当前这次**,
- * 结束后再补跑一次 —— 语义不变(调用方拿到的永远是刷新后的界面),但次数收敛。 */
-let refreshBusy = null;
-let refreshAgain = false;
+ * 每次都发 8 条命令 + 离屏渲染一帧太浪费。这里让后到的调用**排队补跑一次**。
+ *
+ * 关键:**每个**调用都要等到"排在它之后的那一轮"结束才 resolve。以前是
+ * `return refreshBusy`(把**上一轮**的 promise 还回去),于是
+ * `await ds('undo'); await refresh(); 读 DS.entities` 拿到的可能是**撤销之前**
+ * 的实体 id —— 页面自测就撞上过(`tilemap.info` 报"实体 65544 没有 tilemap 组件",
+ * 而同一时刻 entity.list 里那个名字明明带着 tilemap)。 */
+let refreshRunning = null;   /* 正在跑的那一轮 */
+let refreshPending = null;   /* 排队中的那一轮(多次调用合并成一次) */
 
-async function refresh(opts) {
+function refresh(opts) {
   const o = opts || {};
-  if (DS.busy && !o.force) return;
-  if (refreshBusy) {
-    refreshAgain = true;
-    return refreshBusy;
+  if (DS.busy && !o.force) return Promise.resolve();
+  if (refreshRunning) {
+    if (!refreshPending) {
+      refreshPending = refreshRunning.then(() => {
+        refreshPending = null;
+        refreshRunning = null;
+        return refresh(o);
+      });
+    }
+    return refreshPending;
   }
-  refreshBusy = refreshOnce(o);
-  try {
-    await refreshBusy;
-  } finally {
-    refreshBusy = null;
-  }
-  if (refreshAgain) {
-    refreshAgain = false;
-    await refresh(o);
-  }
+  refreshRunning = refreshOnce(o).then(
+    (v) => { refreshRunning = null; return v; },
+    (e) => { refreshRunning = null; throw e; });
+  return refreshRunning;
 }
 
 async function refreshOnce(o) {
@@ -356,7 +361,9 @@ async function refreshResources() {
   $('res-count').textContent = DS.res.length;
   box.innerHTML = '';
   if (!DS.res.length) {
-    box.innerHTML = '<div class="hint">res/ 还是空的 —— 点「导入…」</div>';
+    box.innerHTML = '<div class="hint">res/ 还是空的 —— 点「导入…」,'
+      + '或者自己在资源管理器里把文件复制进项目的 res/ 文件夹' +
+      '(回到这个窗口时会自动重新读一次)</div>';
     return;
   }
   DS.res.forEach((f) => {
@@ -1286,6 +1293,16 @@ function wire() {
   $('btn-run').onclick = () => Code.run();
   $('btn-stop').onclick = () => Code.stop();
   $('btn-help').onclick = showHelp;
+  /* 用户在**资源管理器**里往 <项目>/res/ 里拖了文件之后,回到 DexStudio 窗口时
+   * 资源面板必须能看见它们。这里没有文件监视(会引入额外依赖),所以拿"窗口重新
+   * 获得焦点 / 页面重新可见"当作"文件可能变过"的信号 —— 只发一条 res.list。
+   * (用户报的"复制进 res/ 了但缩略图还是失败",一半原因就是面板根本没重新读。) */
+  window.addEventListener('focus', () => {
+    if (DS.info && DS.info.root) refreshResources();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && DS.info && DS.info.root) refreshResources();
+  });
   $('btn-graph-save').onclick = () => Graph.save();
   $('btn-graph-check').onclick = () => Graph.check();
   $('btn-graph-gen').onclick = () => Graph.generate();
@@ -1551,7 +1568,11 @@ window.__ds_selftest = async function () {
       await refresh();
     }
 
-    /* --- 瓦片地图:新建 → 画一格 → 读回来 --- */
+    /* --- 瓦片地图:新建 → 画一格 → 读回来 ---
+     * 这一整段包在自己的 try/catch 里:它出问题时**不能**把后面的资源/缩略图/试听
+     * 那段一起中断掉(踩过:一个 tilemap.info 抛错 → 自测从这一行直接结束,
+     * 用户报的缩略图问题因此一直没被测到)。 */
+    try {
     const tm = await ds('entity.add', { name: '__tiletest__' });
     await ds('comp.add', { id: tm.id, comp: 'tilemap' });
     const created = await ds('tilemap.create', {
@@ -1572,10 +1593,27 @@ window.__ds_selftest = async function () {
     {
       await refresh();
       const back = DS.entities.find((e) => e.name === '__tiletest__');
-      info = await ds('tilemap.info', { id: back ? back.id : tm.id });
-      t('撤销 paint 后 CSV 复原(paint 一条撤销)',
-        info.tiles[0] === -1 && info.tiles[1] === -1,
-        info.tiles.slice(0, 4).join(','));
+      let info2 = null;
+      try {
+        info2 = await ds('tilemap.info', { id: back ? back.id : tm.id });
+      } catch (e) {
+        /* 撤销之后实体/组件对不上 —— 把现场一起报出来(这条曾经把整个自测
+         * 从这一行**中断**掉,后面资源/缩略图那一整段就再也没跑过:见下面
+         * 每个小节各自的 try/catch)。 */
+        const now = await ds('app.info');
+        t('撤销 paint 后 CSV 复原(paint 一条撤销)', false,
+          'undo 后 tilemap.info 失败:' + e.message
+          + ' · undo=' + now.undo
+          + ' · tiletest=' + (back ? back.id : '(没了)')
+          + ' · 实体=' + (await ds('entity.list'))
+            .map((x) => x.name + '[' + (x.comps || []).join('+') + ']').join(' '));
+        info2 = null;
+      }
+      if (info2) {
+        t('撤销 paint 后 CSV 复原(paint 一条撤销)',
+          info2.tiles[0] === -1 && info2.tiles[1] === -1,
+          info2.tiles.slice(0, 4).join(','));
+      }
     }
     t('「新建瓦片地图」按钮存在', !!$('btn-tilemap-new'));
     t('帮助入口存在', !!$('btn-help'));
@@ -1608,6 +1646,10 @@ window.__ds_selftest = async function () {
           }
         }
       }
+    }
+    } catch (e) {
+      /* 瓦片/图层那一段自己出问题:报出来,但**继续**跑后面的资源/缩略图/试听检查 */
+      t('瓦片地图与图层整段', false, '异常:' + (e && e.message));
     }
 
     /* --- 清理:把测试实体**和它建的 CSV** 都删掉 --- */
