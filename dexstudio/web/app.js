@@ -512,7 +512,9 @@ async function importRes() {
     } catch (e) { /* 单个失败(重名等)不打断其余的,原因已提示 */ }
   }
   if (done.length) toast('已导入 ' + done.length + ' 个资源:' + done.join('、'), 'ok');
-  await refreshResources();
+  /* 属性面板的资源下拉也依赖 scene.options；只刷新缩略图会让刚复制的
+   * 文件仍然不在下拉里，随后用户保存的仍可能是旧的外部路径。 */
+  await refresh();
   return done;
 }
 

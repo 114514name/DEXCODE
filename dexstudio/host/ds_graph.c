@@ -1531,7 +1531,8 @@ char *ds_graph_generate(DsModel *m, char *err, unsigned errsz)
     g.depth++;
     emit_event_chains(m, &g, "on_update", err, errsz);
     /* on_key / on_action 用"帧内轮询"实现(DexLang 没有事件回调,引擎给的是轮询 API)。
-     * 这两个事件因此并入 logic_update:位置就是它们的先后。 */
+     * 事件块表示"按住时每帧执行",所以使用 down 而不是 pressed；需要一次性
+     * 边沿判断的行为应使用 action_pressed/key_down 等条件节点。 */
     {
         static const char *polled[2] = {"on_action", "on_key"};
         int k;
@@ -1547,11 +1548,11 @@ char *ds_graph_generate(DsModel *m, char *err, unsigned errsz)
                 gindent(&g);
                 gput(&g, "if (");
                 if (!strcmp(polled[k], "on_action")) {
-                    gput(&g, "eng_action_pressed(");
+                    gput(&g, "eng_action_down(");
                     gstr(&g, dsj_get_str(p, "action", "jump"));
                     gput(&g, ")");
                 } else {
-                    gput(&g, "eng_key_pressed(");
+                    gput(&g, "eng_key_down(");
                     gnum(&g, dsj_get_num(p, "key", 32));
                     gput(&g, ")");
                 }

@@ -1798,12 +1798,31 @@ static int fix_legacy_crops(DsModel *m)
     return fixed;
 }
 
+/* 资源字段在场景里统一保存项目相对路径。旧项目/手填值可能只有
+ * "hero.png"，若直接交给引擎就会绕过项目 res/ 目录。 */
+static Dsj *normalize_asset_value(const char *comp, const char *field, Dsj *value)
+{
+    if ((!strcmp(comp, "sprite") || !strcmp(comp, "tilemap"))
+        && !strcmp(field, "tex_path")
+        && value && value->t == DSJ_STR && value->str && value->str[0]
+        && strncmp(value->str, "res/", 4) && strncmp(value->str, "res\\", 4)
+        && value->str[0] != '/' && value->str[0] != '\\'
+        && !(value->str[0] && value->str[1] == ':')) {
+        char path[2048];
+        snprintf(path, sizeof path, "res/%s", value->str);
+        return dsj_str(path);
+    }
+    return NULL;
+}
+
 static Dsj *cmd_comp_set(DsModel *m, Dsj *args)
 {
     int64_t id = dsj_get_int(args, "id", 0);
     const char *comp = dsj_get_str(args, "comp", "");
     const char *field = dsj_get_str(args, "field", "");
     Dsj *value = dsj_get(args, "value");
+    Dsj *normalized = NULL;
+    Dsj *apply_value;
     int fixed_crop = 0;
     Edit e;
     if (!m->eng.ok) { seterr(m, "引擎不可用:%s", m->eng.err); return NULL; }
@@ -1812,15 +1831,19 @@ static Dsj *cmd_comp_set(DsModel *m, Dsj *args)
         return NULL;
     }
     if (!value) { seterr(m, "comp.set 需要 args.value"); return NULL; }
+    normalized = normalize_asset_value(comp, field, value);
+    apply_value = normalized ? normalized : value;
     e = edit_begin(m);
-    if (!apply_comp_set(m, id, comp, field, value)) {
+    if (!apply_comp_set(m, id, comp, field, apply_value)) {
         edit_end(&e, 0);
+        dsj_free(normalized);
         return NULL;
     }
     if (!strcmp(comp, "sprite") && !strcmp(field, "tex_path")
-        && value->t == DSJ_STR && value->str && value->str[0])
+        && apply_value->t == DSJ_STR && apply_value->str && apply_value->str[0])
         fixed_crop = fix_legacy_crop(m, id);
     edit_end(&e, 1);
+    dsj_free(normalized);
     {
         Dsj *r = dsj_obj();
         Dsj *all = entity_comps(m, id);

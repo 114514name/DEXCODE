@@ -205,7 +205,14 @@ function makeFieldControl(meta, value, options, onCommit) {
     btn.className = 'link';
     btn.textContent = '导入…';
     btn.title = '从磁盘选一个文件复制进 res/';
-    btn.onclick = onPick;
+    btn.onclick = async () => {
+      const imported = await onPick();
+      if (imported && imported.length) {
+        const name = imported[0];
+        sel.value = 'res/' + name;
+        onCommit(sel.value);
+      }
+    };
     wrap.appendChild(btn);
     return wrap;
   }
@@ -275,9 +282,9 @@ function makeFieldControl(meta, value, options, onCommit) {
       return wrap;
     }
     case 'image':
-      return resourceSelect(opts.images || [], value || '', '图片', () => importRes(true));
+      return resourceSelect(opts.images || [], value || '', '图片', () => importRes());
     case 'audio':
-      return resourceSelect(opts.audios || [], value || '', '声音', () => importRes(false));
+      return resourceSelect(opts.audios || [], value || '', '声音', () => importRes());
     case 'entity': {
       const sel = document.createElement('select');
       const none = document.createElement('option');
