@@ -2995,6 +2995,55 @@ static Dsj *cmd_scene_render(DsModel *m, Dsj *args)
     return r;
 }
 
+/* 把一条**纹理路径**变成虚拟主机 URL(前端 `<img src>` 直接用)。
+ *
+ * 两个坑都踩过:
+ *  ① 场景里存的是**项目相对**路径(`res/图集.png`,这样项目可搬)—— 以前这里只认
+ *     "绝对路径且在当前项目里",于是正常的相对路径算出**空 URL**,瓦片图集面板就
+ *     一直说"还没有图集"(用户:给实例设了图片却没有预览)。
+ *  ② 中文/空格/`#`/`%` 这类文件名必须**百分号编码**,否则 URL 是坏的 → 浏览器给一个
+ *     裂图标(用户报的"图片损坏")。
+ * 顺带带上 `?v=<mtime>`,换图/改名之后不会拿到浏览器缓存里的旧结果。 */
+static void res_asset_url(DsModel *m, const char *path, char *out, size_t cap)
+{
+    static const char *hex = "0123456789ABCDEF";
+    char rel[1400];
+    size_t i, o = 0;
+    out[0] = 0;
+    if (!path || !*path || !m->root[0]) return;
+    if (path_is_abs(path)) {
+        size_t rl = strlen(m->root);
+        /* 前缀必须真是项目根:根之外的绝对路径映射不到虚拟主机 */
+        if (rl == 0 || strncmp(path, m->root, rl) != 0) return;
+        snprintf(rel, sizeof rel, "%s", path + rl);
+        while (rel[0] == '\\' || rel[0] == '/') memmove(rel, rel + 1, strlen(rel));
+    } else {
+        snprintf(rel, sizeof rel, "%s", path);
+    }
+    o = (size_t)snprintf(out, cap, "https://dexstudio-proj.local/");
+    for (i = 0; rel[i] && o + 8 < cap; i++) {
+        unsigned char c = (unsigned char)rel[i];
+        if (c == '\\') c = '/';
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            out[o++] = (char)c;
+        } else {
+            out[o++] = '%';
+            out[o++] = hex[c >> 4];
+            out[o++] = hex[c & 0xF];
+        }
+    }
+    out[o] = 0;
+    {
+        char *full = path_is_abs(path) ? xs(path) : pjoin(m->root, rel);
+        long long mt = dsu_mtime(full);
+        if (mt > 0 && o + 24 < cap)
+            snprintf(out + o, cap - o, "?v=%lld", mt);
+        free(full);
+    }
+}
+
 static Dsj *cmd_tilemap_info(DsModel *m, Dsj *args)
 {
     int64_t id = dsj_get_int(args, "id", 0);
@@ -3041,11 +3090,9 @@ static Dsj *cmd_tilemap_info(DsModel *m, Dsj *args)
     dsj_set_int(r, "atlas_cols", (long long)m->eng.get_i(a, 3));
     a[2] = V_s("visible");
     dsj_set_bool(r, "visible", m->eng.get_i(a, 3) != 0);
-    if (tex[0] && m->root[0] && !strncmp(tex, m->root, strlen(m->root))) {
-        char url[1400];
-        snprintf(url, sizeof url, "https://dexstudio-proj.local/%s",
-                 tex + strlen(m->root) + 1);
-        { size_t k; for (k = 0; url[k]; k++) if (url[k] == '\\') url[k] = '/'; }
+    if (tex[0]) {
+        char url[1600];
+        res_asset_url(m, tex, url, sizeof url);
         dsj_set_str(r, "atlas_url", url);
     } else {
         dsj_set_str(r, "atlas_url", "");

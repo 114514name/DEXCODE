@@ -502,6 +502,29 @@ def test_tile_brush(dll):
             check("tilemap.info 全空", set(info["tiles"]) == {-1}, info["tiles"])
             check("没有图集时 atlas_url 为空", info["atlas_url"] == "")
 
+            # 图集预览的 URL(**用户报的"图片损坏"就在这条路上**):
+            # 场景里存的是项目相对路径 `res/xxx.png`,而以前这里只认"绝对路径且在项目里",
+            # 相对路径一律算出空 URL → 瓦片面板一直说"还没有图集";中文/空格名还不做
+            # 百分号编码 → 真正的裂图标。
+            png = os.path.join(ROOT, "tests", "fixtures", "tiles.png")
+            if os.path.exists(png):
+                m.ok("res.import", {"src": png, "name": "图集 测试.png"})
+                m.ok("comp.set", {"id": eid, "comp": "tilemap", "field": "tex_path",
+                                  "value": "res/图集 测试.png"})
+                info = m.ok("tilemap.info", {"id": eid})
+                url = info["atlas_url"]
+                check("相对路径的图集也算得出 URL(以前是空的)",
+                      url.startswith("https://dexstudio-proj.local/res/"), url)
+                check("URL 里的中文/空格被百分号编码(否则浏览器给裂图标)",
+                      "%E5%9B%BE%E9%9B%86%20%E6%B5%8B%E8%AF%95.png" in url, url)
+                check("URL 带 ?v= 破缓存(换图后不能拿旧结果)", "?v=" in url, url)
+                m.ok("comp.set", {"id": eid, "comp": "tilemap", "field": "tex_path",
+                                  "value": os.path.join(ROOT, "tests", "fixtures",
+                                                        "tiles.png")})
+                check("项目外的绝对路径不给 URL(映射不到虚拟主机,面板该提示选 res/ 里的图)",
+                      m.ok("tilemap.info", {"id": eid})["atlas_url"] == "",
+                      m.ok("tilemap.info", {"id": eid})["atlas_url"])
+
             r = m.ok("tilemap.set", {"id": eid, "col": 2, "row": 1, "tile": 5})
             check("tilemap.set 返回网格尺寸", r["cols"] == 4 and r["rows"] == 3, r)
             info = m.ok("tilemap.info", {"id": eid})

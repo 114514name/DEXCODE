@@ -384,6 +384,13 @@ async function updatePalette() {
   if (t.atlas_url) {
     if (img.getAttribute('src') !== t.atlas_url) img.setAttribute('src', t.atlas_url);
     img.hidden = false;
+    /* 图集读不出来时**说清楚**:以前就是一块"图片损坏"的裂图标,用户完全不知道
+     * 是路径不对、文件不在 res/ 里,还是格式不支持。 */
+    img.onerror = () => {
+      toast('图集读不出来:' + (t.tex_path || '(空)') +
+            ' —— 请确认它就在项目的 res/ 里(不要用项目外的绝对路径)', 'err');
+      log('er', 'palette: 读不到图集 ' + t.atlas_url);
+    };
     const cells = wrap.querySelector('.cells') ||
       (() => { const d = document.createElement('div'); d.className = 'cells';
                wrap.appendChild(d); return d; })();
@@ -392,10 +399,14 @@ async function updatePalette() {
     else img.onload = build;
   } else {
     img.hidden = true;
+    img.onerror = null;
     const cells = wrap.querySelector('.cells');
     if (cells) cells.innerHTML = '';
     /* 没有图集时给出**可点的下一步**,而不是只打印一句提示 */
-    toast('这个瓦片地图还没有图集:在右边「图集」字段里选一张图片', 'warn');
+    toast(t.tex_path
+      ? ('图集「' + t.tex_path + '」不在项目里,面板显示不了预览 —— ' +
+         '在右边「图集」字段里改选一张 res/ 里的图片')
+      : '这个瓦片地图还没有图集:在右边「图集」字段里选一张图片', 'warn');
   }
   pickTile(DS.tile);
 }
