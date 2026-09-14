@@ -2279,6 +2279,57 @@ def test_page_with_project():
               '"fail":[]' in out.replace(" ", ""), out[-800:])
 
 
+def test_page_open_late():
+    """**双击 exe 之后才打开项目**这条路径(用户报「导入图片一直显示图片读取失败,
+    但点运行有图」的根因)。
+
+    为什么单独一条、而且必须走 `--open-late`:资源缩略图/图集预览是靠 WebView2 的
+    虚拟主机(`dexstudio-proj.local` → 项目根)交给网页显示的。实测:
+    **对一个已经加载完的页面改映射不生效** —— SetVirtualHostNameToFolderMapping
+    返回 S_OK,但那个页面发出的请求照样失败(img 裂图标 / fetch 抛
+    "TypeError: Failed to fetch"),只有**新的导航**才认新映射。
+    `--project` 是"导航前就映射好",所以它一直是对的,`--open-late`
+    (先加载页面,再让页面去 openProjectAt)才是用户真实顺序。
+
+    修法在宿主:映射改指向之后自动重新导航一次(ds_main.c 的
+    sync_host_mappings → WM_APP_RELOAD)。这条测试钉住它。
+    """
+    print("[启动之后再打开项目(用户真实顺序:双击 exe → 打开项目)]")
+    png = os.path.join(ROOT, "tests", "fixtures", "tiles.png")
+    if not os.path.exists(EXE):
+        skip("后开项目页面自测", "dexstudio.exe 未构建")
+        return
+    if not os.path.exists(png):
+        skip("后开项目页面自测", "缺少 tests/fixtures/tiles.png")
+        return
+    dll = load_model()
+    if dll is None:
+        skip("后开项目页面自测", "libdexstudio.dll 未构建")
+        return
+    with tempdir("ds_late_") as tmp:
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": tmp, "name": "后开项目", "template": "starter"})
+            m.ok("res.import", {"src": png, "name": "英雄.png"})
+            m.ok("scene.save")
+        finally:
+            m.close()
+        # 关键:**不给 --project**(启动时没有项目),让页面自己把项目打开
+        r = subprocess.run([EXE, "--wv-selftest", "--open-late", tmp],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=240)
+        out = r.stdout or ""
+        check("后开项目这条路整条链通", r.returncode == 0, out[-500:])
+        check("后开项目时资源检查真的跑了(不是当成没项目 SKIP)",
+              "没有打开项目" not in out and "没有图片资源" not in out, out[-600:])
+        check("后开项目后缩略图真的解码了(用户报的图片读取失败)",
+              "缩略图真的解码了" in out, out[-600:])
+        check("后开项目后项目根映射是通的(资源缩略图靠它)",
+              "项目根映射出去了" in out and '"fail":[]' in out.replace(" ", ""),
+              out[-700:])
+        check("后开项目后点缩略图设的贴图真的被引擎加载", "texture >= 0" in out, out[-500:])
+
+
 def main():
     print("DexStudio(产品 B)模型层与宿主测试")
     dll = load_model()
@@ -2321,6 +2372,7 @@ def main():
     test_cli()
     test_webview_chain()
     test_page_with_project()
+    test_page_open_late()
     print(f"\n结果: {PASS} 通过, {FAIL} 失败" + (f", {SKIP} 跳过" if SKIP else ""))
     return 1 if FAIL else 0
 

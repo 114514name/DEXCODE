@@ -29,9 +29,15 @@ int ds_wv_post(DsWebView *wv, const char *json);
 /* 把**额外**的本地目录映射到 `https://<host>/`(如 dexstudio-preview.local →
  * 渲染预览目录、dexstudio-proj.local → 项目根)。前端就能用 `<img src>` 直接
  * 显示引擎渲染出的 BMP 与项目里的贴图,而不是把像素塞进 JSON。
- * 可以在导航前后任意调用:同一个 host 再调用一次就是**改指向**(打开项目后
- * 预览目录会从 _zigtmp 变成 <root>/.dexstudio)。 */
+ *
+ * ⚠ **改指向之后必须重新导航**(ds_wv_reload),否则不生效:实测 WebView2 对
+ * 一个**已经加载完的页面**再改映射,SetVirtualHostNameToFolderMapping 会返回
+ * S_OK,但那个页面发出的请求照样失败(`img` 裂图标 / `fetch` 抛
+ * TypeError: Failed to fetch)。宿主在打开/新建项目后自动重导航一次,见
+ * ds_main.c 的 sync_host_mappings。 */
 int ds_wv_map_folder(DsWebView *wv, const char *folder, const char *host);
+/* 重新加载当前页面(映射改指向后调用它,新页面才认新映射)。没有导航过则忽略。 */
+int ds_wv_reload(DsWebView *wv);
 /* 在页面里跑一段 JS,结果经 on_message 以 `{"cmd":"ui.eval","args":{"result":…}}`
  * 的形式回来(ExecuteScript 本身是异步的)。诊断与测试用:能问出"桥在不在"、
  * "页面到底是哪一个"。 */

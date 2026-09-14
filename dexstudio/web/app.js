@@ -335,6 +335,20 @@ let resSeq = 0;
 const resUrl = (name) => 'https://dexstudio-proj.local/res/' +
   encodeURIComponent(name) + '?v=' + resSeq;
 
+/* 资源虚拟主机通不通?缩略图裂的时候用它把原因说准 —— 是"项目资源服务没连上"
+ * (映射失效,重新打开项目能救),还是"这个文件本身读不出来"(损坏/格式不认)。
+ * 每次刷新资源列表都重探一次(状态会变)。 */
+let resHostOk = null;
+async function resHostReachable() {
+  if (resHostOk !== null) return resHostOk;
+  try {
+    const r = await fetch('https://dexstudio-proj.local/project.json',
+                          { cache: 'no-store' });
+    resHostOk = !!r;            /* 拿到 HTTP 响应(哪怕 404)= 主机是通的 */
+  } catch (e) { resHostOk = false; }
+  return resHostOk;
+}
+
 function humanSize(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -345,6 +359,7 @@ async function refreshResources() {
   const box = $('res-list');
   if (!box) return;
   resSeq++;                       /* 破缓存:见 resUrl 的说明 */
+  resHostOk = null;               /* 主机通不通要重新探 */
   if (!DS.info || !DS.info.root) {
     DS.res = [];
     box.innerHTML = '<div class="hint">未打开项目</div>';
@@ -375,13 +390,18 @@ async function refreshResources() {
         '<div class="nm">' + esc(f.name) + '</div>' +
         '<div class="kb">' + humanSize(f.size) + '</div>';
       const image = d.querySelector('img');
-      image.onerror = () => {
+      image.onerror = async () => {
         image.replaceWith(Object.assign(document.createElement('div'), {
           className: 'ph err',
           textContent: '图片读取失败',
         }));
-        log('er', '资源缩略图读取失败: ' + f.name +
-          ' (请确认项目已打开且文件位于 res/ 下)');
+        /* 说清**为什么**读不出来:以前一律提示"确认项目已打开且文件在 res/ 下",
+         * 而真正的原因是资源服务(虚拟主机映射)没连上 —— 那句话把人往错方向带。 */
+        const hostOk = await resHostReachable();
+        log('er', '资源缩略图读取失败: ' + f.name + ' ' + (hostOk
+          ? '(项目资源服务是通的 —— 这个文件本身读不出来:可能已损坏,或者不是浏览器能'
+            + '显示的格式;引擎可能仍然读得动)'
+          : '(项目资源服务没连上 —— 请重新打开一次项目;还不行就重启 DexStudio)'));
       };
     } else {
       d.innerHTML = '<div class="ph">' + (f.kind === 'audio' ? '♪' : '▤') + '</div>' +
@@ -395,6 +415,26 @@ async function refreshResources() {
     };
     box.appendChild(d);
   });
+}
+
+/* 贴图到底多大?**问引擎**,而不是只问浏览器。
+ * scene.outline 给的是引擎按贴图算出来的世界包围盒(= 贴图尺寸 × 缩放),
+ * 把当前缩放除回去就得到贴图原始尺寸。为什么必须这样:
+ * 浏览器那条路(new Image)在"虚拟主机映射没生效 / 格式它不认"时会静默失败,
+ * 于是自动缩放整段失效 —— 用户看到的就是"给实体设了贴图,编辑器里没反应"。
+ * 引擎读得出来的图,它一定量得准。 */
+async function engineTexSize(id) {
+  try {
+    const ol = (await ds('scene.outline')).filter((o) => o.id === id)[0];
+    if (!ol || !Math.abs(ol.w) || !Math.abs(ol.h)) return null;
+    const e = await ds('entity.get', { id });
+    const tr = (e.comps || {}).transform || {};
+    const sx = Math.abs(tr.sx || 1) || 1;
+    const sy = Math.abs(tr.sy || 1) || 1;
+    return { w: Math.abs(ol.w) / sx, h: Math.abs(ol.h) / sy };
+  } catch (e) {
+    return null;
+  }
 }
 
 /* 点资源:图片→给选中实体的 sprite.tex_path;声音→试听一下 */
@@ -438,12 +478,16 @@ async function applyRes(f) {
     /* 图比屏幕还大时**自动缩小到合适大小** —— 零基础用户点一张缩略图,
      * 期望的是"我的角色出现了",而不是一张 300×400 的图盖满整个视口
      * (而且会以为"没显示出来")。用 transform 的缩放,并在提示条里说清楚。 */
-    const info = await new Promise((resolve) => {
-      const im = new Image();
-      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-      im.onerror = () => resolve(null);
-      im.src = resUrl(f.name);
-    });
+    let info = await engineTexSize(id);
+    if (!info) {
+      /* 引擎量不出来(比如贴图根本没加载上)才退回浏览器解码 */
+      info = await new Promise((resolve) => {
+        const im = new Image();
+        im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+        im.onerror = () => resolve(null);
+        im.src = resUrl(f.name);
+      });
+    }
     if (info && Math.max(info.w, info.h) > 256) {
       const k = Math.round((128 / Math.max(info.w, info.h)) * 100) / 100;
       await call('comp.set_many', { items: [

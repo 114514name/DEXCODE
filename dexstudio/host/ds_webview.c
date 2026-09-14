@@ -442,6 +442,13 @@ static int map_one(DsWebView *wv, const char *host, const char *folder)
     hr = wv3->lpVtbl->SetVirtualHostNameToFolderMapping(
         wv3, whost, wfolder, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
     wv3->lpVtbl->Release(wv3);
+    if (wv_trace()) {
+        char h8[256], f8[2048];
+        WideCharToMultiByte(CP_UTF8, 0, whost, -1, h8, sizeof h8, NULL, NULL);
+        WideCharToMultiByte(CP_UTF8, 0, wfolder, -1, f8, sizeof f8, NULL, NULL);
+        fprintf(stderr, "[wv] map_one %s → %s hr=0x%08lx\n", h8, f8,
+                (unsigned long)hr);
+    }
     if (FAILED(hr)) {
         snprintf(wv->err, sizeof wv->err, "映射目录失败(hr=0x%08lx):%s → %s",
                  (unsigned long)hr, host, folder);
@@ -505,6 +512,17 @@ int ds_wv_map_folder(DsWebView *wv, const char *folder, const char *host)
     if (!wv->webview) return 1;    /* 还没就绪:apply_navigation 时会一起映射 */
     if (!folder || !*folder) return 1;
     return map_one(wv, host, folder);
+}
+
+/* 重新加载页面。**映射改指向之后必须来这一下**(见 ds_webview.h 的说明):
+ * WebView2 对已经加载完的文档改映射不生效,只有新的导航才认。
+ * 实测:项目是"启动之后再打开"的时候,不重导航 → 资源缩略图全裂
+ * (img onerror / fetch: Failed to fetch);重导航 → 全部正常。 */
+int ds_wv_reload(DsWebView *wv)
+{
+    if (!wv || !wv->webview) return 0;
+    WVTR("重新导航(映射改过了)\n");
+    return ds_wv_eval(wv, "location.reload()");
 }
 
 static HRESULT STDMETHODCALLTYPE EnvHandler_Invoke(

@@ -23,6 +23,10 @@
 
 #include <windows.h>
 
+/* 虚拟主机映射改指向之后,用它让窗口消息循环把页面重新导航一次。
+ * 走消息而不是在命令处理里直接调:命令的响应要先回到 JS。 */
+#define WM_APP_RELOAD (WM_APP + 1)
+
 /* ------------------------------------------------------------ 工具 */
 
 static char g_exe_dir[MAX_PATH * 2];
@@ -452,12 +456,23 @@ typedef struct {
     DsModel *model;
     DsWebView *wv;
     char web_dir[MAX_PATH * 3];
+    HWND hwnd;
+    /* 已经登记给 WebView2 的映射目标。用来判断"打开了另一个项目"——
+     * 目标一变就必须重新导航一次,否则新映射对当前页面无效
+     * (见 sync_host_mappings)。 */
+    char map_proj[MAX_PATH * 3];
+    char map_prev[MAX_PATH * 3];
+    int page_loaded;         /* 页面已经加载过(只有这时才需要为改映射重新导航) */
 } Host;
 
 /* --wv-selftest:前端发来 ui.ready 就算整条链通了 */
 static int g_ui_ready;
 static char g_ui_ready_info[512];
 static char g_ui_msg_log[1024];
+/* --open-late <目录>:等页面**加载完**再打开项目(用户双击 exe 之后的真实顺序,
+ * 也就是虚拟主机映射落在导航之后的那种情况)。配合 --wv-selftest 就是一条
+ * "启动时没项目、后来才打开"的回归测试。 */
+static const char *g_open_late = "";
 /* 界面自测(页面里的 window.__ds_selftest)回传的原始 JSON。
  * 页面那一层(渲染图/层级树/属性面板/瓦片刷子)只有它自己能验,所以让页面
  * 把结果发回来,宿主只做断言 —— 不需要人看屏幕。 */
@@ -475,6 +490,94 @@ static int json_int_field(const char *json, const char *key, int dflt)
 }
 
 static int ui_self_fails(void) { return json_int_field(g_ui_self, "fails", -1); }
+
+/* 虚拟主机映射的跟踪日志(DEXSTUDIO_WV_TRACE=1 打开)—— 排查"启动后才打开
+ * 项目"这类时序问题时要能看到映射到底设了没、成没成。 */
+static int wv_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("DEXSTUDIO_WV_TRACE");
+        on = (e && *e && *e != '0');
+    }
+    return on;
+}
+
+/* 两个虚拟主机必须在**导航之前**就登记好,而且**改指向之后要重新导航**。
+ * 这两句话合起来才是"打开项目后缩略图能用"的完整原因(实测):
+ *
+ *   WebView2 的 SetVirtualHostNameToFolderMapping 对一个**已经加载完的页面**
+ *   改映射会返回 S_OK(所以日志上看着"映射成功了"),但那个页面发出的请求
+ *   依旧失败 —— `img` 是裂图标(用户看到的"图片读取失败")、`fetch` 抛
+ *   TypeError: Failed to fetch。只有**新的导航**才认新映射。
+ *
+ * 用户报的现象正是这条路径:双击 exe(启动时没项目)→ 在界面里打开项目 →
+ * 映射是**页面加载之后**才设的 → 缩略图全裂、给实体设了贴图编辑器里也没反应,
+ * 而「运行」走的是引擎自己读文件,所以一切正常。
+ *
+ * 所以:没有项目时先拿预览目录当占位把两个主机名占住;打开/新建项目时改指向,
+ * 然后由 sync_host_mappings 安排一次重新导航。 */
+static void map_hosts_before_nav(Host *host)
+{
+    const char *proj = ds_project_dir(host->model);
+    const char *prev = ds_preview_dir(host->model);
+    if (prev && *prev) ds_mkdir(prev);
+    if (proj && *proj) ds_mkdir(proj);
+    if (prev && *prev) {
+        int ok = ds_wv_map_folder(host->wv, prev, "dexstudio-preview.local");
+        if (wv_trace_on())
+            fprintf(stderr, "[wv] 导航前映射 dexstudio-preview.local → %s : %s%s\n",
+                    prev, ok ? "ok" : "失败", ok ? "" : ds_wv_error(host->wv));
+        snprintf(host->map_prev, sizeof host->map_prev, "%s", prev);
+    }
+    /* 没有项目时用预览目录当占位:主机名先占住,资源请求会得到 404 而不是
+     * 网络错误;打开项目后改指向 + 重新导航。 */
+    {
+        const char *dir = (proj && *proj) ? proj : prev;
+        if (dir && *dir) {
+            int ok = ds_wv_map_folder(host->wv, dir, "dexstudio-proj.local");
+            if (wv_trace_on())
+                fprintf(stderr, "[wv] 导航前映射 dexstudio-proj.local → %s : %s%s%s\n",
+                        dir, ok ? "ok" : "失败", ok ? "" : ds_wv_error(host->wv),
+                        (proj && *proj) ? "" : "(占位:还没打开项目)");
+            snprintf(host->map_proj, sizeof host->map_proj, "%s", dir);
+        }
+    }
+}
+
+/* 打开/新建/切换项目之后:把两个映射指向新目录;真的变了就**重新导航**一次。
+ * 只在目标变化时才动 —— 以前每条命令都重设一遍映射,既浪费又会掩盖"改了到底
+ * 生效没有"这件事。 */
+static void sync_host_mappings(Host *host)
+{
+    const char *proj = ds_project_dir(host->model);
+    const char *prev = ds_preview_dir(host->model);
+    int changed = 0, ok;
+    if (!host->wv) return;
+    if (proj && *proj && strcmp(proj, host->map_proj)) {
+        ok = ds_wv_map_folder(host->wv, proj, "dexstudio-proj.local");
+        snprintf(host->map_proj, sizeof host->map_proj, "%s", proj);
+        changed = 1;
+        if (wv_trace_on())
+            fprintf(stderr, "[wv] 改指向 dexstudio-proj.local → %s : %s%s\n",
+                    proj, ok ? "ok" : "失败", ok ? "" : ds_wv_error(host->wv));
+    }
+    if (prev && *prev && strcmp(prev, host->map_prev)) {
+        ds_mkdir(prev);
+        ok = ds_wv_map_folder(host->wv, prev, "dexstudio-preview.local");
+        snprintf(host->map_prev, sizeof host->map_prev, "%s", prev);
+        changed = 1;
+        if (wv_trace_on())
+            fprintf(stderr, "[wv] 改指向 dexstudio-preview.local → %s : %s%s\n",
+                    prev, ok ? "ok" : "失败", ok ? "" : ds_wv_error(host->wv));
+    }
+    if (!changed) return;
+    /* 页面加载过才需要重导航;没加载的话 apply_navigation 会带上新映射。
+     * 用 PostMessage 而不是直接调:这条命令的**响应要先回到 JS**(前端在等它),
+     * 再让页面重载。 */
+    if (host->page_loaded && host->hwnd) PostMessageA(host->hwnd, WM_APP_RELOAD, 0, 0);
+}
+
 static int ui_self_passes(void) { return json_int_field(g_ui_self, "pass_count", -1); }
 static const char *ui_self_msg(void) { return g_ui_self; }
 static int ui_self_done(void) { return g_ui_self_on; }
@@ -490,6 +593,7 @@ static const char *on_js_message(void *user, const char *json)
     }
     if (json && strstr(json, "\"ui.ready\"")) {
         g_ui_ready = 1;
+        host->page_loaded = 1;    /* 页面活了:之后改映射就得重新导航 */
         snprintf(g_ui_ready_info, sizeof g_ui_ready_info, "%s", json);
     }
     if (json && strstr(json, "\"ui.selftest\"")) {
@@ -498,14 +602,9 @@ static const char *on_js_message(void *user, const char *json)
         return "{\"ok\":true,\"result\":{\"ack\":\"ui.selftest\"}}";
     }
     resp = ds_command(host->model, json);
-    /* 每次命令后刷新虚拟主机映射:打开/新建项目会换掉预览目录与项目根。
-     * 映射是幂等的(同一个 host 再设一次就是改指向),所以不必判断命令名。 */
-    if (host->wv && resp && !strstr(resp, "\"ok\":false")) {
-        const char *prev = ds_project_dir(host->model);
-        if (prev && *prev) ds_wv_map_folder(host->wv, prev, "dexstudio-proj.local");
-        ds_wv_map_folder(host->wv, ds_preview_dir(host->model),
-                         "dexstudio-preview.local");
-    }
+    /* 打开/新建项目会换掉项目根与预览目录 —— 映射改指向之后**必须重新导航**,
+     * 否则当前页面永远读不到资源(用户报的"缩略图全裂"就是这么来的)。 */
+    sync_host_mappings(host);
     return resp;
 }
 
@@ -554,6 +653,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_SETFOCUS:
         if (h && h->wv) SetFocus(hwnd);
+        return 0;
+    case WM_APP_RELOAD:
+        /* 映射改指向了:重新导航让新映射对页面生效(见 sync_host_mappings)。 */
+        if (h && h->wv) ds_wv_reload(h->wv);
         return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -647,19 +750,15 @@ static int run_window(const char *project, const char *web_override, int wv_self
     }
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
+    host->hwnd = hwnd;
 
     host->wv = ds_wv_create(hwnd, on_js_message, host);
     if (!host->wv) {
         fprintf(stderr, "dexstudio: 创建 WebView2 失败:%s\n", ds_wv_error(NULL));
         /* 仍然开窗(用户能看到窗口),但明确报错 */
     } else {
-        /* 预览目录与项目根先登记映射,再走 apply_navigation 一起生效 */
-        {
-            const char *pd = ds_project_dir(host->model);
-            if (pd && *pd) ds_wv_map_folder(host->wv, pd, "dexstudio-proj.local");
-            ds_wv_map_folder(host->wv, ds_preview_dir(host->model),
-                             "dexstudio-preview.local");
-        }
+        /* 虚拟主机的映射必须在**导航之前**登记好,见 map_hosts_before_nav 的说明。 */
+        map_hosts_before_nav(host);
         ds_wv_navigate_folder(host->wv, host->web_dir, "dexstudio.local", "index.html");
         ds_wv_set_bounds(host->wv, 0, 0, rc.right - rc.left, rc.bottom - rc.top);
     }
@@ -700,6 +799,45 @@ static int run_window(const char *project, const char *web_override, int wv_self
         if (g_ui_ready) {
             printf("  PASS  前端已就绪(窗口 + 本地页面 + JS→C→JS 往返)\n");
             printf("        请求:%s\n", g_ui_ready_info);
+            /* --open-late <目录>:**先让页面加载完,再打开项目** —— 这正是用户
+             * 双击 exe(不带 --project)之后从界面里打开项目的顺序,虚拟主机映射
+             * 是在导航之后才设的。缩略图/视口预览出问题时就是这条路径。 */
+            if (g_open_late[0]) {
+                char js[4096], esc[3000];
+                size_t i, o = 0;
+                for (i = 0; g_open_late[i] && o + 3 < sizeof esc; i++) {
+                    char c = g_open_late[i];
+                    /* JS 字符串字面量:反斜杠要转义成 \\,不能顺手改成 / ——
+                     * 路径分隔符保持原样,才能和"用户从对话框选的路径"一致。 */
+                    if (c == '\\' || c == '\'' || c == '"') esc[o++] = '\\';
+                    esc[o++] = c;
+                }
+                esc[o] = 0;
+                snprintf(js, sizeof js, "openProjectAt('%s')", esc);
+                printf("        后开项目:%s\n", g_open_late);
+                if (ds_wv_eval(host->wv, js)) {
+                    DWORD t2 = GetTickCount();
+                    while (GetTickCount() - t2 < 2500) {
+                        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+                            if (msg.message == WM_QUIT) break;
+                            TranslateMessage(&msg);
+                            DispatchMessageA(&msg);
+                        }
+                        Sleep(10);
+                    }
+                }
+                /* 映射改指向之后宿主会自动重新导航一次(sync_host_mappings →
+                 * WM_APP_RELOAD),所以这里只要等页面重新加载完、映射生效。 */
+                { DWORD t3 = GetTickCount();
+                  while (GetTickCount() - t3 < 3500) {
+                      while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+                          if (msg.message == WM_QUIT) break;
+                          TranslateMessage(&msg);
+                          DispatchMessageA(&msg);
+                      }
+                      Sleep(10);
+                  } }
+            }
             /* 窗口标题是用户第一眼看到的东西,回读一遍证明它不是乱码 ——
              * CreateWindowExA 的坑见陷阱表;这里不用人看屏幕也能断言。 */
             {
@@ -790,6 +928,7 @@ static int ds_host_args(int argc, char **argv)
     find_exe_dir();
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--project") && i + 1 < argc) project = argv[++i];
+        else if (!strcmp(argv[i], "--open-late") && i + 1 < argc) g_open_late = argv[++i];
         else if (!strcmp(argv[i], "--web") && i + 1 < argc) web = argv[++i];
         else if (!strcmp(argv[i], "--command") && i + 1 < argc) command = argv[++i];
         else if (!strcmp(argv[i], "--selftest")) selftest = 1;
@@ -801,6 +940,7 @@ static int ds_host_args(int argc, char **argv)
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             printf("DexStudio %s\n"
                    "  dexstudio.exe [--project DIR] [--web DIR]\n"
+                   "  dexstudio.exe --open-late DIR       启动后再打开项目(测试用)\n"
                    "  dexstudio.exe --command '<json>'   跑一条模型命令(不开窗口)\n"
                    "  dexstudio.exe --selftest           模型自测(不开窗口)\n"
                    "  dexstudio.exe --webview-version\n"

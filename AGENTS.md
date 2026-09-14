@@ -94,7 +94,7 @@ python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解�
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
 python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
-python tests/test_dexstudio.py   # 479 DexStudio 模型/积木与逻辑图/编译运行/资源自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + **中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘/未初始化加载场景/生成的游戏真的跑起来** + 页面自测(不带项目 95 项、带项目 120 项)
+python tests/test_dexstudio.py   # 490 DexStudio 模型/积木与逻辑图/编译运行/资源自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + **中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘/未初始化加载场景/生成的游戏真的跑起来/后开项目的资源缩略图** + 页面自测(不带项目 95 项、带项目 118 项)
 ```
 
 合计 **30 个脚本 / 236 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
@@ -212,7 +212,7 @@ PowerShell 5.1 会把 UTF-8 内容按 GBK 解读后再按 UTF-8 写出,导致中
 | **`hidden` 属性被作者样式的 `display` 盖掉**(B10,用户报的) | `style.css` 里 `.recover{display:flex}` / `.row{display:flex}` 这类规则**作者样式优先于浏览器默认样式**,于是 `[hidden]{display:none}` 失效:恢复提示条、橡皮选项、改名行在"该藏"的时候照样显示。JS 里 `el.hidden = true` 看起来生效了,写测试也只断言 `.hidden` 属性,所以长期没人发现 | `style.css` 顶部加 `[hidden] { display: none !important; }`;**断言要断 `getComputedStyle(el).display === 'none'`,不要断 `.hidden` 属性** —— 这两句话合起来才算把这类问题钉死(页面自测里 4 个元素逐个断 computed display) |
 | **按钮引用了不存在的元素 id = 整块接线停摆**(B10) | `el('btn-x').onclick = …` 在 `init()` 里跑,id 写错/漏在 HTML 外就抛 TypeError,**后面所有按钮的接线都不会执行** —— 现象是"好几个按钮一起点了没反应",很难看出源头 | `tools/check_web_ids.py`:把 `$('…')` / `el('…')` / `getElementById('…')` 里的 id 与 `index.html` 的 id 集合对照,任何缺失直接退出码 1(已进 `tests/test_dexstudio.py`)。判据:**HTML 是前端的"接口",接口名要对得上,而且要有自动检查** |
 | **引擎没初始化就干活:游戏 60ms 跑完 / 场景"加载成功"却是空壳**(B11,实测) | 两个连着的坑:① IDE 生成的 `main.dex` 模板从不 `eng_init`,而 `eng_run` 的循环条件是 `while eng_running()` —— 没窗口它恒为 0,于是 on_start 跑一遍就退出(**60ms、exit 0、零输出**,用户看到的是"点运行什么都没发生");② `dg_comp_kind()` 在组件池没建时返回 -1,而场景加载把 -1 当成"不认识的组件"**静默跳过** → 实体/名字都在,`eng_find` 找得到,但 transform/sprite 一个都没挂上 | 模板在 `eng_run` 前显式 `eng_init(...)`;`eng_run`/`eng_run_frames` 自己兜底自动开窗;`dg_comp_kind()`/`dg_scene_parse()` 按需 `dg_scene_init()`。判据:**"未知"和"还没准备好"必须能区分**;`test_template_game_really_runs`(跑起来 2 秒后进程必须还活着)+ `test_scene_load_before_init`(未初始化也要装上组件)钉住 |
-| **同一个坐标公式在引擎和宿主里各写一遍**(B11,用户报的) | 引擎画精灵是 `原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放`,宿主 `scene.outline` 写的是 `世界坐标 + 轴心` → 框线偏到图片外面,用户看到的就是**"改了贴图只有框线在动、图像没出现"**。同类:视口用**活动相机的 camera.x/y/zoom**,而 `app.info` 报的是编辑器视图覆盖值 → 相机一挪,画面走、框线不走 | 宿主照抄引擎公式并注明"必须与引擎逐字相同";没有视图覆盖时 `app.info`/`scene.render` 返回**实际生效**的活动相机视图。判据:**凡是"引擎怎么画"的公式,宿主只能有一份** —— 靠 `test_outline_matches_pixels`(比框线与像素包围盒)锁住 |
+| **WebView2 对"已经加载完的页面"改虚拟主机映射不生效**(B12.4,用户报的根因) | 资源缩略图/图集预览/视口 BMP 靠虚拟主机(`dexstudio-proj.local` → 项目根)交给网页显示。启动时没项目、映射是那时登记的;用户是**双击 exe 之后**才从界面打开项目 → 映射在页面加载完之后才设 → `SetVirtualHostNameToFolderMapping` **返回 S_OK**(日志看着"映射成功"),但那个页面的请求照样失败:`<img>` 裂图标(显示"图片读取失败")、`fetch` 抛 `TypeError: Failed to fetch`。而「运行」是引擎自己读文件 → **运行有图、编辑器没图**。`--project` 是"导航前就映射好",所以一路测试全过、恰好绕开了用户顺序 | 映射改指向后**必须重新导航一次**:`sync_host_mappings()`(只在目标真变了时动)→ `PostMessage(WM_APP_RELOAD)` → `ds_wv_reload()` → `location.reload()`;没有项目时先用预览目录**占位**登记主机名。判据:**"改配置"≠"让配置生效"——库返回成功,不代表正在跑的那个文档会认**;`test_page_open_late`(走新加的 `--open-late`:先加载页面再打开项目)钉住 |
 
 > 加新陷阱时:**写进 `docs/PITFALLS.md` 的表尾**,再把本节的最后一条挤出去。
 
@@ -296,8 +296,8 @@ libdexgame.dll          场景的权威表示:eng_scene_json / eng_scene_load_js
 python main.py build-dexstudio                 # 构建
 dexstudio/host/dexstudio.exe --selftest        # 模型自测(51 项:中文/编码、下拉候选、父子、编译存盘、生成前校验…)
 dexstudio/host/dexstudio.exe --command '{"cmd":"app.info"}'
-dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外;等 ui.ready 后再让页面自测(加 --project <绝对路径> 会多跑 25 项资源/贴图检查)
-python tests/test_dexstudio.py                 # 479 项(ctypes + 积木/逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + 中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘 + 未初始化加载场景 + 模板游戏真的跑起来 + 页面自测 95/120 项)
+dexstudio/host/dexstudio.exe --wv-selftest     # 窗口放屏幕外;等 ui.ready 后再让页面自测(加 --project <绝对路径> 会多跑 25 项资源/贴图检查;加 --open-late <绝对路径> 则测"启动之后再打开项目"这条用户真实顺序)
+python tests/test_dexstudio.py                 # 490 项(ctypes + 积木/逻辑图 + 编译/运行 + 资源/自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + 中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘 + 未初始化加载场景 + 模板游戏真的跑起来 + 后开项目的资源缩略图/映射重新导航 + 页面自测 95/118 项)
 ```
 
 **命令一览**(全部走 `ds_command`,前端与测试用的是同一批):
@@ -333,6 +333,7 @@ python tests/test_dexstudio.py                 # 479 项(ctypes + 积木/逻辑�
 
 | 提交 | 内容 |
 |------|------|
+| (本次 B12.4) | **「导入图片一直显示图片读取失败,但点运行有图」—— 根因是 WebView2 虚拟主机映射的生效时机**。先用实证复现:从 `%LOCALAPPDATA%\DexStudio\recent.json` 找到用户真实项目(`C:\Users\ASUS\Pictures\unprocessimg\我的游戏`,`res/猫_悲伤.png`),拿**副本**在 ASCII 路径下跑。**`--project <目录>`(导航前就映射好)一切正常(118/0)** —— 这正是它一直没被测出来的原因;新增 `--open-late <目录>`(等 `ui.ready` 之后用 `openProjectAt()` 打开 = **双击 exe 再从界面开项目**的用户真实顺序)后复现出 3 条失败:`项目根映射出去了(资源缩略图靠它) TypeError: Failed to fetch`、`缩略图真的解码了 猫_悲伤.png …`(= 用户看到的"图片读取失败")、`换上贴图后选中框 = 整张贴图 × 缩放 … 贴图={"w":0,"h":0} k=1`(= "给实例设置编辑器里也没效果")。**根因**:WebView2 对**已经加载完的页面改虚拟主机映射不生效** —— `SetVirtualHostNameToFolderMapping` 返回 **S_OK**(日志看着"映射成功"),但那个页面的 `<img>`/`fetch` 照样失败;只有**新的导航**才认新映射(实测:加一次 `location.reload()` 立刻 118/0)。**修法**:宿主 `map_hosts_before_nav()` 在没有项目时先用预览目录**占位**登记两个主机名;`sync_host_mappings()` 只在项目根/预览目录**真的变了**时改指向,然后 `PostMessage(WM_APP_RELOAD)` → 新的 `ds_wv_reload()` → `location.reload()`(走窗口消息是为了让这条命令的响应先回到 JS);顺带不再"每条命令都重设一遍映射"。**前端两处加固**:`applyRes` 的"按贴图大小自动缩放"改成**问引擎**(`scene.outline` = 引擎按贴图算的世界包围盒 ÷ 缩放),不再依赖浏览器 `new Image()` 解码(浏览器读不到图时它会静默失效 —— 这是同一症状的另一半);缩略图读失败时先探一次主机,提示改成能区分"资源服务没连上(重新打开项目能救)"与"文件本身读不出来(损坏/格式不认)"。**测**:`tests/test_dexstudio.py` 481 → **490 项**(新增 `test_page_open_late`),`--wv-selftest --open-late` **118/0**;四种走法(仓库 `--open-late` / 仓库 `--project` / 发布包 `--open-late` / 不带项目)全部 0 失败;`dist/DexStudio` 重新打包。**零字节码格式改动**(只动宿主 + 前端 + 测试) |
 | (本次 B12.3) | **「复制进 res/ 了,缩略图还是裂的」—— 查出来是三处状态/流程问题,资源加载这条路本身是好的**。先按用户真实操作复现:手工把 20 个文件复制进 `res/`(文件名故意带空格/中文/`#`/`%`/`+`/`&`/引号/方括号/全角括号/大写扩展名/超长名),**每一个缩略图都真的解码、声音也能播** —— 问题不在 URL/虚拟主机/编码转换。真正坏的是:**① `refresh()` 的合并语义错了**:`if (refreshBusy) return refreshBusy` 把**上一轮**的 promise 还给了后到的调用,于是 `await ds('undo'); await refresh(); 读 DS.entities` 可能拿到**撤销之前**的旧 id(页面自测报"实体 65544 没有 tilemap 组件",而同一刻 `entity.list` 里那个名字明明带着 tilemap);对用户的表现就是"点了没反应 / 面板与画面停在上一状态"。改成单飞 + 排队(每个调用都等到排在它之后的那轮结束)。**② 页面自测一个大 `try` 包到底**:任何一步抛错就跳 `catch`,后面"缩略图真的解码/声音能播放/换贴图后选中框"**一条都不跑**,只剩一句"自检中断" —— 用户报的问题因此长期没被自动测到;现在瓦片/图层那段包自己的 `try/catch`(失败报出来但继续),并断言 `"fail":[]`。**③ 在资源管理器里复制文件,面板不会自己重读** → 用"窗口重新获得焦点 / 页面重新可见"当信号自动重读 `res.list`,空列表提示也写明"可以直接复制进 res/,回到窗口会自动重读"。**测**:`tests/test_dexstudio.py` 479 → **481 项**,带项目的页面自测 **137 项 0 失败**,全量 30 脚本 0 失败。陷阱表见 `docs/PITFALLS.md` 的 B12.3 段 |
 | (本次 B12.2) | **DexStudio 输入与贴图路径修复**。蓝图 `on_key/on_action` 事件改为使用持续按住查询(`eng_key_down/eng_action_down`)，不会再只能触发一次；`sprite/tilemap.tex_path` 写入时自动补齐 `res/` 前缀，兼容旧项目或手填的裸文件名，避免引擎和预览去错误目录读取。 |
 | (本次 B12.1) | **DexStudio 资源导入回写修复**。属性面板的图片/声音“导入…”现在会先复制到项目 `res/`，刷新资源下拉，再把当前字段写成 `res/<文件名>`；不再出现文件已选但场景仍引用项目外路径、运行时提示资源不在 `/res` 的情况。 |
