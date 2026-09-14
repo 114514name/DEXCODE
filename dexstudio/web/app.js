@@ -2143,6 +2143,26 @@ window.__ds_selftest = async function () {
                 ((DS.cmds || 0) - c0) + ' 条');
               t('拖动预览真的按手柄变了', !!g1 && (g1.sx !== b4.sx || g1.sy !== b4.sy),
                 JSON.stringify(g1) + ' 原 ' + JSON.stringify(b4));
+              /* 拖动时"每帧要多久"实测一把:只断言"画面还在按帧走、没有卡死",
+               * 不跟机器性能较劲(慢机器上不该因为这条挂掉)——但把真实数字记下来,
+               * 免得"不卡了"变成一句无法核对的话。 */
+              {
+                let frames = 0, worst = 0, prev = performance.now();
+                const t0 = prev;
+                for (let i = 0; i < 40; i++) {
+                  await new Promise((r) => requestAnimationFrame(r));
+                  const now = performance.now();
+                  if (frames) worst = Math.max(worst, now - prev);
+                  prev = now;
+                  frames++;
+                  Viewport.debugDragTo(b4.x + 120 + i, b4.y + 120 + i, false);
+                }
+                const per = (performance.now() - t0) / Math.max(1, frames);
+                t('拖动时画面还在按帧走(不是卡死)',
+                  per < 100 && worst < 400,
+                  per.toFixed(1) + ' ms/帧,最差 ' + worst.toFixed(1) +
+                  ' ms(喂了 40 帧鼠标移动)');
+              }
               /* 跟手的那份贴图必须真的画在画布上(等它解码好再看像素) */
               for (let i = 0; i < 60; i++) {
                 const gi0 = Viewport.ghostInfo();

@@ -94,7 +94,7 @@ python tests/test_audio.py       # 81  dexgame 音频(XAudio2 + 手写 WAV 解�
 python tests/test_text.py        # 46  dexgame 文字(DirectWrite + 字形图集,M4-c)
 python tests/test_examples.py    # 30  examples/dexgame/*.dex 编译守卫(防示例悄悄烂掉)
 python tests/test_dexc.py        # 478 纯 C 工具链 dexc 与 Python 前端**逐字节一致**
-python tests/test_dexstudio.py   # 508 DexStudio 模型/积木与逻辑图/编译运行/资源自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + **中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘/未初始化加载场景/生成的游戏真的跑起来/后开项目的资源缩略图/旋转与手柄** + 页面自测(不带项目 97 项、带项目 124 项)
+python tests/test_dexstudio.py   # 508 DexStudio 模型/积木与逻辑图/编译运行/资源自动保存 + 前端资源/接线哨兵 + CLI + WebView2 + 发布形态 + **中文路径/恢复语义/资源根/字段元数据/父子/一键编译存盘/未初始化加载场景/生成的游戏真的跑起来/后开项目的资源缩略图/旋转与手柄** + 页面自测(不带项目 97 项、带项目 137 项)
 ```
 
 合计 **30 个脚本 / 236 个 `def test_*` 函数**(`check()` 常在循环里被多次调用,所以
