@@ -51,6 +51,10 @@ typedef struct {
     int32_t tint;
     int32_t flip;
     int32_t layer, order;
+    /* 1 = 画,0 = 不画。给的是**编辑器**一个"临时把某个精灵藏起来"的手段:
+       拖着一个精灵走的时候,引擎这张静态预览图里先把它去掉,前端在画布上自己
+       画一份正好跟手的 —— 否则"引擎画的旧位置"和"前端画的新位置"会同时出现。 */
+    int32_t visible;
 } DgSprite;
 typedef struct { float x, y, zoom, rot; int32_t active; } DgCamera;
 typedef struct { int32_t first, count; float fps, time; int32_t loop; } DgAnimation;
@@ -206,6 +210,13 @@ int  dg_tex_height(int id);
 /* 绘制:三角形按顺序入批;切换纹理/满批时自动 flush */
 int  dg_draw_quad(int tex, float x, float y, float w, float h,
                   float u0, float v0, float u1, float v1, uint32_t color);
+/* 四个角自己给(顺序:左上 → 右上 → 右下 → 左下)。旋转就是靠它实现的:
+   先把轴对齐矩形的四个角绕轴心转一下,再交给这里。内部两个三角与 dg_draw_quad
+   逐字相同,所以不旋转时的像素与 dg_draw_quad 完全一致。 */
+int  dg_draw_quad_corners(int tex,
+                          float x0, float y0, float x1, float y1,
+                          float x2, float y2, float x3, float y3,
+                          float u0, float v0, float u1, float v1, uint32_t color);
 int  dg_draw_rect(float x, float y, float w, float h, uint32_t color);
 
 /* ---------- dg_scene.c(M2:实体 / 组件 / 场景读写) ---------- */

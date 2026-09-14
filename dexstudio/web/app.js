@@ -43,8 +43,11 @@ function log(cls, text) {
 
 function quiet() { return !!DS.quietLog; }
 
-/* 唯一的 RPC 入口。超时 8 秒(离屏渲染 + 场景存盘偶尔会久一点)。 */
+/* 唯一的 RPC 入口。超时 8 秒(离屏渲染 + 场景存盘偶尔会久一点)。
+ * `DS.cmds` 只是计数:页面自测用它断言"拖动过程里一条命令都不发"
+ * (拖动卡顿的另一半原因就是每帧发命令 + 每帧让引擎重渲染一帧)。 */
 function ds(cmd, args) {
+  DS.cmds = (DS.cmds || 0) + 1;
   return new Promise((resolve, reject) => {
     if (!bridge) { reject(new Error('没有消息桥(未在 WebView2 中运行)')); return; }
     const id = ++rpcSeq;
@@ -417,26 +420,6 @@ async function refreshResources() {
   });
 }
 
-/* 贴图到底多大?**问引擎**,而不是只问浏览器。
- * scene.outline 给的是引擎按贴图算出来的世界包围盒(= 贴图尺寸 × 缩放),
- * 把当前缩放除回去就得到贴图原始尺寸。为什么必须这样:
- * 浏览器那条路(new Image)在"虚拟主机映射没生效 / 格式它不认"时会静默失败,
- * 于是自动缩放整段失效 —— 用户看到的就是"给实体设了贴图,编辑器里没反应"。
- * 引擎读得出来的图,它一定量得准。 */
-async function engineTexSize(id) {
-  try {
-    const ol = (await ds('scene.outline')).filter((o) => o.id === id)[0];
-    if (!ol || !Math.abs(ol.w) || !Math.abs(ol.h)) return null;
-    const e = await ds('entity.get', { id });
-    const tr = (e.comps || {}).transform || {};
-    const sx = Math.abs(tr.sx || 1) || 1;
-    const sy = Math.abs(tr.sy || 1) || 1;
-    return { w: Math.abs(ol.w) / sx, h: Math.abs(ol.h) / sy };
-  } catch (e) {
-    return null;
-  }
-}
-
 /* 点资源:图片→给选中实体的 sprite.tex_path;声音→试听一下 */
 async function applyRes(f) {
   DS.resSel = f.name;
@@ -473,30 +456,14 @@ async function applyRes(f) {
     if (!e.comps || !Object.prototype.hasOwnProperty.call(e.comps, 'sprite')) {
       await call('comp.add', { id, comp: 'sprite' }, '挂 sprite');
     }
+    /* 「按图片大小适配」这件事在 **C 里做**:comp.set sprite.tex_path 会
+     * ①清掉旧模板留下的 32×32 裁切、②在用户还没手动缩放过时按这张图的大小配
+     * 一个合适的缩放,并把做了什么写在结果的 note 里(call() 会弹出来)。
+     * 这里刻意**不再**自己拿浏览器解码量尺寸:逻辑一旦和 C 分家,
+     * 浏览器读不到图(资源服务没连上、格式它不认)时就会静默失效 ——
+     * 用户看到的正是"给实体设了贴图,编辑器里没反应"。 */
     await call('comp.set', { id, comp: 'sprite', field: 'tex_path',
                              value: 'res/' + f.name }, '设置贴图');
-    /* 图比屏幕还大时**自动缩小到合适大小** —— 零基础用户点一张缩略图,
-     * 期望的是"我的角色出现了",而不是一张 300×400 的图盖满整个视口
-     * (而且会以为"没显示出来")。用 transform 的缩放,并在提示条里说清楚。 */
-    let info = await engineTexSize(id);
-    if (!info) {
-      /* 引擎量不出来(比如贴图根本没加载上)才退回浏览器解码 */
-      info = await new Promise((resolve) => {
-        const im = new Image();
-        im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-        im.onerror = () => resolve(null);
-        im.src = resUrl(f.name);
-      });
-    }
-    if (info && Math.max(info.w, info.h) > 256) {
-      const k = Math.round((128 / Math.max(info.w, info.h)) * 100) / 100;
-      await call('comp.set_many', { items: [
-        { id, comp: 'transform', field: 'sx', value: k },
-        { id, comp: 'transform', field: 'sy', value: k },
-      ] }, '按贴图大小缩放');
-      toast('这张图 ' + info.w + '×' + info.h + ',已按 ' + k +
-            ' 倍缩小(右边「缩放 X / 缩放 Y」可以改)', 'ok');
-    }
     log('dim', f.name + ' → ' + (e.name || id) + ' 的贴图');
     await refresh();
     /* 贴图设好了,可实体可能**不在视野里**(刚建的实体在 (0,0)、轴心 0.5 时左上角
@@ -1516,7 +1483,14 @@ window.__ds_selftest = async function () {
       const tint = sprite && sprite.fields.find((f) => f.name === 'tint');
       t('sprite.tint 是取色器', !!tint && tint.kind === 'color', tint && tint.kind);
       const rot = schemaOf('transform').fields.find((f) => f.name === 'rot');
-      t('engine 没实现的字段是只读', !!rot && !!rot.readonly, rot && rot.hint);
+      t('transform.rot 现在可编辑,而且是"度"(引擎支持旋转了)',
+        !!rot && !rot.readonly && /度/.test(rot.hint || ''), rot && rot.hint);
+      const crot = schemaOf('camera').fields.find((f) => f.name === 'rot');
+      t('引擎没实现的字段仍然标只读(camera.rot)', !!crot && !!crot.readonly,
+        crot && crot.hint);
+      const vis = sprite && sprite.fields.find((f) => f.name === 'visible');
+      t('sprite.visible 是布尔(藏起来不画,实体还在)', !!vis && vis.kind === 'bool',
+        vis && vis.kind);
       t('场景选项带实体下拉候选', (DS.options.entities || []).length === DS.entities.length,
         (DS.options.entities || []).length + ' vs ' + DS.entities.length);
     }
@@ -2111,6 +2085,124 @@ window.__ds_selftest = async function () {
                 && Math.abs(ob.y + ob.h / 2 - tr4.y) < 0.6,
                 JSON.stringify([ob && ob.x, ob && ob.y, ob && ob.w, ob && ob.h,
                                 tr4.x, tr4.y]));
+            }
+
+            /* --- 框线围着"图",而且能拉能转(用户报的"框线应该适配图片大小") --- */
+            {
+              /* 撤销会**换实体 id**(模型是快照式撤销),所以每次撤销之后都要
+               * 按名字把它找回来,连选中一起换 —— 否则后面的操作全打在死 id 上。 */
+              const reId = async () => {
+                const list = await ds('entity.list');
+                const it = list.filter((x) => x.name === '__uitest_tex__')[0];
+                if (it) {
+                  e0.id = it.id;
+                  DS.sel = [it.id];
+                }
+                return it ? it.id : 0;
+              };
+              /* 给它挂一个**模板大小的碰撞盒**:用户报的就是"套了图之后,
+               * 框线还是原来示例那个 32×32"。 */
+              await ds('comp.add', { id: e0.id, comp: 'collider' });
+              await refresh();
+              const ts = texSize[imgs[0].name] || { w: 0, h: 0 };
+              const k = (await ds('entity.get', { id: e0.id })).comps.transform.sx || 1;
+              const o2 = (await ds('scene.outline')).filter((o) => o.id === e0.id)[0];
+              t('有碰撞盒时框线仍然围着图(精灵优先,不是模板的 32×32)',
+                o2.kind === 'sprite' && Math.abs(o2.w - ts.w * k) <= 2,
+                o2.kind + ' ' + o2.w + 'x' + o2.h + ' 贴图=' + JSON.stringify(ts));
+              t('碰撞盒另外单独给一份(面板画虚线,不跟图混在一起)',
+                !!o2.collider && o2.collider[2] === 8, JSON.stringify(o2.collider));
+              t('框线四角由宿主算好给前端(前端不再算第二遍)',
+                (o2.corners || []).length === 8, JSON.stringify(o2.corners));
+
+              select([e0.id]);
+              await refresh();
+              const hs = Viewport.handleInfo();
+              t('选中精灵时出现 8 个缩放手柄 + 1 个旋转手柄',
+                !!hs && ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'rotate']
+                  .every((key) => hs[key] && typeof hs[key].x === 'number'),
+                JSON.stringify(hs));
+
+              /* 预览用的四角公式必须与宿主给的一致(两份公式不许漂) */
+              const b4 = await Viewport.debugStartScale('se');
+              const q0 = Viewport.quadOf(e0.id);
+              const same = !!b4 && !!q0 && !!q0.preview && q0.corners.every((p, i) =>
+                Math.abs(p.x - q0.preview[i].x) < 0.01
+                && Math.abs(p.y - q0.preview[i].y) < 0.01);
+              t('拖动预览的四角公式与宿主一致(不会漂)', same, JSON.stringify(q0));
+
+              /* 真的拉:右下角往外拖 —— 变大,而且**拖动过程里不写模型也不发命令** */
+              const c0 = DS.cmds || 0;
+              const g1 = Viewport.debugDragTo(b4.x + 180, b4.y + 180, false);
+              const mid = await ds('entity.get', { id: e0.id });
+              t('拖动过程里不写模型(所以不卡、也不用等引擎)',
+                Math.abs((mid.comps.transform.sx || 1) - b4.sx) < 1e-6,
+                (mid.comps.transform.sx || 1) + ' vs ' + b4.sx);
+              t('拖动过程里一条命令都不发(不重渲染、不刷面板)',
+                (DS.cmds || 0) - c0 <= 1,            /* 只算上面那句 entity.get */
+                ((DS.cmds || 0) - c0) + ' 条');
+              t('拖动预览真的按手柄变了', !!g1 && (g1.sx !== b4.sx || g1.sy !== b4.sy),
+                JSON.stringify(g1) + ' 原 ' + JSON.stringify(b4));
+              /* 跟手的那份贴图必须真的画在画布上(等它解码好再看像素) */
+              for (let i = 0; i < 60; i++) {
+                const gi0 = Viewport.ghostInfo();
+                if (gi0 && Object.keys(gi0).every((key) => gi0[key].ready)) break;
+                await new Promise((r) => setTimeout(r, 50));
+              }
+              await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+              const pq = Viewport.quadOf(e0.id).preview;
+              const cen = {
+                x: (pq[0].x + pq[1].x + pq[2].x + pq[3].x) / 4,
+                y: (pq[0].y + pq[1].y + pq[2].y + pq[3].y) / 4,
+              };
+              const cc = Viewport.toCanvas(cen.x, cen.y);
+              const px = Viewport.pixelAt(cc.x, cc.y);
+              t('拖动时贴图跟手画在画布上(预览中心是图,不是背景)',
+                !!px && px !== '#14141f' && px !== '#1e1e2e', String(px));
+              await Viewport.debugEndDrag();
+              await refresh();
+              const after = (await ds('entity.get', { id: e0.id })).comps.transform;
+              t('松手写回的就是预览的那份(sx/sy 与预览一致)',
+                Math.abs(after.sx - g1.sx) < 0.002 && Math.abs(after.sy - g1.sy) < 0.002,
+                JSON.stringify([after.sx, after.sy]) + ' vs ' + JSON.stringify(g1));
+              await ds('undo');
+              await reId();                 /* 撤销换 id */
+              await refresh();
+              const back = (await ds('entity.get', { id: e0.id })).comps.transform;
+              t('一次拖动 = 一条撤销(撤一下回到原大小)',
+                Math.abs(back.sx - b4.sx) < 0.01, back.sx + ' vs ' + b4.sx);
+
+              /* 旋转:指针拖到轴心**正右方** → 90°(度,顺时针为正) */
+              const b5 = await Viewport.debugStartRotate();
+              Viewport.debugDragTo(b5.x + 300, b5.y, false);
+              await Viewport.debugEndDrag();
+              await refresh();
+              const r1 = (await ds('entity.get', { id: e0.id })).comps.transform;
+              t('拖旋转手柄真的转了 90 度', Math.abs(r1.rot - 90) < 0.5, String(r1.rot));
+              const o3 = (await ds('scene.outline')).filter((o) => o.id === e0.id)[0];
+              t('转 90° 后框线的外接矩形跟着换边',
+                Math.abs(o3.h - o2.w) <= 2 && Math.abs(o3.w - o2.h) <= 2,
+                JSON.stringify([o2.w, o2.h, o3.w, o3.h]));
+              await ds('undo');
+              await reId();
+              await refresh();
+              const r2 = (await ds('entity.get', { id: e0.id })).comps.transform;
+              t('旋转也是一条撤销', Math.abs(r2.rot) < 0.01, String(r2.rot));
+
+              /* Shift = 吸附到 15° */
+              const b6 = await Viewport.debugStartRotate();
+              Viewport.debugDragTo(b6.x + 300, b6.y - 100, true);
+              const snapped = (Viewport.quadOf(e0.id).ghost || {}).rot;
+              await Viewport.debugEndDrag();
+              await ds('undo');
+              await reId();
+              await refresh();
+              t('按住 Shift 旋转吸附到 15°',
+                typeof snapped === 'number' && Math.abs(snapped % 15) < 0.01,
+                String(snapped));
+
+              await ds('comp.remove', { id: e0.id, comp: 'collider' });
+              await refresh();
             }
           } finally {
             await ds('entity.remove', { id: e0.id });

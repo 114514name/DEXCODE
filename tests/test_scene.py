@@ -302,7 +302,7 @@ eng_shutdown();
     check("第 2 种是 sprite", L[2] == "n2=[sprite]", L[2:3])
     check("越界索引返回空串", L[3] == "n99=[]", repr(L[3]))
     check("越界索引给出原因", "out of range" in L[4], L[4:5])
-    check("sprite 字段数 = 12", L[5] == "12", L[5:6])
+    check("sprite 字段数 = 13(B12.4 起含 visible)", L[5] == "13", L[5:6])
     check("字段 0 是 tex_path", L[6] == "f0=[tex_path]", L[6:7])
     check("字段 1 是 texture", L[7] == "f1=[texture]", L[7:8])
     check("tex_path 类型 = 3(字符串)", L[8] == "3", L[8:9])

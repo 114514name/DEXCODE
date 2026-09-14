@@ -503,6 +503,14 @@ void dg_draw_frame_end(void) {
 
 int dg_draw_quad(int tex, float x, float y, float w, float h,
                  float u0, float v0, float u1, float v1, uint32_t color) {
+    return dg_draw_quad_corners(tex, x, y, x + w, y, x + w, y + h, x, y + h,
+                                u0, v0, u1, v1, color);
+}
+
+int dg_draw_quad_corners(int tex,
+                         float x0, float y0, float x1, float y1,
+                         float x2, float y2, float x3, float y3,
+                         float u0, float v0, float u1, float v1, uint32_t color) {
     if (!g_draw_ready) { dg_error("dg_draw_quad before dg_draw_init"); return -1; }
     if (tex != g_batch_tex) {
         dg_flush();
@@ -510,13 +518,15 @@ int dg_draw_quad(int tex, float x, float y, float w, float h,
     }
     if (g_vcount + 6 > DG_MAX_VERTS) dg_flush();
 
+    /* 两个三角形的顶点顺序与 uv 归属必须与 dg_draw_quad 的历史实现逐字一致
+       (左上/右上/右下 + 左上/右下/左下),否则不旋转的精灵会整体翻转。 */
     DgVert *v = g_verts + g_vcount;
-    dg_pack(v + 0, x,     y,     u0, v0, color);
-    dg_pack(v + 1, x + w, y,     u1, v0, color);
-    dg_pack(v + 2, x + w, y + h, u1, v1, color);
-    dg_pack(v + 3, x,     y,     u0, v0, color);
-    dg_pack(v + 4, x + w, y + h, u1, v1, color);
-    dg_pack(v + 5, x,     y + h, u0, v1, color);
+    dg_pack(v + 0, x0, y0, u0, v0, color);
+    dg_pack(v + 1, x1, y1, u1, v0, color);
+    dg_pack(v + 2, x2, y2, u1, v1, color);
+    dg_pack(v + 3, x0, y0, u0, v0, color);
+    dg_pack(v + 4, x2, y2, u1, v1, color);
+    dg_pack(v + 5, x3, y3, u0, v1, color);
     g_vcount += 6;
     return 0;
 }

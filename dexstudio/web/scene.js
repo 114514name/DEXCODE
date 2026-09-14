@@ -217,6 +217,10 @@ async function renderInspector() {
     return;
   }
   const comps = detail.comps || {};
+  /* 选中的精灵:把它的贴图**提前解码好**。拖动时画布上要自己画一份跟手的
+   * (见 viewport.js 的拖动预览),不预热的话第一次拖的前几帧只有框线没有图。 */
+  if (comps.sprite && comps.sprite.tex_path && typeof Viewport.prewarm === 'function')
+    Viewport.prewarm(comps.sprite.tex_path);
   const have = Object.keys(comps);
   /* 挂组件下拉:自省出来的组件里去掉已经挂上的,并带上中文说明 */
   const sel = $('comp-add-sel');

@@ -418,11 +418,19 @@ def test_viewport(dll):
             m.ok("comp.add", {"id": eid, "comp": "sprite"})
             m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "sw", "value": 8})
             m.ok("comp.set", {"id": eid, "comp": "sprite", "field": "sh", "value": 6})
-            check("collider 优先于 sprite", m.ok("scene.outline")[0]["w"] == 40)
+            # B12.5 起**精灵优先**:用户看到的是图,框线就该围着图 —— 以前有
+            # collider 就用碰撞盒,于是"给玩家套一张 300×400 的图,框线还是
+            # 模板留下的 32×32"。碰撞盒改成**单独给一份**(前端画虚线)。
+            o = m.ok("scene.outline")[0]
+            check("有 collider 时框线仍然围着 sprite(精灵优先)",
+                  o["kind"] == "sprite" and o["w"] == 8 and o["h"] == 6, o)
+            check("碰撞盒仍然单独给出来(前端画虚线用)",
+                  o.get("collider") == [80, 40, 40, 20], o.get("collider"))
             m.ok("comp.remove", {"id": eid, "comp": "collider"})
             o = m.ok("scene.outline")[0]
             check("去掉 collider 后按 sprite 算",
-                  o["kind"] == "sprite" and o["w"] == 8 and o["h"] == 6, o)
+                  o["kind"] == "sprite" and o["w"] == 8 and o["h"] == 6
+                  and not o.get("collider"), o)
             # 轴心:默认 0.5 = 以实体位置为中心。框线必须与**引擎画出来的位置**逐字一致
             # (引擎:原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放),否则用户看到的就是
             # "只有框线在动、图像在别处"。实体在 (100,50),8×6 的图 → 框线 (96,47)。
@@ -1672,10 +1680,17 @@ def test_ui_contract(dll):
             check("transform.parent 是实体下拉",
                   schema["transform"]["parent"].get("kind") == "entity")
             check("运行期字段只读", schema["sprite"]["texture"].get("readonly") is True)
-            check("引擎没实现的字段只读且说明原因",
-                  schema["transform"]["rot"].get("readonly") is True
-                  and "不读" in (schema["transform"]["rot"].get("hint") or ""),
+            check("引擎没实现的字段只读且说明原因(camera.rot 仍然没实现)",
+                  schema["camera"]["rot"].get("readonly") is True
+                  and "不读" in (schema["camera"]["rot"].get("hint") or ""),
+                  schema["camera"]["rot"])
+            check("transform.rot 现在可编辑(引擎支持旋转了)",
+                  schema["transform"]["rot"].get("readonly") is not True
+                  and schema["transform"]["rot"].get("unit") == "度",
                   schema["transform"]["rot"])
+            check("sprite.visible 是布尔(拖动时'临时藏起来'用的就是它)",
+                  schema["sprite"]["visible"].get("kind") == "bool",
+                  schema["sprite"]["visible"])
             check("数字字段带单位提示",
                   schema["transform"]["x"].get("unit") == "像素",
                   schema["transform"]["x"])
@@ -2055,6 +2070,125 @@ def read_bmp(path):
     return w, h, px
 
 
+def write_bmp_solid(path, w, h, rgb):
+    """手写一张 24 位纯色 BMP(零依赖)。
+
+    为什么需要它:测"换一张大图要按图片大小适配"必须有**大于 256 像素**的图,
+    而 tests/fixtures 里的图都是小图;手写 BMP 比引入 PNG 库便宜(stb_image 认 BMP)。
+    """
+    row = bytes((rgb[2], rgb[1], rgb[0])) * w
+    pad = (4 - (w * 3) % 4) % 4
+    data = (row + b"\x00" * pad) * h
+    with open(path, "wb") as f:
+        f.write(b"BM" + struct.pack("<IHHI", 14 + 40 + len(data), 0, 0, 54))
+        f.write(struct.pack("<IiiHHIIiiII", 40, w, h, 1, 24, 0, len(data),
+                            2835, 2835, 0, 0))
+        f.write(data)
+
+
+def nonbg_bbox(bmp_path):
+    """渲染结果里"非背景"像素的包围盒 (x,y,w,h);全空返回 None。
+    背景 = IDE 的清屏色 0xFF1E1E2E → 读出来是 (0x1E,0x1E,0x2E)。"""
+    w, h, px = read_bmp(bmp_path)
+    xs, ys = [], []
+    for i, (r, g, b) in enumerate(px):
+        if not (r == 0x1E and g == 0x1E and b == 0x2E):
+            xs.append(i % w)
+            ys.append(i // w)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+
+def test_sprite_transform(dll):
+    """旋转 / 换图适配 / visible / 临时隐藏 —— 用户要的"像一般编辑器那样"。
+
+    三件事各自都有"引擎与宿主必须逐字一致"的坑:
+      · 旋转:引擎按 transform.rot 转四角,宿主 scene.outline 也得转**同一个公式**,
+        否则框线又跑到图外面(和 B11 的平移坑一模一样,只是换成旋转);
+      · 换图:模板留下的裁切/缩放要跟着新图走("框线应该适配图片大小");
+      · visible / hide:拖动时前端要在引擎那张预览图里把被拖的精灵藏掉
+        (否则重影),渲染完**必须还原** —— 这是 visible 的契约。
+    """
+    print("[旋转 / 换图适配 / visible / 临时隐藏]")
+    with tempdir("ds_xf_") as tmp:
+        big = os.path.join(tmp, "big.bmp")
+        write_bmp_solid(big, 300, 400, (200, 60, 60))
+        proj = os.path.join(tmp, "proj")
+        m = Model(dll)
+        try:
+            m.ok("project.new", {"dir": proj, "name": "xf"})
+            m.ok("res.import", {"src": big, "name": "大图.bmp"})
+            e = m.ok("entity.add", {"name": "小人", "comps": ["transform", "sprite"]})
+            # 模拟旧模板留下的 32×32 裁切
+            for f in ("sw", "sh"):
+                m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": f, "value": 32})
+            r = m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "tex_path",
+                                  "value": "res/大图.bmp"})
+            g = m.ok("entity.get", {"id": e["id"]})
+            sp, tr = g["comps"]["sprite"], g["comps"]["transform"]
+            check("换图:旧模板的裁切清成整张", sp["sw"] == 0 and sp["sh"] == 0, sp)
+            check("换图:按新图大小自动适配缩放(300×400 → 0.32)",
+                  abs(tr["sx"] - 0.32) < 0.01 and abs(tr["sy"] - 0.32) < 0.01, tr)
+            check("换图适配会告诉用户做了什么(note 里带'缩放')",
+                  "缩放" in (r.get("note") or ""), r.get("note"))
+            # 用户自己缩放过 → 再换图不许乱动
+            for f, v in (("sx", 2), ("sy", 2)):
+                m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": f, "value": v})
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "tex_path",
+                              "value": "res/大图.bmp"})
+            check("用户手动缩放过的精灵,换图不再自动改",
+                  m.ok("entity.get", {"id": e["id"]})["comps"]["transform"]["sx"] == 2)
+            # 摆到一个干净的状态:位置 (256,200)、缩放 0.2 → 60×80
+            for comp, field, val in (("transform", "x", 256), ("transform", "y", 200),
+                                     ("transform", "sx", 0.2), ("transform", "sy", 0.2),
+                                     ("transform", "rot", 0)):
+                m.ok("comp.set", {"id": e["id"], "comp": comp, "field": field, "value": val})
+
+            def outline():
+                return [o for o in m.ok("scene.outline") if o["id"] == e["id"]][0]
+
+            def shot():
+                return nonbg_bbox(m.ok("scene.render")["path"])
+
+            o0 = outline()
+            b0 = shot()
+            check("缩放 0.2 时框线 = 60×80", abs(o0["w"] - 60) < 0.6
+                  and abs(o0["h"] - 80) < 0.6, (o0["w"], o0["h"]))
+            check("框线与画面像素对齐(旋转 0)",
+                  b0 and abs(o0["x"] - b0[0]) <= 2 and abs(o0["y"] - b0[1]) <= 2
+                  and abs(o0["w"] - b0[2]) <= 2 and abs(o0["h"] - b0[3]) <= 2,
+                  (o0["x"], o0["y"], o0["w"], o0["h"], b0))
+            check("outline 给出四角(前端画旋转框与手柄用)", len(o0.get("corners") or []) == 8,
+                  o0.get("corners"))
+
+            m.ok("comp.set", {"id": e["id"], "comp": "transform", "field": "rot", "value": 90})
+            o1 = outline()
+            b1 = shot()
+            check("转 90° 后外接矩形换边(60×80 → 80×60)",
+                  abs(o1["w"] - 80) < 0.6 and abs(o1["h"] - 60) < 0.6, (o1["w"], o1["h"]))
+            check("转 90° 后框线仍然框住**画出来的像素**(引擎与宿主同一公式)",
+                  b1 and abs(o1["x"] - b1[0]) <= 2 and abs(o1["y"] - b1[1]) <= 2
+                  and abs(o1["w"] - b1[2]) <= 3 and abs(o1["h"] - b1[3]) <= 3,
+                  (o1["x"], o1["y"], o1["w"], o1["h"], b1))
+            check("四角跟着转(第一个角不再是左上)",
+                  abs(o1["corners"][0] - (256 + 40)) < 0.6
+                  and abs(o1["corners"][1] - (200 - 30)) < 0.6, o1["corners"][:2])
+
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "visible", "value": 0})
+            check("visible=0 时画面上没有这个精灵", shot() is None, shot())
+            m.ok("comp.set", {"id": e["id"], "comp": "sprite", "field": "visible", "value": 1})
+            check("visible=1 又画出来了", shot() is not None)
+
+            r = m.ok("scene.render", {"hide": [e["id"]]})
+            check("scene.render {hide} 这一帧不画它", nonbg_bbox(r["path"]) is None)
+            check("隐藏只是**这一帧**的事:渲染完 visible 必须还原",
+                  m.ok("entity.get", {"id": e["id"]})["comps"]["sprite"]["visible"] == 1)
+            check("还原之后画面照旧", shot() is not None)
+        finally:
+            m.close()
+
+
 def test_web_wiring():
     """前端接线的静态哨兵:两道以前真出过问题的坑。
 
@@ -2360,6 +2494,7 @@ def main():
     test_asset_paths(dll)
     test_ui_contract(dll)
     test_sprite_scale(dll)
+    test_sprite_transform(dll)
     test_outline_matches_pixels(dll)
     test_blocks_model(dll)
     test_blocks_behavior(dll)

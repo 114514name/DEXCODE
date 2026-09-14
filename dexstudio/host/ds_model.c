@@ -20,6 +20,7 @@
 #include "ds_res.h"
 #include "ds_utf8.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -601,12 +602,13 @@ static const DsFieldMeta FIELD_META[] = {
     /* --- transform --- */
     {.comp="transform", .field="x", .label="X 位置", .kind="number", .unit="像素", .step=1},
     {.comp="transform", .field="y", .label="Y 位置", .kind="number", .unit="像素", .step=1},
-    {.comp="transform", .field="rot", .label="旋转", .readonly=1,
-     .hint="引擎目前不读这个字段(2D 一期没做旋转),改了什么都不会变"},
+    {.comp="transform", .field="rot", .label="旋转", .kind="number", .unit="度",
+     .step=1, .min=-3600, .max=3600,
+     .hint="度数,屏幕上顺时针为正;视口里拖框线上方的旋转手柄就是改它"},
     {.comp="transform", .field="sx", .label="缩放 X", .step=0.1, .min=0.01, .max=64,
-     .hint="1 = 原大小;0.5 = 一半;2 = 两倍。图太大就用它缩小"},
+     .hint="1 = 原大小;0.5 = 一半;2 = 两倍。也可以直接拖选中框四角/边中点"},
     {.comp="transform", .field="sy", .label="缩放 Y", .step=0.1, .min=0.01, .max=64,
-     .hint="1 = 原大小;要等比缩放就把 X 和 Y 填一样的数"},
+     .hint="1 = 原大小;要等比缩放就按住 Shift 拖框线,或者把 X 和 Y 填一样的数"},
     {.comp="transform", .field="parent", .label="父实体", .kind="entity", .step=1,
      .hint="跟着父实体一起移动(只继承位置)"},
     /* --- sprite --- */
@@ -630,6 +632,8 @@ static const DsFieldMeta FIELD_META[] = {
     {.comp="sprite", .field="layer", .label="图层", .step=1,
      .hint="小的先画(在下面)"},
     {.comp="sprite", .field="order", .label="同层顺序", .step=1},
+    {.comp="sprite", .field="visible", .label="显示", .kind="bool",
+     .hint="取消勾选就不画这个精灵(实体还在,逻辑照跑)"},
     /* --- camera --- */
     {.comp="camera", .field="x", .label="X", .kind="number", .unit="像素", .step=1,
      .hint="相机 (x,y) = 显示在屏幕左上角的世界坐标"},
@@ -913,6 +917,8 @@ static void project_set_start_scene(DsModel *m, const char *full)
 /* 旧模板留下的 32×32 裁切修正(实现在 cmd_comp_set 旁边,scene_switch 也要用) */
 static int fix_legacy_crop(DsModel *m, int64_t id);
 static int fix_legacy_crops(DsModel *m);
+/* 换贴图后按图片大小给一个合适的缩放(同上,两处都要用) */
+static int fit_sprite_scale(DsModel *m, int64_t id);
 
 static int scene_switch(DsModel *m, const char *rel, int load)
 {
@@ -1777,6 +1783,44 @@ static int fix_legacy_crop(DsModel *m, int64_t id)
     return 1;
 }
 
+/* 换了贴图之后,给一个**按图片大小**的合适缩放。
+ * 为什么:一张 300×400 的角色图 1:1 铺在 1024×640 的视口里,零基础用户会以为
+ * "图坏了 / 显示不出来";而模板留下的 32×32 裁切是另一个极端(只看得到一角)。
+ * 只动"用户还没自己缩放过"的精灵(sx/sy 恰好都是 1)—— 用户拉过框线手柄或手填过
+ * 数字,就是明确表过态,尊重他。返回 1 = 改过。 */
+static int fit_sprite_scale(DsModel *m, int64_t id)
+{
+    DexValue a[4];
+    double sw, sh, tw, th, sx, sy, k, big;
+    int64_t tex;
+    if (!m->eng.ok) return 0;
+    a[0] = V_i(id); a[1] = V_s("sprite"); a[2] = V_s("sw");
+    sw = m->eng.get_f(a, 3);
+    a[2] = V_s("sh");
+    sh = m->eng.get_f(a, 3);
+    if (sw > 0 || sh > 0) return 0;              /* 用户自己裁过:别乱动 */
+    a[2] = V_s("texture");
+    tex = m->eng.get_i(a, 3);
+    if (tex < 0) return 0;
+    a[0] = V_i(tex);
+    tw = m->eng.tex_width(a, 1);
+    th = m->eng.tex_height(a, 1);
+    if (tw <= 0 || th <= 0) return 0;
+    a[0] = V_i(id); a[1] = V_s("transform"); a[2] = V_s("sx");
+    sx = m->eng.get_f(a, 3);
+    a[2] = V_s("sy");
+    sy = m->eng.get_f(a, 3);
+    if (sx != 1.0 || sy != 1.0) return 0;        /* 用户自己缩放过 */
+    big = tw > th ? tw : th;
+    if (big <= 256.0) return 0;                  /* 图本来就不大:保持 1:1 */
+    k = ((double)((int)(128.0 / big * 100.0 + 0.5))) / 100.0;
+    a[0] = V_i(id); a[1] = V_s("transform"); a[2] = V_s("sx"); a[3] = V_f(k);
+    if (m->eng.set_f(a, 4) != 0) return 0;
+    a[2] = V_s("sy");
+    if (m->eng.set_f(a, 4) != 0) return 0;
+    return 1;
+}
+
 /* 场景里所有 sprite 都过一遍(见 fix_legacy_crop);返回改了几个。 */
 static int fix_legacy_crops(DsModel *m)
 {
@@ -1793,7 +1837,12 @@ static int fix_legacy_crops(DsModel *m)
         a[0] = V_i(id);
         a[1] = V_s("sprite");
         if (m->eng.has(a, 2) != 1) continue;
-        if (fix_legacy_crop(m, id)) fixed++;
+        if (fix_legacy_crop(m, id)) {
+            /* 裁切清成"整张"之后,顺手按新图的大小配一个缩放 —— 否则老项目一打开
+             * 就是一张铺满视口的大图。 */
+            fit_sprite_scale(m, id);
+            fixed++;
+        }
     }
     return fixed;
 }
@@ -1824,6 +1873,7 @@ static Dsj *cmd_comp_set(DsModel *m, Dsj *args)
     Dsj *normalized = NULL;
     Dsj *apply_value;
     int fixed_crop = 0;
+    int fitted = 0;
     Edit e;
     if (!m->eng.ok) { seterr(m, "引擎不可用:%s", m->eng.err); return NULL; }
     if (!id || !comp || !*comp || !field || !*field) {
@@ -1840,8 +1890,11 @@ static Dsj *cmd_comp_set(DsModel *m, Dsj *args)
         return NULL;
     }
     if (!strcmp(comp, "sprite") && !strcmp(field, "tex_path")
-        && apply_value->t == DSJ_STR && apply_value->str && apply_value->str[0])
+        && apply_value->t == DSJ_STR && apply_value->str && apply_value->str[0]) {
         fixed_crop = fix_legacy_crop(m, id);
+        /* 换图 = 按这张图大小重新适配一次(用户自己缩放过就不动,见函数注释) */
+        fitted = fit_sprite_scale(m, id);
+    }
     edit_end(&e, 1);
     dsj_free(normalized);
     {
@@ -1855,9 +1908,18 @@ static Dsj *cmd_comp_set(DsModel *m, Dsj *args)
             dsj_set(r, "value", v ? dsj_clone(v) : dsj_null());
         }
         dsj_free(all);
-        if (fixed_crop)
-            dsj_set_str(r, "note", "贴图换好了,已改成画整张贴图"
-                                   "(以前是旧模板留下的 32×32 裁切,所以只看得到一角)");
+        if (fixed_crop || fitted) {
+            char note[512];
+            snprintf(note, sizeof note, "%s%s",
+                     fixed_crop
+                       ? "贴图换好了,已改成画整张贴图(以前是旧模板留下的 32×32 裁切,"
+                         "所以只看得到一角)"
+                       : "贴图换好了",
+                     fitted
+                       ? ";并按这张图的大小配了缩放(想改就拖框线四角,或者改「缩放 X / 缩放 Y」)"
+                       : "");
+            dsj_set_str(r, "note", note);
+        }
         return r;
     }
 }
@@ -2832,6 +2894,8 @@ static Dsj *cmd_scene_outline(DsModel *m, Dsj *args)
         int64_t id;
         Dsj *o = dsj_obj();
         double wx = 0, wy = 0, bx = 0, by = 0, bw = 0, bh = 0;
+        double cbx = 0, cby = 0, cbw = 0, cbh = 0;
+        int has_col = 0;
         const char *kind = "empty";
         int layer = 0;
         int order = 0;
@@ -2853,32 +2917,81 @@ static Dsj *cmd_scene_outline(DsModel *m, Dsj *args)
 #define DSI(c, f) (m->eng.get_i((DexValue[]){V_i(id), V_s(c), V_s(f)}, 3))
 #define DSF(c, f) (m->eng.get_f((DexValue[]){V_i(id), V_s(c), V_s(f)}, 3))
 #define HASC(c) (m->eng.has((DexValue[]){V_i(id), V_s(c)}, 2) == 1)
+        /* 碰撞盒单独给一份:它是**逻辑**用的,和"用户看到的图"不是一回事。
+         * 前端把它画成虚线,主框线则围着图(见下)。 */
         if (HASC("collider")) {
             double ox = DSF("collider", "ox"), oy = DSF("collider", "oy");
             double hw = DSF("collider", "hw"), hh = DSF("collider", "hh");
-            bx = wx + ox - hw; by = wy + oy - hh; bw = hw * 2; bh = hh * 2;
-            kind = (DSI("collider", "kind") == 0) ? "box" : "shape";
-        } else if (HASC("sprite")) {
+            has_col = 1;
+            cbx = wx + ox - hw; cby = wy + oy - hh; cbw = hw * 2; cbh = hh * 2;
+        }
+        /* 主框线由**用户看到的东西**决定:精灵 > 碰撞体 > 瓦片地图。
+         * 以前是"有 collider 就用碰撞盒" —— 于是给玩家套一张 300×400 的图,
+         * 框线还是模板留下的 32×32(用户原话:"框线应该适配图片大小,
+         * 而不是原来的示例")。 */
+        if (HASC("sprite")) {
             double px = DSF("sprite", "px"), py = DSF("sprite", "py");
             double sw = DSF("sprite", "sw"), sh = DSF("sprite", "sh");
-            double kx = 1, ky = 1;
+            double kx = 1, ky = 1, rot = 0;
             if (sw <= 0) sw = (double)m->eng.tex_width((DexValue[]){V_i(DSI("sprite", "texture"))}, 1);
             if (sh <= 0) sh = (double)m->eng.tex_height((DexValue[]){V_i(DSI("sprite", "texture"))}, 1);
             if (sw <= 0) sw = 32;
             if (sh <= 0) sh = 32;
             /* 选中框要跟**画出来的样子**一致 —— 公式必须与引擎
              * (dg_scene.c 的 sprite 绘制)逐字相同:
-             *     原点 = 世界坐标 - 源尺寸 × 轴心 × 缩放;宽高 = 源尺寸 × 缩放
+             *     轴心(wx,wy) = 实体世界坐标;
+             *     未旋转左上的偏移 = (-sw·px·kx, -sh·py·ky);
+             *     四角 = 轴心 + R(rot)·(偏移 + (u,v)),(u,v) ∈ [0,sw·kx]×[0,sh·ky]
              * 以前这里写的是 `wx + px`,而引擎是 `wx - sw*px` —— 于是"框线跑到了
              * 图片右下角外面",用户看到的就是"改了贴图只有框线在动,图像没出现"。 */
             if (HASC("transform")) {
                 double a = DSF("transform", "sx"), b = DSF("transform", "sy");
                 if (a != 0) kx = a;
                 if (b != 0) ky = b;
+                rot = DSF("transform", "rot");
             }
-            bx = wx - sw * px * kx; by = wy - sh * py * ky;
-            bw = sw * kx; bh = sh * ky;
+            {
+                const double rad = rot * (3.14159265358979323846 / 180.0);
+                const double co = cos(rad), si = sin(rad);
+                const double ox = -sw * px * kx, oy = -sh * py * ky;
+                const double uu[4] = { 0, sw * kx, sw * kx, 0 };
+                const double vv[4] = { 0, 0, sh * ky, sh * ky };
+                double xs[4], ys[4];
+                int q;
+                for (q = 0; q < 4; q++) {
+                    const double lx = ox + uu[q], ly = oy + vv[q];
+                    xs[q] = wx + lx * co - ly * si;
+                    ys[q] = wy + lx * si + ly * co;
+                }
+                bx = xs[0]; by = ys[0];
+                bw = xs[0]; bh = ys[0];
+                for (q = 1; q < 4; q++) {
+                    if (xs[q] < bx) bx = xs[q];
+                    if (ys[q] < by) by = ys[q];
+                    if (xs[q] > bw) bw = xs[q];
+                    if (ys[q] > bh) bh = ys[q];
+                }
+                bw -= bx; bh -= by;
+                dsj_set_num(o, "rw", sw * kx);
+                dsj_set_num(o, "rh", sh * ky);
+                dsj_set_num(o, "rot", rot);
+                {
+                    /* 四角给前端画**转过的**框与手柄 —— 公式只在这里有一份,
+                     * 前端不做第二次换算(第二次就一定会漂)。 */
+                    Dsj *cs = dsj_arr();
+                    for (q = 0; q < 4; q++) {
+                        dsj_push(cs, dsj_num(xs[q]));
+                        dsj_push(cs, dsj_num(ys[q]));
+                    }
+                    dsj_set(o, "corners", cs);
+                }
+                dsj_set_num(o, "pivot_x", wx);
+                dsj_set_num(o, "pivot_y", wy);
+            }
             kind = "sprite";
+        } else if (has_col) {
+            bx = cbx; by = cby; bw = cbw; bh = cbh;
+            kind = (DSI("collider", "kind") == 0) ? "box" : "shape";
         } else if (HASC("tilemap")) {
             double tw = DSF("tilemap", "tw"), th = DSF("tilemap", "th");
             int cols = (int)DSI("tilemap", "cols"), rows = (int)DSI("tilemap", "rows");
@@ -2901,6 +3014,15 @@ static Dsj *cmd_scene_outline(DsModel *m, Dsj *args)
         dsj_set_num(o, "wx", wx);
         dsj_set_num(o, "wy", wy);
         dsj_set_str(o, "kind", kind);
+        if (has_col) {
+            /* 碰撞盒(逻辑用的那个框):前端画成虚线,和"围着图的实线"区分开 */
+            Dsj *cb = dsj_arr();
+            dsj_push(cb, dsj_num(cbx));
+            dsj_push(cb, dsj_num(cby));
+            dsj_push(cb, dsj_num(cbw));
+            dsj_push(cb, dsj_num(cbh));
+            dsj_set(o, "collider", cb);
+        }
         dsj_set_int(o, "layer", layer);
         dsj_set_int(o, "order", order);
         dsj_set_int(o, "seq", seq);
@@ -2936,6 +3058,52 @@ static Dsj *cmd_view_set(DsModel *m, Dsj *args)
 
 /* 离屏渲染一帧并落成 BMP。前端用 <img src="https://dexstudio-preview.local/preview.bmp?t=N">
  * 显示 —— 走虚拟主机让浏览器直接读文件,比把像素塞进 JSON 便宜几个数量级。 */
+typedef struct { int64_t id; int is_tile; long long was; } HideEnt;
+
+/* args.hide = [实体 id…]:把它们的精灵/瓦片**临时**隐藏,渲染完立刻还原
+ * (场景数据、脏标记、撤销栈都不动)。
+ * 为什么需要:引擎这张预览图是"文件里的位置",而拖动时前端在画布上自己画
+ * 一份跟手的。不把引擎那份藏掉,屏幕上会同时出现两个精灵 —— 用户看到的就是
+ * "图片比框线慢半拍/有重影"。 */
+static int hide_begin(DsModel *m, Dsj *ids, HideEnt *rec, int max)
+{
+    int n = 0, i;
+    if (!ids || ids->t != DSJ_ARR) return 0;
+    for (i = 0; i < dsj_len(ids) && n < max; i++) {
+        Dsj *it = dsj_at(ids, i);
+        int64_t id = (it && it->t == DSJ_NUM) ? (int64_t)it->num : 0;
+        int is_tile;
+        DexValue a[4];
+        if (!id) continue;
+        if (m->eng.has((DexValue[]){V_i(id), V_s("sprite")}, 2) == 1) is_tile = 0;
+        else if (m->eng.has((DexValue[]){V_i(id), V_s("tilemap")}, 2) == 1) is_tile = 1;
+        else continue;
+        a[0] = V_i(id);
+        a[1] = V_s(is_tile ? "tilemap" : "sprite");
+        a[2] = V_s("visible");
+        rec[n].id = id;
+        rec[n].is_tile = is_tile;
+        rec[n].was = m->eng.get_i(a, 3);
+        a[3] = V_i(0);
+        m->eng.set_i(a, 4);
+        n++;
+    }
+    return n;
+}
+
+static void hide_end(DsModel *m, HideEnt *rec, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        DexValue a[4];
+        a[0] = V_i(rec[i].id);
+        a[1] = V_s(rec[i].is_tile ? "tilemap" : "sprite");
+        a[2] = V_s("visible");
+        a[3] = V_i(rec[i].was);
+        m->eng.set_i(a, 4);
+    }
+}
+
 static Dsj *cmd_scene_render(DsModel *m, Dsj *args)
 {
     char *dir = xs(ds_preview_dir(m));
@@ -2957,6 +3125,8 @@ static Dsj *cmd_scene_render(DsModel *m, Dsj *args)
         DexValue a[4];
         DexValue c[1];
         DexValue p[1];
+        HideEnt hid[512];
+        int nhid, rc;
         a[0] = V_i(m->view_on);
         a[1] = V_f(m->view_x);
         a[2] = V_f(m->view_y);
@@ -2964,11 +3134,14 @@ static Dsj *cmd_scene_render(DsModel *m, Dsj *args)
         m->eng.set_view(a, 4);
         c[0] = V_i(0xFF1E1E2E);      /* 深色背景,和 IDE 一致(ABGR 与引擎约定一致) */
         m->eng.set_clear_color(c, 1);
+        nhid = hide_begin(m, dsj_get(args, "hide"), hid, 512);
         m->eng.frame_begin(NULL, 0);
         m->eng.draw_scene(NULL, 0);
         m->eng.frame_end(NULL, 0);
         p[0] = V_s(path);
-        if (m->eng.save_bmp(p, 1) != 0) {
+        rc = m->eng.save_bmp(p, 1);
+        hide_end(m, hid, nhid);      /* 成功失败都要还原,不然实体就"消失"了 */
+        if (rc != 0) {
             seterr(m, "渲染失败:%s", ds_engine_last_error(&m->eng));
             free(dir); free(path);
             return NULL;

@@ -258,8 +258,8 @@ Component:   引擎内置的一组:Transform / Sprite / Animation / Collider / B
 
 | 组件 | 关键字段 | 备注 |
 |---|---|---|
-| Transform | x, y, rot, sx, sy, parent | 一切的基础;层级变换需缓存世界矩阵 |
-| Sprite | texture, src rect, pivot, tint, flip, layer, order | 走批渲染 |
+| Transform | x, y, rot, sx, sy, parent | 一切的基础;层级变换需缓存世界矩阵。**rot 单位是度、屏幕顺时针为正**(B12.5 起 sprite 绘制真的读它);层级仍只继承位置 |
+| Sprite | texture, src rect, pivot, tint, flip, layer, order, visible | 走批渲染。`visible=0` 不画(IDE 拖动时就是靠它把被拖的精灵临时藏掉,免得和前端画的那份重影) |
 | Animation | 帧列表, fps, loop, 当前帧 | 或复用 Sprite 的 atlas 索引 |
 | Collider | kind(AABB/圆/胶囊)、尺寸、offset、is_trigger、layer、mask | 与 Body 解耦,可单独用于触发区 |
 | Body | motion(static/kinematic/dynamic)、velocity、gravity_scale、摩擦、弹性、是否休眠 | dynamic 才进物理求解 |
@@ -381,7 +381,7 @@ typedef struct { const char *name; uint8_t type; uint8_t persist;
 | 简化 | 影响 | 何时该修 |
 |---|---|---|
 | 圆/胶囊作为**阻挡物**时,轴向解算按包围盒近似(重叠判定仍精确) | 圆角处的手感像方角 | 出现"草地上滚圆石"这类需求时 |
-| 旋转不参与碰撞;层级只继承位置 | 旋转平台/缩放父对象不带动碰撞 | 出现真实需求时(要引入 OBB + 世界矩阵缓存) |
+| 旋转不参与碰撞;层级只继承位置 | 旋转平台/缩放父对象不带动碰撞 | 出现真实需求时(要引入 OBB + 世界矩阵缓存)。**渲染侧的 rot 已经支持**(B12.5:sprite 四角绕轴心转,拖框线手柄就能转),不参与碰撞是刻意的 |
 | 两个 dynamic 体互推只在各自的步里解算 | 叠罗汉/互相挤压会抖 | 需要堆叠时上"按质量解算 + 迭代求解器" |
 | 单向平台 / 斜坡 / 土狼时间 / 跳跃缓冲**未实现** | 平台跳跃的"高级手感"要自己用 `eng_move` 拼 | 有真实关卡时;它们都是 `eng_move` 之上的策略层,不需要改内核 |
 | 无连续碰撞检测(CCD) | 超过 4px/子步的极快物体仍可能穿过薄墙 | 用 `eng_raycast`/`eng_sweep_box` 或提高步长 |

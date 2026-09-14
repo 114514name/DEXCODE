@@ -160,6 +160,7 @@ static const DgField SP_FIELDS[] = {
     { "flip",     DG_F_INT,   1, 0, offsetof(DgSprite, flip) },
     { "layer",    DG_F_INT,   1, 0, offsetof(DgSprite, layer) },
     { "order",    DG_F_INT,   1, 0, offsetof(DgSprite, order) },
+    { "visible",  DG_F_INT,   1, 0, offsetof(DgSprite, visible) },
 };
 static const DgField CAM_FIELDS[] = {
     { "x",      DG_F_FLOAT, 1, 0, offsetof(DgCamera, x) },
@@ -242,6 +243,7 @@ static void dg_comp_defaults(int kind, void *c) {
         ((DgSprite *)c)->px = 0.5f;
         ((DgSprite *)c)->py = 0.5f;
         ((DgSprite *)c)->tint = (int32_t)DG_RGB(255, 255, 255);
+        ((DgSprite *)c)->visible = 1;
         break;
     case DG_C_CAMERA:
         ((DgCamera *)c)->zoom = 1.0f;
@@ -1380,6 +1382,7 @@ int32_t dg_draw_scene(void) {
             continue;
         }
         const DgSprite *s = (const DgSprite *)dg_comp_get(id, DG_C_SPRITE);
+        if (!s->visible) continue;   /* visible=0:编辑器拖动时临时藏起来的那一份 */
         float wx, wy;
         dg_draw_pos(id, &wx, &wy);
 
@@ -1412,22 +1415,44 @@ int32_t dg_draw_scene(void) {
         float v0 = (sh <= 1.0f) ? (s->sy + half) / (float)th : s->sy / (float)th;
         float v1 = (sh <= 1.0f) ? v0 : (s->sy + sh) / (float)th;
         /* 轴心:px/py ∈ [0,1] 表示绘制原点在子矩形里的相对位置(缩放后一起放大) */
-        float x = wx - sw * s->px * kx;
-        float y = wy - sh * s->py * ky;
         /* 相机约定:(x, y) 是**显示在屏幕左上角的世界坐标**,zoom 为缩放。
            于是没有相机(或相机在 0,0)时 世界坐标 == 屏幕坐标 —— 最不意外。
            若游戏要"相机居中跟随",把 cam.x 设为 target_x - 屏宽/2 即可。
            (先前这里多加了屏幕中心偏移,导致无相机时整个世界被平移半个屏幕。)*/
-        x = (x - cx) * zx;
-        y = (y - cy) * zx;
+        const float ax = (wx - cx) * zx, ay = (wy - cy) * zx;   /* 轴心的屏幕坐标 */
         const float dw = sw * zx * kx, dh = sh * zx * ky;
+        const float ox = -sw * s->px * kx * zx;   /* 未旋转时左上角相对轴心 */
+        const float oy = -sh * s->py * ky * zx;
 
         if (s->flip & 1) { float t = u0; u0 = u1; u1 = t; }
         if (s->flip & 2) { float t = v0; v0 = v1; v1 = t; }
 
-        if (dg_draw_quad((int)s->texture, x, y, dw, dh, u0, v0, u1, v1,
-                         (uint32_t)s->tint) == 0)
-            drawn++;
+        /* 旋转:transform.rot,**单位是度**,屏幕上顺时针为正(y 轴向下)。
+           绕**轴心**(也就是实体位置)转 —— 与"轴心 = 原点"的既有语义一致,
+           所以转起来就是"原地转",不会绕着盒子角落甩出去。
+           公式宿主必须逐字相同(ds_model.c 的 scene.outline),否则框线会漂。 */
+        const float rot = tr ? tr->rot : 0.0f;
+        if (rot == 0.0f) {
+            if (dg_draw_quad((int)s->texture, ax + ox, ay + oy, dw, dh,
+                             u0, v0, u1, v1, (uint32_t)s->tint) == 0)
+                drawn++;
+        } else {
+            const double rad = (double)rot * (3.14159265358979323846 / 180.0);
+            const float co = (float)cos(rad), si = (float)sin(rad);
+            const float uu[4] = { 0.0f, dw, dw, 0.0f };
+            const float vv[4] = { 0.0f, 0.0f, dh, dh };
+            float c[8];
+            int q;
+            for (q = 0; q < 4; q++) {
+                const float lx = ox + uu[q], ly = oy + vv[q];
+                c[q * 2 + 0] = ax + lx * co - ly * si;
+                c[q * 2 + 1] = ay + lx * si + ly * co;
+            }
+            if (dg_draw_quad_corners((int)s->texture,
+                                     c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7],
+                                     u0, v0, u1, v1, (uint32_t)s->tint) == 0)
+                drawn++;
+        }
     }
     return drawn;
 }
